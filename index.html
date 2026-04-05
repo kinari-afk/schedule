@@ -48,20 +48,15 @@
 
     let app, auth, db, appId;
     try {
-      // 1. Canvas環境かどうかの判定
       const envFirebaseConfig = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : (typeof __firebase_config !== 'undefined' ? __firebase_config : null);
-      
       if (envFirebaseConfig) {
         const firebaseConfig = typeof envFirebaseConfig === 'string' ? JSON.parse(envFirebaseConfig) : envFirebaseConfig;
         app = initializeApp(firebaseConfig);
         appId = typeof window.__app_id !== 'undefined' ? window.__app_id : (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
-      } 
-      // 2. 独自環境（GitHub Pages等）での動作
-      else {
+      } else {
         app = initializeApp(myFirebaseConfig);
         appId = myFirebaseConfig.projectId;
       }
-      
       if (app) {
         auth = getAuth(app);
         db = getFirestore(app);
@@ -70,13 +65,11 @@
       console.error("Firebase init error", e);
     }
 
-    // --- タイムライン用の定数 ---
     const START_HOUR = 7;
     const END_HOUR = 19;
     const PIXELS_PER_MINUTE = 1.5;
     const getTop = (minutes) => (minutes - START_HOUR * 60) * PIXELS_PER_MINUTE;
 
-    // --- ユーティリティ関数 ---
     const parseTime = (timeStr) => {
       if (!timeStr) return 0;
       const parts = timeStr.split(':');
@@ -97,13 +90,8 @@
 
     const getHashLoc = (str) => {
       let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = str.charCodeAt(i) + ((hash << 5) - hash);
-      }
-      return { 
-        x: Math.abs(hash % 80) + 10, 
-        y: Math.abs((hash >> 3) % 80) + 10 
-      };
+      for (let i = 0; i < str.length; i++) { hash = str.charCodeAt(i) + ((hash << 5) - hash); }
+      return { x: Math.abs(hash % 80) + 10, y: Math.abs((hash >> 3) % 80) + 10 };
     };
 
     const DAYS = ['日', '月', '火', '水', '木', '金', '土'];
@@ -120,15 +108,10 @@
         if (!auth) return;
         const initAuth = async () => {
           try {
-            const initialToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : (typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null);
-            if (initialToken) {
-              await signInWithCustomToken(auth, initialToken);
-            } else {
-              await signInAnonymously(auth);
-            }
-          } catch (e) {
-            console.error("Auth error", e);
-          }
+            const initialToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
+            if (initialToken) { await signInWithCustomToken(auth, initialToken); } 
+            else { await signInAnonymously(auth); }
+          } catch (e) { console.error("Auth error", e); }
         };
         initAuth();
         const unsubscribe = onAuthStateChanged(auth, setUser);
@@ -137,11 +120,9 @@
 
       const [activeTab, setActiveTab] = useState('overview');
       const [selectedDay, setSelectedDay] = useState(1);
-      
       const [nurses, setNurses] = useState([]);
       const [visits, setVisits] = useState([]);
       const [baseTravelTime, setBaseTravelTime] = useState(10);
-      
       const [selectedNurseId, setSelectedNurseId] = useState(null);
       const [isOptimizing, setIsOptimizing] = useState(false);
       const [showToast, setShowToast] = useState(false);
@@ -155,12 +136,10 @@
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
       const [showNurseSheetConfig, setShowNurseSheetConfig] = useState(false);
 
-      // --- クラウドとの同期 ---
       useEffect(() => {
         if (!user || !db) return;
         setIsSyncing(true);
         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
-        
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
@@ -170,73 +149,45 @@
             if (data.nurseSheetUrl !== undefined) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
           } else {
-            setDoc(docRef, {
-              nurses: JSON.stringify([]),
-              visits: JSON.stringify([]),
-              sheetUrl: DEFAULT_USER_SHEET_URL,
-              nurseSheetUrl: DEFAULT_NURSE_SHEET_URL,
-              baseTravelTime: 10
-            }).catch(e => console.error("Initial doc creation error:", e));
+            setDoc(docRef, { nurses: "[]", visits: "[]", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 10 });
           }
           setIsSyncing(false);
-        }, (error) => {
-          console.error("Snapshot error:", error);
-          setIsSyncing(false);
-        });
-        
+        }, (err) => { console.error(err); setIsSyncing(false); });
         return () => unsubscribe();
       }, [user]);
 
       const updateCloudData = (newData) => {
         if (user && db) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
-          setDoc(docRef, newData, { merge: true }).catch(e => console.error("Cloud save error:", e));
+          setDoc(docRef, newData, { merge: true }).catch(e => console.error(e));
         }
       };
 
-      const handleSetNurses = (newNursesFn) => {
+      const handleSetNurses = (newVal) => {
         setNurses(prev => {
-           const next = typeof newNursesFn === 'function' ? newNursesFn(prev) : newNursesFn;
-           updateCloudData({ nurses: JSON.stringify(next) });
-           return next;
+          const next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          updateCloudData({ nurses: JSON.stringify(next) });
+          return next;
         });
       };
 
-      const handleSetVisits = (newVisitsFn) => {
+      const handleSetVisits = (newVal) => {
         setVisits(prev => {
-           const next = typeof newVisitsFn === 'function' ? newVisitsFn(prev) : newVisitsFn;
-           updateCloudData({ visits: JSON.stringify(next) });
-           return next;
+          const next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          updateCloudData({ visits: JSON.stringify(next) });
+          return next;
         });
       };
 
-      const handleSetBaseTravelTime = (val) => {
-        setBaseTravelTime(val);
-        updateCloudData({ baseTravelTime: val });
-      };
-
-      const handleSheetUrlChange = (e) => {
-        const url = e.target.value;
-        setSheetUrl(url);
-        updateCloudData({ sheetUrl: url });
-      };
-
-      const handleNurseSheetUrlChange = (e) => {
-        const url = e.target.value;
-        setNurseSheetUrl(url);
-        updateCloudData({ nurseSheetUrl: url });
-      };
+      const handleSetBaseTravelTime = (v) => { setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
+      const handleSheetUrlChange = (e) => { setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
+      const handleNurseSheetUrlChange = (e) => { setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
 
-      const updateCustomTravelTime = (visitId, newTime) => {
-        handleSetVisits(prevVisits => prevVisits.map(v => {
-          if (v.id === visitId) {
-            return { ...v, customTravelTime: newTime };
-          }
-          return v;
-        }));
+      const updateCustomTravelTime = (id, time) => {
+        handleSetVisits(prev => prev.map(v => v.id === id ? { ...v, customTravelTime: time } : v));
       };
 
       const handleDrop = (e, targetNurseId) => {
@@ -248,10 +199,9 @@
         const y = (e.clientY - rect.top) - offsetY;
         const minutes = y / PIXELS_PER_MINUTE + START_HOUR * 60;
         const snappedMinutes = Math.round(minutes / 5) * 5; 
-        const finalMinutes = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, snappedMinutes));
-        const newStartTime = formatTime(finalMinutes);
+        const newStartTime = formatTime(Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, snappedMinutes)));
         
-        handleSetVisits(prevVisits => prevVisits.map(v => {
+        handleSetVisits(prev => prev.map(v => {
           if (v.id === visitId) {
              const original = v.originalStartTime || v.startTime;
              return { ...v, nurseId: targetNurseId, startTime: newStartTime, originalStartTime: original };
@@ -261,237 +211,146 @@
       };
 
       const allSchedules = useMemo(() => {
-        const schedulesByNurse = {};
+        const schedules = {};
         nurses.forEach(nurse => {
           const isOff = (nurse.offDays || []).includes(selectedDay);
-          if (isOff) {
-            schedulesByNurse[nurse.id] = { isOff: true, visits: [] };
-            return;
-          }
-          const assignedVisits = visits.filter(v => v.nurseId === nurse.id && v.dayOfWeek === selectedDay);
-          const sortedVisits = [...assignedVisits].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+          if (isOff) { schedules[nurse.id] = { isOff: true, visits: [] }; return; }
+          const assigned = visits.filter(v => v.nurseId === nurse.id && v.dayOfWeek === selectedDay);
+          const sorted = [...assigned].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
           let currentTime = parseTime(nurse.startTime);
           let calcVisits = [];
           let currentLoc = nurse.startLocation;
-          sortedVisits.forEach((visit) => {
+          sorted.forEach((visit) => {
             const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
-            const calculatedTravelTime = baseTravelTime + Math.round(dist * 0.05);
-            const travelTime = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : calculatedTravelTime;
-            const targetStart = parseTime(visit.startTime);
+            const baseTravel = baseTravelTime + Math.round(dist * 0.05);
+            const travelTime = visit.customTravelTime ?? baseTravel;
             const arrivalTime = currentTime + travelTime;
-            const isLate = arrivalTime > targetStart;
+            const targetStart = parseTime(visit.startTime);
             const actualStart = Math.max(arrivalTime, targetStart);
-            const waitTime = actualStart > arrivalTime ? actualStart - arrivalTime : 0;
             const departureTime = actualStart + visit.duration;
-            calcVisits.push({
-              ...visit, travelTime, waitTime, isLate,
-              arrivalTime: formatTime(arrivalTime),
-              actualStartTime: formatTime(actualStart),
-              departureTime: formatTime(departureTime)
-            });
-            currentTime = departureTime;
-            currentLoc = visit.location;
+            calcVisits.push({ ...visit, travelTime, isLate: arrivalTime > targetStart, waitTime: actualStart - arrivalTime, arrivalTime: formatTime(arrivalTime), actualStartTime: formatTime(actualStart), departureTime: formatTime(departureTime) });
+            currentTime = departureTime; currentLoc = visit.location;
           });
-          let returnTime = null;
-          let finalTravelTime = 0;
+          let finalTravelTime = 0, returnTime = null;
           if (calcVisits.length > 0) {
             const finalDist = Math.sqrt(Math.pow(currentLoc.x - nurse.startLocation.x, 2) + Math.pow(currentLoc.y - nurse.startLocation.y, 2));
             finalTravelTime = baseTravelTime + Math.round(finalDist * 0.05);
             returnTime = formatTime(currentTime + finalTravelTime);
           }
-          schedulesByNurse[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime };
+          schedules[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime };
         });
-        return schedulesByNurse;
+        return schedules;
       }, [nurses, visits, selectedDay, baseTravelTime]);
 
       const schedule = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
       const stats = useMemo(() => {
-        let totalTravel = 0, totalVisit = 0, lateCount = 0;
-        schedule.forEach(s => {
-          totalTravel += s.travelTime; totalVisit += s.duration;
-          if (s.isLate) lateCount++;
-        });
-        if (schedule.length > 0 && selectedNurse) {
-          totalTravel += allSchedules[selectedNurse.id]?.finalTravelTime || 0;
-        }
-        return { totalTravel, totalVisit, count: schedule.length, lateCount };
+        let tt = 0, tv = 0, lc = 0;
+        schedule.forEach(s => { tt += s.travelTime; tv += s.duration; if (s.isLate) lc++; });
+        if (schedule.length > 0 && selectedNurse) { tt += allSchedules[selectedNurse.id]?.finalTravelTime || 0; }
+        return { totalTravel: tt, totalVisit: tv, count: schedule.length, lateCount: lc };
       }, [schedule, allSchedules, selectedNurse]);
 
       const handleAutoAssign = () => {
-        const availableNurses = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
-        if (availableNurses.length === 0) {
-          setToastMessage(`この曜日に出勤している看護師がいません。`);
-          setShowToast(true); setTimeout(() => setShowToast(false), 3000);
-          return;
-        }
+        const available = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
+        if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         setIsOptimizing(true);
         setTimeout(() => {
           const newVisits = [...visits];
-          const unassignedToday = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null);
-          unassignedToday.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
-          const nurseStates = availableNurses.map(n => {
-            const myVisits = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === n.id);
-            if (myVisits.length === 0) return { id: n.id, time: parseTime(n.startTime), loc: n.startLocation };
-            const last = myVisits.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime)).pop();
-            return { id: n.id, time: parseTime(last.startTime) + last.duration, loc: last.location };
+          const todayUnassigned = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+          const states = available.map(n => {
+            const mine = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+            const last = mine.pop();
+            return { id: n.id, time: last ? parseTime(last.departureTime) : parseTime(n.startTime), loc: last ? last.location : n.startLocation };
           });
-          unassignedToday.forEach(visit => {
-            const targetStart = parseTime(visit.startTime);
-            let bestNurse = null, minTravel = Infinity;
-            nurseStates.forEach(ns => {
-              const nurseDef = availableNurses.find(n => n.id === ns.id);
-              if (nurseDef && nurseDef.isLowPriority) return;
-              const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-              const travel = baseTravelTime + Math.round(dist * 0.05);
-              if (ns.time + travel <= targetStart && travel < minTravel) { minTravel = travel; bestNurse = ns; }
+          todayUnassigned.forEach(visit => {
+            let best = null, min = Infinity;
+            states.forEach(s => {
+              const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
+              const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+              if (s.time + travel <= parseTime(visit.startTime) && travel < min) { min = travel; best = s; }
             });
-            if (!bestNurse) {
-              minTravel = Infinity;
-              nurseStates.forEach(ns => {
-                const nurseDef = availableNurses.find(n => n.id === ns.id);
-                if (nurseDef && !nurseDef.isLowPriority) return;
-                const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = baseTravelTime + Math.round(dist * 0.05);
-                if (ns.time + travel <= targetStart && travel < minTravel) { minTravel = travel; bestNurse = ns; }
-              });
+            if (!best) {
+               let earliest = Infinity;
+               states.forEach(s => {
+                 const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
+                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                 if (s.time + travel < earliest) { earliest = s.time + travel; best = s; }
+               });
             }
-            if (!bestNurse) {
-              let earliest = Infinity, isBestNurseLowPriority = true;
-              nurseStates.forEach(ns => {
-                const nurseDef = availableNurses.find(n => n.id === ns.id);
-                const isLow = nurseDef ? !!nurseDef.isLowPriority : false;
-                const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = baseTravelTime + Math.round(dist * 0.05);
-                const arrival = ns.time + travel;
-                if (arrival < earliest || (arrival === earliest && isBestNurseLowPriority && !isLow)) {
-                  earliest = arrival; bestNurse = ns; isBestNurseLowPriority = isLow;
-                }
-              });
-            }
-            if (bestNurse) {
+            if (best) {
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
-              newVisits[vIdx].nurseId = bestNurse.id;
-              const dist = Math.sqrt(Math.pow(visit.location.x - bestNurse.loc.x, 2) + Math.pow(visit.location.y - bestNurse.loc.y, 2));
-              const travel = baseTravelTime + Math.round(dist * 0.05);
-              bestNurse.time = Math.max(bestNurse.time + travel, targetStart) + visit.duration;
-              bestNurse.loc = visit.location;
+              newVisits[vIdx].nurseId = best.id;
+              const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(Math.sqrt(Math.pow(visit.location.x - best.loc.x, 2) + Math.pow(visit.location.y - best.loc.y, 2)) * 0.05));
+              best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + visit.duration;
+              best.loc = visit.location;
             }
           });
-          handleSetVisits(newVisits);
-          setIsOptimizing(false);
-          setToastMessage(`${DAYS[selectedDay]}曜日の担当者を自動編成しました`);
-          setShowToast(true); setTimeout(() => setShowToast(false), 3000);
+          handleSetVisits(newVisits); setIsOptimizing(false); setToastMessage("自動編成完了"); setShowToast(true);
         }, 800);
       };
 
       const handleFetchSheet = async () => {
         setIsLoadingSheet(true);
         try {
-          const response = await fetch(sheetUrl);
-          const text = await response.text();
-          const lines = text.split(/\r\n|\n/);
-          const imported = [];
-          const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
-          for (let i = 1; i < lines.length; i++) {
-            const parts = lines[i].split(',');
-            if (parts.length > 0 && parts[0].trim()) {
-              const name = parts[0].trim(), dayStr = parts[1]?.trim(), dayOfWeek = dayMap[dayStr] ?? 1;
-              let start = parts[2]?.trim() || '09:00'; if (start.length === 4) start = '0' + start;
-              imported.push({
-                id: Date.now() + i, userName: name.includes('様') ? name : `${name} 様`,
-                location: getHashLoc(name), duration: parseInt(parts[3]) || 30,
-                dayOfWeek, startTime: start, originalStartTime: start, nurseId: null
-              });
+          const res = await fetch(sheetUrl);
+          const txt = await res.text();
+          const rows = txt.split(/\r\n|\n/);
+          const map = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
+          const result = [];
+          for (let i = 1; i < rows.length; i++) {
+            const p = rows[i].split(',');
+            if (p[0]?.trim()) {
+              let st = p[2]?.trim() || '09:00'; if (st.length === 4) st = '0' + st;
+              result.push({ id: Date.now() + i, userName: p[0].includes('様') ? p[0] : p[0] + ' 様', location: getHashLoc(p[0]), duration: parseInt(p[3]) || 30, dayOfWeek: map[p[1]?.trim()] ?? 1, startTime: st, originalStartTime: st, nurseId: null });
             }
           }
-          const merged = imported.map(newV => {
-            const existing = visits.find(v => normalizeName(v.userName) === normalizeName(newV.userName) && v.dayOfWeek === newV.dayOfWeek && v.originalStartTime === newV.originalStartTime);
-            return existing ? { ...newV, id: existing.id, nurseId: existing.nurseId, startTime: existing.startTime, customTravelTime: existing.customTravelTime } : newV;
+          const merged = result.map(nv => {
+            const ex = visits.find(v => normalizeName(v.userName) === normalizeName(nv.userName) && v.dayOfWeek === nv.dayOfWeek && v.originalStartTime === nv.originalStartTime);
+            return ex ? { ...nv, id: ex.id, nurseId: ex.nurseId, startTime: ex.startTime, customTravelTime: ex.customTravelTime } : nv;
           });
-          handleSetVisits(merged);
-          setToastMessage(`スケジュールを同期しました`);
-          setShowToast(true); setTimeout(() => setShowToast(false), 4000);
-        } catch (e) { setToastMessage("読み込み失敗"); setShowToast(true); }
-        finally { setIsLoadingSheet(false); }
+          handleSetVisits(merged); setToastMessage("利用者同期成功"); setShowToast(true);
+        } catch (e) { setToastMessage("同期失敗"); setShowToast(true); } finally { setIsLoadingSheet(false); }
       };
 
       const handleFetchNurseSheet = async () => {
         setIsLoadingNurseSheet(true);
         try {
-          const response = await fetch(nurseSheetUrl);
-          const text = await response.text();
-          const lines = text.split(/\r\n|\n/);
-          const imported = [];
-          const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
-          for (let i = 1; i < lines.length; i++) {
-            const parts = lines[i].split(',');
-            if (parts.length > 0 && parts[0].trim()) {
-              const name = parts[0].trim();
-              let start = parts[1]?.trim() || '08:30'; if (start.length === 4) start = '0' + start;
-              let offDays = [];
-              Object.keys(dayMap).forEach(d => { if (parts[2]?.includes(d)) offDays.push(dayMap[d]); });
-              imported.push({
-                id: Date.now() + i, name, startLocation: { x: 50, y: 50 },
-                color: colors[imported.length % colors.length], startTime: start,
-                offDays, isLowPriority: parts[3]?.includes('低')
-              });
+          const res = await fetch(nurseSheetUrl);
+          const txt = await res.text();
+          const rows = txt.split(/\r\n|\n/);
+          const map = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
+          const result = [];
+          for (let i = 1; i < rows.length; i++) {
+            const p = rows[i].split(',');
+            if (p[0]?.trim()) {
+              let st = p[1]?.trim() || '08:30'; if (st.length === 4) st = '0' + st;
+              let off = []; Object.keys(map).forEach(d => { if (p[2]?.includes(d)) off.push(map[d]); });
+              result.push({ id: Date.now() + i, name: p[0].trim(), startLocation: { x: 50, y: 50 }, color: colors[result.length % colors.length], startTime: st, offDays: off, isLowPriority: p[3]?.includes('低') });
             }
           }
-          handleSetNurses(imported);
-          setToastMessage(`看護師リストを読み込みました`);
-          setShowToast(true); setTimeout(() => setShowToast(false), 4000);
-        } catch (e) { setToastMessage("読み込み失敗"); setShowToast(true); }
-        finally { setIsLoadingNurseSheet(false); }
+          handleSetNurses(result); setToastMessage("看護師同期成功"); setShowToast(true);
+        } catch (e) { setToastMessage("同期失敗"); setShowToast(true); } finally { setIsLoadingNurseSheet(false); }
       };
 
-      // 定義漏れしていた変数を追加
       const unassignedCount = visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).length;
 
       return (
         <div className="flex h-screen bg-slate-50 text-slate-800 font-sans">
           <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col hidden md:flex shrink-0">
-            <div className="p-6">
-              <div className="flex items-center gap-2 text-white font-bold text-xl mb-1">
-                <Activity className="text-teal-400" />
-                <span>CareRoute</span>
-              </div>
-              <p className="text-xs text-slate-500">定期訪問スケジュール同期版</p>
-            </div>
+            <div className="p-6"><div className="flex items-center gap-2 text-white font-bold text-xl mb-1"><Activity className="text-teal-400" /><span>CareRoute</span></div><p className="text-xs text-slate-500">定期訪問スケジュール同期版</p></div>
             <nav className="flex-1 px-4 space-y-2">
-              <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-                <Columns size={20} /> 全体スケジュール
-              </button>
-              <button onClick={() => setActiveTab('schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'schedule' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-                <Calendar size={20} /> 個別・ルート確認
-              </button>
-              <button onClick={() => setActiveTab('visits')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'visits' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-                <Users size={20} /> 利用者管理
-              </button>
-              <button onClick={() => setActiveTab('nurses')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'nurses' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-                <UserCog size={20} /> 看護師管理
-              </button>
+              <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Columns size={20} /> 全体スケジュール</button>
+              <button onClick={() => setActiveTab('schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'schedule' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Calendar size={20} /> 個別・ルート確認</button>
+              <button onClick={() => setActiveTab('visits')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'visits' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Users size={20} /> 利用者管理</button>
+              <button onClick={() => setActiveTab('nurses')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'nurses' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><UserCog size={20} /> 看護師管理</button>
             </nav>
-            <div className="p-4 bg-slate-800 m-4 rounded-xl text-center">
-              <div className="flex justify-center items-center gap-1.5 text-xs text-emerald-400 font-bold mb-1">
-                {db && user ? (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                    クラウド同期中
-                  </>
-                ) : (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-slate-400"></div>
-                    接続待機中...
-                  </>
-                )}
-              </div>
-              <p className="text-[10px] text-slate-400">データはチームで自動共有されます</p>
-            </div>
+            <div className="p-4 bg-slate-800 m-4 rounded-xl text-center"><div className="flex justify-center items-center gap-1.5 text-xs text-emerald-400 font-bold mb-1">
+              {db && user ? <><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>クラウド同期中</> : <><div className="w-2 h-2 rounded-full bg-slate-400"></div>接続待機中...</>}
+            </div><p className="text-[10px] text-slate-400">チームで自動共有されます</p></div>
           </aside>
 
           <main className="flex-1 flex flex-col overflow-hidden">
-            <header className="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center shrink-0">
-              <div className="flex items-center gap-2 font-bold"><Activity className="text-teal-400" size={20} />CareRoute</div>
+            <header className="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center shrink-0"><div className="flex items-center gap-2 font-bold"><Activity className="text-teal-400" size={20} />CareRoute</div>
               <div className="flex gap-4">
                 <button onClick={() => setActiveTab('overview')} className={activeTab === 'overview' ? 'text-teal-400' : 'text-slate-400'}><Columns size={20} /></button>
                 <button onClick={() => setActiveTab('schedule')} className={activeTab === 'schedule' ? 'text-teal-400' : 'text-slate-400'}><Calendar size={20} /></button>
@@ -502,14 +361,8 @@
 
             {activeTab !== 'nurses' && (
               <div className="bg-white border-b border-slate-200 p-4 shadow-sm z-10 flex items-center gap-4 overflow-x-auto shrink-0">
-                <div className="flex items-center gap-2 text-slate-500 font-medium whitespace-nowrap">
-                  <CalendarDays size={18} /> 対象曜日:
-                </div>
-                <div className="flex gap-2">
-                  {DAYS.map((day, idx) => (
-                    <button key={idx} onClick={() => setSelectedDay(idx)} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-colors shrink-0 ${selectedDay === idx ? 'bg-teal-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{day}</button>
-                  ))}
-                </div>
+                <div className="flex items-center gap-2 text-slate-500 font-medium whitespace-nowrap"><CalendarDays size={18} /> 対象曜日:</div>
+                <div className="flex gap-2">{DAYS.map((day, idx) => (<button key={idx} onClick={() => setSelectedDay(idx)} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-colors shrink-0 ${selectedDay === idx ? 'bg-teal-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{day}</button>))}</div>
               </div>
             )}
 
@@ -519,85 +372,52 @@
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <div className="flex flex-wrap items-center gap-4">
                       <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の全体スケジュール</h1>
-                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
-                        <Clock size={14} className="text-slate-400" />
-                        <span className="text-xs font-bold text-slate-600">基本移動:</span>
-                        <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"/>
-                        <span className="text-xs text-slate-500">分</span>
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm"><Clock size={14} className="text-slate-400" /><span className="text-xs font-bold text-slate-600">基本移動:</span>
+                        <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"/><span className="text-xs text-slate-500">分</span>
                       </div>
                     </div>
-                    <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0} className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm whitespace-nowrap">
-                      <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} /> 未割り当てを自動編成
-                    </button>
+                    <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0} className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm whitespace-nowrap"><RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} /> 未割り当てを自動編成</button>
                   </div>
-                  {nurses.length === 0 ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 bg-white rounded-xl border border-slate-200 shadow-sm p-12">
-                      <UserCog size={48} className="mb-4 opacity-20" />
-                      <p className="text-lg font-medium text-slate-600 mb-2">看護師が登録されていません</p>
-                    </div>
-                  ) : (
+                  {nurses.length === 0 ? <div className="flex-1 flex flex-col items-center justify-center text-slate-500 bg-white rounded-xl border border-slate-200 shadow-sm p-12"><UserCog size={48} className="mb-4 opacity-20" /><p className="text-lg font-medium text-slate-600 mb-2">看護師が登録されていません</p></div> : (
                     <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-auto relative">
                       <div className="min-w-max">
                         <div className="flex sticky top-0 z-30 bg-slate-50 border-b border-slate-200 shadow-sm">
                           <div className="w-16 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-xs font-bold text-slate-500 sticky left-0 z-40">時間</div>
-                          <div className="w-56 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 bg-white">
-                             <div className="font-bold text-slate-700 text-sm">未割り当て</div>
-                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-600'} text-xs font-bold px-2 py-0.5 rounded-full mt-1`}>{unassignedCount}件</div>
-                          </div>
+                          <div className="w-56 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 bg-white"><div className="font-bold text-slate-700 text-sm">未割り当て</div><div className={`${unassignedCount > 0 ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-600'} text-xs font-bold px-2 py-0.5 rounded-full mt-1`}>{unassignedCount}件</div></div>
                           {nurses.map(nurse => {
-                            const isOff = (nurse.offDays || []).includes(selectedDay);
-                            const assignedVisits = allSchedules[nurse.id]?.visits || [];
+                            const isOff = (nurse.offDays || []).includes(selectedDay), assigned = allSchedules[nurse.id]?.visits || [];
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 ${isOff ? 'w-12 bg-slate-100' : 'w-56 bg-white'}`} style={{ backgroundColor: isOff ? '#f8fafc' : nurse.color + '10' }}>
-                                {isOff ? (
-                                  <><div className="text-xs font-bold text-slate-400 mb-1 truncate" style={{ writingMode: 'vertical-rl' }}>{nurse.name.split(/[\s　]/)[0]}</div><div className="text-xs font-bold text-red-400">休</div></>
-                                ) : (
-                                  <><div className="font-bold text-slate-800 text-sm flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div><div className="text-xs font-bold text-slate-500 mt-1">{assignedVisits.length}件</div></>
-                                )}
+                                {isOff ? <><div className="text-xs font-bold text-slate-400 mb-1 truncate" style={{ writingMode: 'vertical-rl' }}>{nurse.name.split(/[\s　]/)[0]}</div><div className="text-xs font-bold text-red-400">休</div></> : <><div className="font-bold text-slate-800 text-sm flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div><div className="text-xs font-bold text-slate-500 mt-1">{assigned.length}件</div></>}
                               </div>
                             )
                           })}
                         </div>
                         <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }}>
-                          <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20">
-                            {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
-                              <div key={i} className="absolute w-full text-right pr-2 text-xs font-medium text-slate-400" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{START_HOUR + i}:00</div>
-                            ))}
-                          </div>
-                          <div className="absolute left-16 right-0 inset-y-0 pointer-events-none z-0">
-                            {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
-                              <div key={i} className="absolute w-full border-t border-slate-200" style={{ top: i * 60 * PIXELS_PER_MINUTE }}></div>
-                            ))}
-                          </div>
+                          <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20">{Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (<div key={i} className="absolute w-full text-right pr-2 text-xs font-medium text-slate-400" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{START_HOUR + i}:00</div>))}</div>
+                          <div className="absolute left-16 right-0 inset-y-0 pointer-events-none z-0">{Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (<div key={i} className="absolute w-full border-t border-slate-200" style={{ top: i * 60 * PIXELS_PER_MINUTE }}></div>))}</div>
                           <div className="w-56 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/30" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
                                  <div key={v.id} draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow cursor-move" style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}>
                                    <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{v.userName}</div>
-                                   <div className="text-[10px] text-slate-500 font-medium mt-auto">
-                                     {v.originalStartTime && v.originalStartTime !== v.startTime ? <span className="text-orange-600 font-bold">{v.originalStartTime} ➔ {v.startTime}</span> : <span>{v.startTime}</span>}
-                                   </div>
+                                   <div className="text-[10px] text-slate-500 font-medium mt-auto">{v.originalStartTime && v.originalStartTime !== v.startTime ? <span className="text-orange-600 font-bold">{v.originalStartTime} ➔ {v.startTime}</span> : <span>{v.startTime}</span>}</div>
                                  </div>
                                )
                              })}
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = (nurse.offDays || []).includes(selectedDay);
-                            const scheduleData = allSchedules[nurse.id], assignedVisits = scheduleData?.visits || [];
+                            const isOff = (nurse.offDays || []).includes(selectedDay), scheduleData = allSchedules[nurse.id], assigned = scheduleData?.visits || [];
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-12 bg-slate-50/80' : 'w-56'}`} onDragOver={(e) => { if (!isOff) e.preventDefault(); }} onDrop={(e) => { if (!isOff) handleDrop(e, nurse.id); }}>
-                                {isOff ? (
-                                  <div className="absolute inset-0 flex items-center justify-center text-slate-300 pointer-events-none"><div className="sticky top-1/2 -translate-y-1/2 flex flex-col items-center"><CalendarDays size={16} className="mb-3 opacity-50" /><div className="text-sm font-bold tracking-widest opacity-60" style={{ writingMode: 'vertical-rl' }}>お休み</div></div></div>
-                                ) : (
-                                  <>
-                                    {assignedVisits.map((item, idx) => {
+                                {isOff ? <div className="absolute inset-0 flex items-center justify-center text-slate-300 pointer-events-none"><div className="sticky top-1/2 -translate-y-1/2 flex flex-col items-center"><CalendarDays size={16} className="mb-3 opacity-50" /><div className="text-sm font-bold tracking-widest opacity-60" style={{ writingMode: 'vertical-rl' }}>お休み</div></div></div> : (
+                                  <>{assigned.map((item, idx) => {
                                       const top = getTop(parseTime(item.actualStartTime)), height = item.duration * PIXELS_PER_MINUTE;
-                                      let prevDep = idx === 0 ? parseTime(nurse.startTime) : parseTime(assignedVisits[idx-1].departureTime);
+                                      let prevDep = idx === 0 ? parseTime(nurse.startTime) : parseTime(assigned[idx-1].departureTime);
                                       const arrival = parseTime(item.arrivalTime), travelHeight = (arrival - prevDep) * PIXELS_PER_MINUTE;
                                       return (
-                                        <React.Fragment key={item.id}>
-                                          {travelHeight > 0 && (
+                                        <React.Fragment key={item.id}>{travelHeight > 0 && (
                                             <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
                                               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1 py-0.5 rounded-full border border-slate-200 shadow-sm z-20 flex items-center pointer-events-auto">
                                                 <input type="number" min="0" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value, 10))} className={`w-6 text-center bg-transparent outline-none ${item.customTravelTime ? 'text-teal-600 font-bold' : ''}`}/>分
@@ -606,18 +426,14 @@
                                           )}
                                           <div draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 cursor-move ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                             <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.userName}</div>
-                                            <div className="mt-auto flex flex-col justify-end text-[10px] text-slate-500">
-                                              {item.originalStartTime && item.originalStartTime !== item.startTime && <div className="text-orange-600 font-bold text-[9px] mb-0.5">元: {item.originalStartTime}</div>}
-                                              <div className="flex justify-between w-full"><span className={item.originalStartTime !== item.startTime ? 'text-orange-600 font-bold' : ''}>指: {item.startTime}</span><span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span></div>
-                                            </div>
+                                            <div className="mt-auto flex flex-col justify-end text-[10px] text-slate-500">{item.originalStartTime && item.originalStartTime !== item.startTime && <div className="text-orange-600 font-bold text-[9px] mb-0.5">元: {item.originalStartTime}</div>}<div className="flex justify-between w-full"><span className={item.originalStartTime !== item.startTime ? 'text-orange-600 font-bold' : ''}>指: {item.startTime}</span><span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span></div></div>
                                           </div>
                                         </React.Fragment>
                                       )
-                                    })}
-                                  </>
+                                    })}</>
                                 )}
                               </div>
-                            );
+                            )
                           })}
                         </div>
                       </div>
@@ -629,81 +445,16 @@
                 <div className="max-w-6xl mx-auto space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の個別・ルート確認</h1>
-                    <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm overflow-x-auto max-w-full">
-                      {nurses.map(nurse => {
-                        const isOff = (nurse.offDays || []).includes(selectedDay);
-                        return (
-                          <button key={nurse.id} onClick={() => setSelectedNurseId(nurse.id)}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-1 whitespace-nowrap 
-                              ${selectedNurseId === nurse.id ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}
-                              ${isOff ? 'opacity-50 line-through' : ''}`}
-                          >
-                            {nurse.name} {isOff && '(休)'}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm overflow-x-auto max-w-full">{nurses.map(n => { const isOff = (n.offDays || []).includes(selectedDay); return (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${selectedNurseId === n.id ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'} ${isOff ? 'opacity-50 line-through' : ''}`}>{n.name} {isOff && '(休)'}</button>); })}</div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Users size={24} /></div>
-                      <div><p className="text-sm text-slate-500 font-medium">訪問件数</p><p className="text-2xl font-bold">{stats.count} 件</p></div>
-                    </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={24} /></div>
-                      <div><p className="text-sm text-slate-500 font-medium">移動合計</p><p className="text-2xl font-bold">{stats.totalTravel} 分</p></div>
-                    </div>
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600"><AlertTriangle size={24} /></div>
-                      <div><p className="text-sm text-slate-500 font-medium">時間超過・遅刻</p><p className={`text-2xl font-bold ${stats.lateCount > 0 ? 'text-red-500' : 'text-slate-800'}`}>{stats.lateCount} 件</p></div>
-                    </div>
-                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4"><div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Users size={24} /></div><div><p className="text-sm text-slate-500 font-medium">訪問件数</p><p className="text-2xl font-bold">{stats.count} 件</p></div></div><div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4"><div className="w-12 h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={24} /></div><div><p className="text-sm text-slate-500 font-medium">移動合計</p><p className="text-2xl font-bold">{stats.totalTravel} 分</p></div></div><div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4"><div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600"><AlertTriangle size={24} /></div><div><p className="text-sm text-slate-500 font-medium">時間超過</p><p className={`text-2xl font-bold ${stats.lateCount > 0 ? 'text-red-500' : 'text-slate-800'}`}>{stats.lateCount} 件</p></div></div></div>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                      <h2 className="text-lg font-bold flex items-center gap-2 mb-6"><Clock className="text-slate-400" /> スケジュール詳細</h2>
-                      <div className="relative">
-                        <div className="absolute left-[21px] top-4 bottom-4 w-0.5 bg-slate-200"></div>
-                        <div className="space-y-6">
-                          <div className="relative flex items-center gap-4 z-10">
-                            <div className="w-11 h-11 rounded-full bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-600 shrink-0"><MapPin size={20} /></div>
-                            <div><p className="font-bold text-slate-800">ステーション出発</p><p className="text-sm text-slate-500">勤務開始 {selectedNurse?.startTime}</p></div>
-                          </div>
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6"><h2 className="text-lg font-bold flex items-center gap-2 mb-6"><Clock className="text-slate-400" /> スケジュール詳細</h2><div className="relative"><div className="absolute left-[21px] top-4 bottom-4 w-0.5 bg-slate-200"></div><div className="space-y-6"><div className="relative flex items-center gap-4 z-10"><div className="w-11 h-11 rounded-full bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-600 shrink-0"><MapPin size={20} /></div><div><p className="font-bold text-slate-800">ステーション出発</p><p className="text-sm text-slate-500">勤務開始 {selectedNurse?.startTime}</p></div></div>
                           {schedule.map((item, idx) => (
-                            <div key={item.id} className="relative z-10">
-                              <div className={`ml-16 mb-2 flex items-center gap-2 text-xs font-medium py-1 px-3 rounded-full w-max border ${item.isLate ? 'bg-red-50 text-red-600 border-red-200' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
-                                <ArrowRight size={12} /> 移動: <input type="number" min="0" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value, 10))} className={`w-10 text-center bg-transparent border-b border-slate-300 outline-none ${item.customTravelTime ? 'text-teal-600 font-bold' : ''}`}/> 分 
-                                {item.customTravelTime && <button onClick={() => updateCustomTravelTime(item.id, null)} className="text-[10px] text-slate-400 ml-1 underline">自動</button>}
-                              </div>
-                              <div className="flex gap-4 items-start">
-                                <div className="w-11 h-11 rounded-full text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-sm" style={{ backgroundColor: selectedNurse?.color }}>{idx + 1}</div>
-                                <div className={`bg-white border-l-4 rounded-r-lg border-y border-r p-4 flex-1 shadow-sm ${item.isLate ? 'border-l-red-500 border-y-red-200 border-r-red-200 bg-red-50/30' : 'border-l-teal-500 border-y-slate-200 border-r-slate-200'}`}>
-                                  <div className="flex justify-between items-start mb-2"><h4 className="font-bold text-slate-800 text-lg">{item.userName}</h4><span className="text-sm font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded">{item.duration}分</span></div>
-                                  <div className="flex items-center gap-2 text-sm"><span className="w-16 text-slate-500">指定時間:</span><span className="font-bold text-slate-800">{item.startTime}</span></div>
-                                  <div className="flex items-center gap-2 text-sm"><span className="w-16 text-slate-500">到着予定:</span><span className={item.isLate ? 'text-red-600 font-bold' : 'text-slate-600'}>{item.arrivalTime}</span></div>
-                                </div>
-                              </div>
-                            </div>
+                            <div key={item.id} className="relative z-10"><div className={`ml-16 mb-2 flex items-center gap-2 text-xs font-medium py-1 px-3 rounded-full w-max border ${item.isLate ? 'bg-red-50 text-red-600 border-red-200' : 'bg-slate-50 text-slate-500 border-slate-100'}`}><ArrowRight size={12} /> 移動: <input type="number" min="0" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value, 10))} className={`w-10 text-center bg-transparent border-b border-slate-300 outline-none ${item.customTravelTime ? 'text-teal-600 font-bold' : ''}`}/> 分 {item.customTravelTime && <button onClick={() => updateCustomTravelTime(item.id, null)} className="text-[10px] text-slate-400 ml-1 underline">自動</button>}</div><div className="flex gap-4 items-start"><div className="w-11 h-11 rounded-full text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-sm" style={{ backgroundColor: selectedNurse?.color }}>{idx + 1}</div><div className={`bg-white border-l-4 rounded-r-lg border-y border-r p-4 flex-1 shadow-sm ${item.isLate ? 'border-l-red-500 border-y-red-200 border-r-red-200 bg-red-50/30' : 'border-l-teal-500 border-y-slate-200 border-r-slate-200'}`}><div className="flex justify-between items-start mb-2"><h4 className="font-bold text-slate-800 text-lg">{item.userName}</h4><span className="text-sm font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded">{item.duration}分</span></div><div className="flex flex-col gap-1 text-sm"><div className="flex gap-2"><span className="w-16 text-slate-500">指定:</span><span className="font-bold">{item.startTime}</span></div><div className="flex gap-2"><span className="w-16 text-slate-500">到着:</span><span className={item.isLate ? 'text-red-600 font-bold' : 'text-slate-600'}>{item.arrivalTime}</span></div></div></div></div></div>
                           ))}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col h-[600px] lg:h-auto">
-                       <h2 className="text-lg font-bold flex items-center gap-2 mb-4"><MapIcon className="text-slate-400" /> ルートマップ</h2>
-                       <div className="flex-1 bg-slate-50 rounded-lg border border-slate-200 overflow-hidden relative">
-                         <svg viewBox="-10 -10 120 120" className="w-full h-full">
-                           {visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).map(visit => (
-                             <circle key={visit.id} cx={visit.location.x} cy={visit.location.y} r="2.5" fill="#cbd5e1" className="animate-pulse"/>
-                           ))}
-                           {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => {
-                             const prev = i === 0 ? selectedNurse.startLocation : schedule[i-1].location;
-                             return <line key={visit.id} x1={prev.x} y1={prev.y} x2={visit.location.x} y2={visit.location.y} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.2" strokeDasharray="2 2" />
-                           })}
-                           {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => (
-                             <g key={visit.id}><circle cx={visit.location.x} cy={visit.location.y} r="3.5" fill={visit.isLate ? '#fee2e2' : '#fff'} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.5" /><text x={visit.location.x} y={visit.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{visit.userName}</text></g>
-                           ))}
-                         </svg>
-                       </div>
-                    </div>
+                        </div></div></div>
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col h-[600px] lg:h-auto"><h2 className="text-lg font-bold flex items-center gap-2 mb-4"><MapIcon className="text-slate-400" /> ルートマップ</h2><div className="flex-1 bg-slate-50 rounded-lg border border-slate-200 overflow-hidden relative"><svg viewBox="-10 -10 120 120" className="w-full h-full">{visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).map(v => (<circle key={v.id} cx={v.location.x} cy={v.location.y} r="2.5" fill="#cbd5e1" className="animate-pulse"/>))}{!isSelectedNurseOff && selectedNurse && schedule.map((v, i) => { const prev = i === 0 ? selectedNurse.startLocation : schedule[i-1].location; return <line key={v.id} x1={prev.x} y1={prev.y} x2={v.location.x} y2={v.location.y} stroke={v.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.2" strokeDasharray="2 2" /> })}{!isSelectedNurseOff && selectedNurse && schedule.map((v, i) => (<g key={v.id}><circle cx={v.location.x} cy={v.location.y} r="3.5" fill={v.isLate ? '#fee2e2' : '#fff'} stroke={v.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.5" /><text x={v.location.x} y={v.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{v.userName}</text></g>))}</svg></div></div>
                   </div>
                 </div>
               )}
@@ -711,26 +462,20 @@
                 <div className="max-w-6xl mx-auto space-y-6">
                   <h1 className="text-2xl font-bold text-slate-800">利用者スケジュールの管理</h1>
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
-                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-blue-600"/> 同期設定</h2>
-                      <button onClick={handleFetchSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">最新データを再読み込み</button>
-                    </div>
-                    <div className="border border-slate-200 rounded-lg overflow-hidden">
-                      <button type="button" onClick={() => setShowUserSheetConfig(!showUserSheetConfig)} className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100"><span>URL設定</span><span className="text-xs text-slate-400">変更</span></button>
-                      {showUserSheetConfig && <div className="p-4 bg-white border-t border-slate-200"><input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full border border-slate-300 rounded p-2 text-sm"/></div>}
-                    </div>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4"><h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-blue-600"/> スプレッドシート同期</h2><button onClick={handleFetchSheet} disabled={isLoadingSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">{isLoadingSheet ? <RefreshCw className="animate-spin" size={16}/> : "利用者データを更新"}</button></div>
+                    <div className="border border-slate-200 rounded-lg overflow-hidden"><button type="button" onClick={() => setShowUserSheetConfig(!showUserSheetConfig)} className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100"><span>URL設定 (ウェブに公開済みCSV)</span><span className="text-xs text-slate-400">{showUserSheetConfig ? '閉じる' : '変更'}</span></button>{showUserSheetConfig && <div className="p-4 bg-white border-t border-slate-200"><input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full border border-slate-300 rounded p-2 text-sm outline-none focus:ring-1 focus:ring-blue-500"/></div>}</div>
                   </div>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div className="bg-slate-50 p-4 border-b border-slate-200 text-sm font-bold">{DAYS[selectedDay]}曜日の利用者リスト</div><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead><tr className="bg-white text-slate-500 text-xs border-b border-slate-200"><th className="p-4 font-medium">時間</th><th className="p-4 font-medium">利用者名</th><th className="p-4 font-medium">所要</th><th className="p-4 font-medium">担当者</th></tr></thead><tbody className="divide-y divide-slate-100">{visits.filter(v => v.dayOfWeek === selectedDay).map(v => (<tr key={v.id} className="hover:bg-slate-50 transition-colors text-sm"><td className="p-4 font-bold">{v.startTime}</td><td className="p-4">{v.userName}</td><td className="p-4">{v.duration}分</td><td className="p-4"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="border rounded p-1 text-xs outline-none">{<option value="unassigned">未指定</option>}{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td></tr>))}</tbody></table></div></div>
                 </div>
               )}
               {activeTab === 'nurses' && (
                 <div className="max-w-6xl mx-auto space-y-6">
                   <h1 className="text-2xl font-bold text-slate-800">看護師の管理</h1>
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
-                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-blue-600"/> 同期設定</h2>
-                      <button onClick={handleFetchNurseSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">名簿を再読み込み</button>
-                    </div>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4"><h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-emerald-600"/> スプレッドシート同期</h2><button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">{isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={16}/> : "名簿を再読み込み"}</button></div>
+                    <div className="border border-slate-200 rounded-lg overflow-hidden"><button type="button" onClick={() => setShowNurseSheetConfig(!showNurseSheetConfig)} className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100"><span>名簿URL設定 (ウェブに公開済みCSV)</span><span className="text-xs text-slate-400">{showNurseSheetConfig ? '閉じる' : '変更'}</span></button>{showNurseSheetConfig && <div className="p-4 bg-white border-t border-slate-200"><input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full border border-slate-300 rounded p-2 text-sm outline-none focus:ring-1 focus:ring-emerald-500"/></div>}</div>
                   </div>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div className="bg-slate-50 p-4 border-b border-slate-200 text-sm font-bold">現在の看護師リスト</div><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead><tr className="bg-white text-slate-500 text-xs border-b border-slate-200"><th className="p-4 font-medium">カラー</th><th className="p-4 font-medium">氏名</th><th className="p-4 font-medium">勤務開始</th><th className="p-4 font-medium">休日</th><th className="p-4 font-medium">優先度</th></tr></thead><tbody className="divide-y divide-slate-100">{nurses.map(n => (<tr key={n.id} className="hover:bg-slate-50 transition-colors text-sm"><td className="p-4"><div className="w-4 h-4 rounded-full" style={{ backgroundColor: n.color }}></div></td><td className="p-4 font-bold">{n.name}</td><td className="p-4">{n.startTime}</td><td className="p-4 text-xs text-slate-500">{n.offDays?.length > 0 ? n.offDays.map(d => DAYS[d]).join('・') : 'なし'}</td><td className="p-4 text-xs">{n.isLowPriority ? '低' : '通常'}</td></tr>))}</tbody></table></div></div>
                 </div>
               )}
             </div>
