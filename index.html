@@ -39,7 +39,7 @@
     .timeline-shadow { box-shadow: inset -10px 0 10px -10px rgba(0,0,0,0.1); }
     
     /* カード内のテキストが消えないよう最小高さを確保 */
-    .visit-card { min-height: 38px; display: flex; flex-direction: column; }
+    .visit-card { min-height: 48px; display: flex; flex-direction: column; }
   </style>
 </head>
 <body>
@@ -82,7 +82,8 @@
 
     const START_HOUR = 7;
     const END_HOUR = 19;
-    const PIXELS_PER_MINUTE = 1.5;
+    // タイムラインの縦幅を少し広げて、30分のカードでも文字が見切れないように調整
+    const PIXELS_PER_MINUTE = 2.0; 
     const getTop = (minutes) => (minutes - START_HOUR * 60) * PIXELS_PER_MINUTE;
 
     const parseTime = (timeStr) => {
@@ -105,9 +106,6 @@
       return { x: Math.abs(hash % 80) + 10, y: Math.abs((hash >> 3) % 80) + 10 };
     };
 
-    // --- 月曜スタートへの変更 ---
-    // JavaScriptのDateのgetDay()は日曜=0, 月曜=1...なので、内部の判定ではこれを考慮しますが、
-    // UI表示用の配列は月曜スタートにします。
     const DISPLAY_DAYS = ['月', '火', '水', '木', '金', '土', '日'];
     const JS_DAY_TO_DISPLAY_INDEX = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 0: 6 };
     const DISPLAY_INDEX_TO_JS_DAY = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 0 };
@@ -118,7 +116,6 @@
     const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
     const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
 
-    // 日付表示のフォーマット関数
     const formatDateLabel = (dateStr) => {
       if (!dateStr) return '';
       const d = new Date(dateStr);
@@ -126,7 +123,6 @@
       return `${d.getMonth() + 1}/${d.getDate()}(${JS_DAYS[d.getDay()]})`;
     };
 
-    // 看護師が休みかどうかを判定する関数 (固定休 + 特定休)
     const isNurseOff = (nurse, dateStr) => {
       if (!nurse || !dateStr) return false;
       const d = new Date(dateStr);
@@ -139,13 +135,29 @@
       return false;
     };
 
+    // リロード時にローカルの「本日」を基準にするための処理
+    const getTodayStr = () => {
+      const d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().split('T')[0];
+    };
+    
+    const getMondayStr = (dateStr) => {
+      const d = new Date(dateStr);
+      const day = d.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      d.setDate(d.getDate() + diff);
+      return d.toISOString().split('T')[0];
+    };
+
     function App() {
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
       const [activeTab, setActiveTab] = useState('overview');
       
-      const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-      const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+      // 初期値として常に「今日」を設定（Firebaseからは同期しない）
+      const [startDate, setStartDate] = useState(getMondayStr(getTodayStr()));
+      const [selectedDate, setSelectedDate] = useState(getTodayStr());
       
       const [nurses, setNurses] = useState([]);
       const [visits, setVisits] = useState([]);
@@ -196,9 +208,9 @@
             if (data.sheetUrl) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
-            if (data.startDate) setStartDate(data.startDate);
+            // ※startDateの同期を削除し、各ユーザーが独立して日付を選択できるようにしました。
           } else {
-            setDoc(docRef, { nurses: "[]", visits: "[]", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 10, startDate: new Date().toISOString().split('T')[0] });
+            setDoc(docRef, { nurses: "[]", visits: "[]", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 10 });
           }
           setIsSyncing(false);
         }, (err) => { console.error(err); setIsSyncing(false); });
@@ -234,16 +246,14 @@
       
       const handleSetStartDate = (dateStr) => {
         setStartDate(dateStr);
-        updateCloudData({ startDate: dateStr });
+        // 同期から外したためupdateCloudDataは呼ばない
       };
 
-      // startDateから1週間の日付リストを生成 (月曜スタートに並び替える)
       const displayDates = useMemo(() => {
         if (!startDate) return [];
         const dates = [];
         const start = new Date(startDate);
         
-        // 選択された開始日が何曜日かに関わらず、その週の「月曜日」を基準日とする
         const startJsDay = start.getDay();
         const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
         start.setDate(start.getDate() + diffToMonday);
@@ -869,13 +879,13 @@
                       <button 
                         onClick={() => setShowResetConfirm(true)}
                         disabled={!hasAssignedVisits}
-                        className="flex-1 md:flex-none bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-4 py-3 rounded-2xl font-black text-sm shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
+                        className="flex-1 md:flex-none bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-4 py-1.5 md:py-3 rounded-2xl font-black text-sm shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
                       >
                         <Undo size={18} />
                         リセット
                       </button>
                       <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
-                        className="flex-[2] md:flex-none bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50 whitespace-nowrap">
+                        className="flex-[2] md:flex-none bg-teal-600 hover:bg-teal-700 text-white px-6 py-1.5 md:py-3 rounded-2xl font-black text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50 whitespace-nowrap">
                         <RefreshCw size={18} className={isOptimizing ? "animate-spin" : ""} />
                         {isOptimizing ? "編成中..." : "未割り当てを自動編成"}
                       </button>
@@ -918,19 +928,21 @@
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
                                  <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                   className={`absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card ${v.requiresFemaleNurse || v.preferredNurseName ? 'ring-1 ring-slate-200' : ''}`} 
-                                   style={{ top: `${top}px`, height: `${Math.max(height, 44)}px` }}>
-                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600 flex-1">
-                                     {v.userName}
-                                     <div className="flex flex-wrap gap-0.5 mt-0.5">
-                                       {v.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                       {v.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{v.preferredNurseName}</span>}
+                                   className={`absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card ${v.requiresFemaleNurse || v.preferredNurseName ? 'ring-1 ring-slate-200' : ''}`} 
+                                   style={{ top: `${top}px`, height: `${Math.max(height, 48)}px` }}>
+                                   <div className="flex justify-between items-start gap-1">
+                                     <div className="font-black text-slate-800 text-[10px] md:text-xs truncate group-hover:text-teal-600 flex-1 leading-tight">
+                                       {v.userName}
+                                     </div>
+                                     <div className="text-[9px] font-bold shrink-0 text-right leading-none">
+                                       {v.originalStartTime && v.originalStartTime !== v.startTime ? (
+                                         <span className="text-orange-600 block">{v.originalStartTime}➔<br/>{v.startTime}</span>
+                                       ) : ( <span className="text-slate-400">{v.startTime}</span> )}
                                      </div>
                                    </div>
-                                   <div className="text-[9px] font-bold shrink-0 mt-1">
-                                     {v.originalStartTime && v.originalStartTime !== v.startTime ? (
-                                       <span className="text-orange-600">{v.originalStartTime}➔{v.startTime}</span>
-                                     ) : ( <span className="text-slate-400">{v.startTime}</span> )}
+                                   <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                     {v.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                     {v.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{v.preferredNurseName}</span>}
                                    </div>
                                  </div>
                                )
@@ -956,26 +968,29 @@
                                         </div>
                                       )}
                                       <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(h, 44)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
-                                        <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight flex-1">
-                                           {item.userName}
-                                           <div className="flex flex-wrap gap-0.5 mt-0.5">
-                                             {item.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                             {item.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{item.preferredNurseName}</span>}
+                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                        <div className="flex justify-between items-start gap-1">
+                                           <div className="font-black text-slate-800 text-[10px] md:text-xs truncate flex-1 leading-tight">
+                                              {item.userName}
+                                           </div>
+                                           <div className="text-[8px] font-bold shrink-0 text-right leading-none">
+                                              {item.originalStartTime && item.originalStartTime !== item.startTime && (
+                                                <span className="text-orange-600 block mb-0.5">元:{item.originalStartTime}</span>
+                                              )}
+                                              <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指:{item.startTime}</span>
                                            </div>
                                         </div>
-                                        <div className="mt-auto shrink-0">
-                                           {item.originalStartTime && item.originalStartTime !== item.startTime && (
-                                             <div className="text-[8px] text-orange-600 font-black leading-none mb-0.5">元:{item.originalStartTime}</div>
-                                           )}
-                                           <div className="flex justify-between items-center text-[9px] font-black">
-                                              <div className="flex items-center gap-0.5">
-                                                <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指:{item.startTime}</span>
-                                                {item.isLate && <AlertTriangle size={8} className="text-red-500 ml-0.5" />}
-                                              </div>
-                                              <span className="text-slate-300 uppercase">{item.duration}分</span>
+                                        <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                           {item.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                           {item.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{item.preferredNurseName}</span>}
+                                        </div>
+                                        <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
+                                           <div className="flex items-center gap-0.5">
+                                             {item.isLate && <AlertTriangle size={8} className="text-red-500" />}
+                                             {item.isLate && <span className="text-red-600 text-[7px]">遅延</span>}
                                            </div>
+                                           <span className="text-slate-300 uppercase">{item.duration}分</span>
                                         </div>
                                       </div>
                                     </React.Fragment>
