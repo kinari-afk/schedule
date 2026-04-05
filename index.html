@@ -8,13 +8,16 @@
   <!-- Tailwind CSS (デザインを整えるためのツール) -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- Reactとアイコンをブラウザ上で直接読み込むための設定 -->
+  <!-- React, アイコン, Firebase をブラウザ上で直接読み込むための設定 -->
   <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
         "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
       }
     }
   </script>
@@ -30,6 +33,26 @@
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
     import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2 } from 'lucide-react';
+    
+    // --- Firebase の機能 ---
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+
+    // Firebaseの初期化設定 (環境によって自動で設定されます)
+    let app, auth, db, appId;
+    try {
+      const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+      if (configStr) {
+        const firebaseConfig = JSON.parse(configStr);
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+        appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+      }
+    } catch (e) {
+      console.error("Firebase init error", e);
+    }
 
     // --- タイムライン用の定数 ---
     const START_HOUR = 7; // 朝7時から開始
@@ -73,73 +96,106 @@
     // 色のパレット (看護師追加時に自動割り当て)
     const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
 
-    // 初期データは空にする
-    const initialNurses = [];
-    const initialVisits = [];
-
     // --- デフォルトのスプレッドシートURL ---
     const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
     const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
 
     function App() {
-      // 初期タブを「全体スケジュール」に設定
+      // 認証の管理
+      const [user, setUser] = useState(null);
+
+      useEffect(() => {
+        if (!auth) return;
+        const initAuth = async () => {
+          try {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+              await signInAnonymously(auth);
+            }
+          } catch (e) {
+            console.error("Auth error", e);
+          }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+      }, []);
+
       const [activeTab, setActiveTab] = useState('overview');
       const [selectedDay, setSelectedDay] = useState(1);
       
-      // ローカルストレージからデータを読み込む
-      const [nurses, setNurses] = useState(() => {
-        try {
-          const saved = localStorage.getItem("careRoute_nurses");
-          return saved ? JSON.parse(saved) : initialNurses;
-        } catch (e) {
-          return initialNurses;
-        }
-      });
-
-      const [visits, setVisits] = useState(() => {
-        try {
-          const saved = localStorage.getItem("careRoute_visits");
-          return saved ? JSON.parse(saved) : initialVisits;
-        } catch (e) {
-          return initialVisits;
-        }
-      });
-      
+      const [nurses, setNurses] = useState([]);
+      const [visits, setVisits] = useState([]);
       const [selectedNurseId, setSelectedNurseId] = useState(null);
       
       const [isOptimizing, setIsOptimizing] = useState(false);
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       
-      // 利用者用スプレッドシート連携用の状態 (デフォルトURLを組み込み)
-      const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem("careRoute_userSheetUrl") || DEFAULT_USER_SHEET_URL);
+      const [sheetUrl, setSheetUrl] = useState(DEFAULT_USER_SHEET_URL);
       const [isLoadingSheet, setIsLoadingSheet] = useState(false);
       const [showUserSheetConfig, setShowUserSheetConfig] = useState(false);
 
-      // 看護師用スプレッドシート連携用の状態 (デフォルトURLを組み込み)
-      const [nurseSheetUrl, setNurseSheetUrl] = useState(() => localStorage.getItem("careRoute_nurseSheetUrl") || DEFAULT_NURSE_SHEET_URL);
+      const [nurseSheetUrl, setNurseSheetUrl] = useState(DEFAULT_NURSE_SHEET_URL);
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
       const [showNurseSheetConfig, setShowNurseSheetConfig] = useState(false);
 
-      // --- 状態の変更をローカルストレージに自動保存する ---
+      // --- クラウドからのデータ受信 (リアルタイム同期) ---
       useEffect(() => {
-        localStorage.setItem("careRoute_nurses", JSON.stringify(nurses));
-      }, [nurses]);
+        if (!user || !db) return;
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
+        
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.nurses) setNurses(JSON.parse(data.nurses));
+            if (data.visits) setVisits(JSON.parse(data.visits));
+            if (data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
+            if (data.nurseSheetUrl !== undefined) setNurseSheetUrl(data.nurseSheetUrl);
+          }
+        }, (error) => {
+          console.error("Snapshot error:", error);
+        });
+        
+        return () => unsubscribe();
+      }, [user]);
 
-      useEffect(() => {
-        localStorage.setItem("careRoute_visits", JSON.stringify(visits));
-      }, [visits]);
+      // --- クラウドへのデータ保存関数 ---
+      const updateCloudData = (newData) => {
+        if (user && db) {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
+          setDoc(docRef, newData, { merge: true }).catch(e => console.error("Cloud save error:", e));
+        }
+      };
+
+      // 状態を更新すると同時にクラウドに同期するラッパー関数
+      const handleSetNurses = (newNursesFn) => {
+        setNurses(prev => {
+           const next = typeof newNursesFn === 'function' ? newNursesFn(prev) : newNursesFn;
+           updateCloudData({ nurses: JSON.stringify(next) });
+           return next;
+        });
+      };
+
+      const handleSetVisits = (newVisitsFn) => {
+        setVisits(prev => {
+           const next = typeof newVisitsFn === 'function' ? newVisitsFn(prev) : newVisitsFn;
+           updateCloudData({ visits: JSON.stringify(next) });
+           return next;
+        });
+      };
 
       const handleSheetUrlChange = (e) => {
         const url = e.target.value;
         setSheetUrl(url);
-        localStorage.setItem("careRoute_userSheetUrl", url);
+        updateCloudData({ sheetUrl: url });
       };
 
       const handleNurseSheetUrlChange = (e) => {
         const url = e.target.value;
         setNurseSheetUrl(url);
-        localStorage.setItem("careRoute_nurseSheetUrl", url);
+        updateCloudData({ nurseSheetUrl: url });
       };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
@@ -163,7 +219,7 @@
         const finalMinutes = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, snappedMinutes));
         const newStartTime = formatTime(finalMinutes);
         
-        setVisits(prevVisits => prevVisits.map(v => {
+        handleSetVisits(prevVisits => prevVisits.map(v => {
           if (v.id === visitId) {
              const original = v.originalStartTime || v.startTime;
              return { ...v, nurseId: targetNurseId, startTime: newStartTime, originalStartTime: original };
@@ -336,7 +392,7 @@
             }
           });
 
-          setVisits(newVisits);
+          handleSetVisits(newVisits);
           setIsOptimizing(false);
           setToastMessage(`${DAYS[selectedDay]}曜日の担当者を自動編成しました`);
           setShowToast(true);
@@ -346,7 +402,7 @@
 
       const updateVisitNurse = (visitId, newNurseId) => {
         const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
-        setVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+        handleSetVisits(prevVisits => prevVisits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
       };
 
       // --- スプレッドシートからの読み込み ---
@@ -407,7 +463,7 @@
             }
           }
           
-          setVisits(imported);
+          handleSetVisits(imported);
           setToastMessage(`スプレッドシートから ${imported.length}件のスケジュールを読み込みました`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 4000);
@@ -485,7 +541,7 @@
             }
           }
 
-          setVisits(prevVisits => prevVisits.map(v => {
+          handleSetVisits(prevVisits => prevVisits.map(v => {
             if (v.nurseId === null) return v;
             const oldNurse = nurses.find(n => n.id === v.nurseId);
             if (!oldNurse) return { ...v, nurseId: null };
@@ -496,7 +552,7 @@
             return { ...v, nurseId: newNurse ? newNurse.id : null };
           }));
 
-          setNurses(imported);
+          handleSetNurses(imported);
           if (imported.length > 0) {
             setSelectedNurseId(imported[0].id);
           } else {
@@ -526,7 +582,7 @@
                 <Activity className="text-teal-400" />
                 <span>CareRoute</span>
               </div>
-              <p className="text-xs text-slate-500">定期訪問スケジュール最適化</p>
+              <p className="text-xs text-slate-500">定期訪問スケジュール同期版</p>
             </div>
             <nav className="flex-1 px-4 space-y-2">
               <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
@@ -542,6 +598,13 @@
                 <UserCog size={20} /> 看護師管理
               </button>
             </nav>
+            <div className="p-4 bg-slate-800 m-4 rounded-xl text-center">
+              <div className="flex justify-center items-center gap-1.5 text-xs text-emerald-400 font-bold mb-1">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                クラウド同期中
+              </div>
+              <p className="text-[10px] text-slate-400">データはチームで自動共有されます</p>
+            </div>
           </aside>
 
           <main className="flex-1 flex flex-col overflow-hidden">
