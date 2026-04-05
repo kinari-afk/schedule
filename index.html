@@ -104,6 +104,17 @@
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
 
+      // --- ドラッグ&ドロップのハンドラー ---
+      const handleDrop = (e, targetNurseId) => {
+        e.preventDefault();
+        const visitId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        if (isNaN(visitId)) return;
+        
+        setVisits(prevVisits => prevVisits.map(v => 
+          v.id === visitId ? { ...v, nurseId: targetNurseId } : v
+        ));
+      };
+
       // --- 全体スケジュールと移動時間の計算 ---
       const allSchedules = useMemo(() => {
         const schedulesByNurse = {};
@@ -594,14 +605,24 @@
                             ))}
                           </div>
 
-                          {/* 未割り当て列 */}
-                          <div className="w-56 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/30">
+                          {/* 未割り当て列 (ドロップ可能) */}
+                          <div 
+                            className="w-56 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/30"
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => handleDrop(e, null)}
+                          >
                              {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
                                const startMins = parseTime(v.startTime);
                                const top = getTop(startMins);
                                const height = v.duration * PIXELS_PER_MINUTE;
                                return (
-                                 <div key={v.id} className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow" style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}>
+                                 <div 
+                                   key={v.id} 
+                                   draggable={true}
+                                   onDragStart={(e) => e.dataTransfer.setData('text/plain', v.id)}
+                                   className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow cursor-move" 
+                                   style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}
+                                 >
                                    <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{v.patientName}</div>
                                    <div className="text-[10px] text-slate-500 font-medium mt-auto">{v.startTime} ({v.duration}分)</div>
                                  </div>
@@ -609,16 +630,21 @@
                              })}
                           </div>
 
-                          {/* 各看護師列 */}
+                          {/* 各看護師列 (ドロップ可能) */}
                           {nurses.map(nurse => {
                             const isOff = (nurse.offDays || []).includes(selectedDay);
                             const scheduleData = allSchedules[nurse.id];
                             const assignedVisits = scheduleData?.visits || [];
 
                             return (
-                              <div key={nurse.id} className={`w-56 shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'bg-slate-50/80' : ''}`}>
+                              <div 
+                                key={nurse.id} 
+                                className={`w-56 shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'bg-slate-50/80' : ''}`}
+                                onDragOver={(e) => { if (!isOff) e.preventDefault(); }}
+                                onDrop={(e) => { if (!isOff) handleDrop(e, nurse.id); }}
+                              >
                                 {isOff ? (
-                                  <div className="absolute inset-0 flex items-center justify-center text-slate-400">
+                                  <div className="absolute inset-0 flex items-center justify-center text-slate-400 pointer-events-none">
                                     <div className="text-center flex flex-col items-center sticky top-1/2 -translate-y-1/2">
                                       <CalendarDays size={32} className="mb-2 opacity-50" />
                                       <p className="text-sm font-bold">お休み</p>
@@ -647,7 +673,7 @@
                                         <React.Fragment key={item.id}>
                                           {/* 移動線 */}
                                           {travelHeight > 0 && (
-                                            <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400" style={{ top: `${travelTop}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
+                                            <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${travelTop}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
                                               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-slate-200 whitespace-nowrap shadow-sm z-10">
                                                 {item.travelTime}分
                                               </div>
@@ -656,17 +682,20 @@
                                           
                                           {/* 待機時間がある場合 */}
                                           {item.waitTime > 0 && (
-                                            <div className="absolute left-1/2 w-0 border-l-4 border-dotted border-amber-300" style={{ top: `${getTop(arrival)}px`, height: `${item.waitTime * PIXELS_PER_MINUTE}px`, transform: 'translateX(-50%)' }}></div>
+                                            <div className="absolute left-1/2 w-0 border-l-4 border-dotted border-amber-300 pointer-events-none" style={{ top: `${getTop(arrival)}px`, height: `${item.waitTime * PIXELS_PER_MINUTE}px`, transform: 'translateX(-50%)' }}></div>
                                           )}
 
-                                          {/* 訪問ブロック */}
-                                          <div className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} 
+                                          {/* 訪問ブロック (ドラッグ可能) */}
+                                          <div 
+                                               draggable={true}
+                                               onDragStart={(e) => e.dataTransfer.setData('text/plain', item.id)}
+                                               className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 cursor-move ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} 
                                                style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
-                                            <div className="flex justify-between items-start mb-0.5">
+                                            <div className="flex justify-between items-start mb-0.5 pointer-events-none">
                                               <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.patientName}</div>
                                               {item.isLate && <AlertTriangle size={12} className="text-red-500 shrink-0" />}
                                             </div>
-                                            <div className="mt-auto flex justify-between text-[10px] text-slate-500">
+                                            <div className="mt-auto flex justify-between text-[10px] text-slate-500 pointer-events-none">
                                               <span>指: {item.startTime}</span>
                                               <span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span>
                                             </div>
@@ -683,7 +712,7 @@
                                         const rTravelTop = getTop(lastDeparture);
                                         const rTravelHeight = (returnArr - lastDeparture) * PIXELS_PER_MINUTE;
                                         return rTravelHeight > 0 ? (
-                                          <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400" style={{ top: `${rTravelTop}px`, height: `${rTravelHeight}px`, transform: 'translateX(-50%)' }}>
+                                          <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${rTravelTop}px`, height: `${rTravelHeight}px`, transform: 'translateX(-50%)' }}>
                                             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-slate-200 whitespace-nowrap shadow-sm z-10">
                                               帰: {scheduleData.finalTravelTime}分
                                             </div>
