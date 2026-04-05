@@ -270,7 +270,7 @@
       }, [selectedDate]);
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
-      const isSelectedNurseOff = isNurseOff(selectedNurse, selectedDate);
+      const isSelectedNurseOff = selectedNurse ? isNurseOff(selectedNurse, selectedDate) : false;
 
       const unassignedCount = visits.filter(v => v.date === selectedDate && v.nurseId === null).length;
       
@@ -346,10 +346,14 @@
           todayUnassigned.forEach(visit => {
             let best = null, min = Infinity;
             
+            // 利用者が女性限定かチェック
+            const requiresFemale = visit.requiresFemaleNurse;
+            
             // 1. 優先度通常（高）の看護師から探す
             states.forEach(s => {
               const nDef = available.find(n => n.id === s.id);
               if (nDef && nDef.isLowPriority) return; // 優先度低い人はスキップ
+              if (requiresFemale && nDef && !nDef.isFemale) return; // 女性限定なのに女性じゃないならスキップ
               
               const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
               const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
@@ -362,6 +366,7 @@
               states.forEach(s => {
                 const nDef = available.find(n => n.id === s.id);
                 if (nDef && !nDef.isLowPriority) return; // 優先度通常はスキップ
+                if (requiresFemale && nDef && !nDef.isFemale) return; // 女性限定なのに女性じゃないならスキップ
                 
                 const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
@@ -375,6 +380,7 @@
                let isBestLow = true;
                states.forEach(s => {
                  const nDef = available.find(n => n.id === s.id);
+                 if (requiresFemale && nDef && !nDef.isFemale) return; // 女性限定なのに女性じゃないならスキップ
                  const isLow = nDef ? !!nDef.isLowPriority : false;
                  
                  const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
@@ -427,6 +433,18 @@
         e.preventDefault();
         const visitId = parseInt(e.dataTransfer.getData('text/plain'), 10);
         if (isNaN(visitId)) return;
+        
+        // 女性限定のチェック
+        const targetVisit = visits.find(v => v.id === visitId);
+        if (targetNurseId && targetVisit && targetVisit.requiresFemaleNurse) {
+            const targetNurse = nurses.find(n => n.id === targetNurseId);
+            if (targetNurse && !targetNurse.isFemale) {
+                setToastMessage("この利用者は女性看護師限定です");
+                setShowToast(true);
+                return; // 割り当てをキャンセル
+            }
+        }
+
         const offsetY = parseFloat(e.dataTransfer.getData('offsetY') || 0);
         const rect = e.currentTarget.getBoundingClientRect();
         const y = (e.clientY - rect.top) - offsetY;
@@ -445,6 +463,18 @@
 
       const updateVisitNurse = (visitId, newNurseId) => {
         const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
+        const targetVisit = visits.find(v => v.id === visitId);
+        
+        // 女性限定のチェック
+        if (parsedNurseId && targetVisit && targetVisit.requiresFemaleNurse) {
+            const targetNurse = nurses.find(n => n.id === parsedNurseId);
+            if (targetNurse && !targetNurse.isFemale) {
+                setToastMessage("この利用者は女性看護師限定です");
+                setShowToast(true);
+                return; // 割り当てをキャンセル
+            }
+        }
+        
         handleSetVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
       };
 
@@ -469,6 +499,9 @@
               let st = p[2]?.trim() || '09:00'; if (st.length === 4) st = '0' + st;
               const dur = parseInt(p[3]) || 30;
               
+              // 女性限定フラグの取得 (4列目以降のどこかに「女性」があればOK)
+              const requiresFemale = p.length > 4 ? p.slice(4).some(col => col && col.includes('女性')) : false;
+
               let visitDate = '';
               // 日付形式が含まれているかチェック
               if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
@@ -497,7 +530,8 @@
                 dayOfWeek: dayMap[dateOrDay] ?? 1, 
                 startTime: st, 
                 originalStartTime: st, 
-                nurseId: null 
+                nurseId: null,
+                requiresFemaleNurse: requiresFemale
               });
             }
           }
@@ -537,12 +571,15 @@
               // 特定休 (例: 2026/04/10・2026/04/12)
               let specificOffDays = [];
               let isLow = false;
+              let isFemale = false;
               
-              // 3列目以降から「特定休」と「優先度(低)」を柔軟に探す
+              // 3列目以降から「特定休」と「優先度(低)」「女性」を柔軟に探す
               for(let j = 3; j < p.length; j++) {
                  if(!p[j]) continue;
                  if(p[j].includes('低')) {
                     isLow = true;
+                 } else if (p[j].includes('女性')) {
+                    isFemale = true;
                  } else if (p[j].includes('/') || p[j].includes('-')) {
                     const dates = p[j].split('・').map(d => d.trim().replace(/\//g, '-'));
                     specificOffDays = specificOffDays.concat(dates.filter(d => d.length > 0));
@@ -557,7 +594,8 @@
                 startTime: st, 
                 offDays: off, 
                 specificOffDays: specificOffDays,
-                isLowPriority: isLow
+                isLowPriority: isLow,
+                isFemale: isFemale
               });
             }
           }
@@ -764,10 +802,13 @@
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
                                  <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                   className="absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card" 
+                                   className={`absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card ${v.requiresFemaleNurse ? 'ring-1 ring-pink-200' : ''}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 38)}px` }}>
-                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600 flex-1">{v.userName}</div>
-                                   <div className="text-[9px] font-bold shrink-0">
+                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600 flex-1">
+                                      {v.userName}
+                                      {v.requiresFemaleNurse && <span className="ml-1 text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                   </div>
+                                   <div className="text-[9px] font-bold shrink-0 mt-1">
                                      {v.originalStartTime && v.originalStartTime !== v.startTime ? (
                                        <span className="text-orange-600">{v.originalStartTime}➔{v.startTime}</span>
                                      ) : ( <span className="text-slate-400">{v.startTime}</span> )}
@@ -798,7 +839,10 @@
                                       <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
                                         className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 38)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
-                                        <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight flex-1">{item.userName}</div>
+                                        <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight flex-1">
+                                           {item.userName}
+                                           {item.requiresFemaleNurse && <span className="ml-1 text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                        </div>
                                         <div className="mt-auto shrink-0">
                                            {item.originalStartTime && item.originalStartTime !== item.startTime && (
                                              <div className="text-[8px] text-orange-600 font-black leading-none mb-0.5">元:{item.originalStartTime}</div>
@@ -864,7 +908,10 @@
                               {sortedVisits.map(v => (
                                 <tr key={v.id} className="hover:bg-slate-50/80 transition-colors group">
                                   <td className="p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
-                                  <td className="p-6 font-bold text-slate-700">{v.userName}</td>
+                                  <td className="p-6 font-bold text-slate-700">
+                                    {v.userName}
+                                    {v.requiresFemaleNurse && <div className="text-[10px] mt-1 text-pink-600 bg-pink-50 inline-block px-2 py-0.5 rounded-md">女性看護師限定</div>}
+                                  </td>
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
                                   <td className="p-6"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5"><option value="unassigned">-- 未指定 --</option>{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                                 </tr>
@@ -923,7 +970,13 @@
                                 <div className="flex gap-6">
                                   <div className="w-14 h-14 rounded-3xl flex items-center justify-center text-white font-black text-xl shrink-0 shadow-xl" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                   <div className={`flex-1 p-6 md:p-8 rounded-[2rem] border-l-[8px] shadow-lg transition-transform hover:scale-[1.02] ${item.isLate ? 'border-l-red-500 bg-red-50/50 shadow-red-100' : 'border-l-teal-500 bg-white border border-slate-100 shadow-slate-100'}`}>
-                                    <div className="flex justify-between items-start mb-4 text-base"><h4 className="font-black text-slate-800 text-2xl">{item.userName}</h4><span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase">{item.duration}分 滞在</span></div>
+                                    <div className="flex justify-between items-start mb-4 text-base">
+                                      <h4 className="font-black text-slate-800 text-2xl">
+                                        {item.userName}
+                                        {item.requiresFemaleNurse && <span className="ml-2 text-xs align-middle bg-pink-100 text-pink-600 px-2 py-1 rounded-lg border border-pink-200">女性限定</span>}
+                                      </h4>
+                                      <span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase">{item.duration}分 滞在</span>
+                                    </div>
                                     <div className="pt-2 border-t border-slate-100"><p className="text-[10px] font-black text-slate-400 uppercase mb-1">指定時間</p><div className="flex items-center gap-4"><p className="font-black text-slate-800 text-xl tracking-tight leading-none">{item.startTime}</p>{item.originalStartTime && item.originalStartTime !== item.startTime && (<span className="text-xs text-orange-600 font-black">（元: {item.originalStartTime}）</span>)}{item.isLate && (<div className="flex items-center gap-1 bg-red-50 text-red-600 px-2 py-0.5 rounded-lg text-[10px] font-black shadow-sm"><AlertTriangle size={12} /> 遅刻リスク</div>)}</div></div>
                                   </div>
                                 </div>
@@ -964,6 +1017,7 @@
                           <p className="font-black text-slate-800 text-xl mb-1">{n.name}</p>
                           <div className="flex gap-2 mb-4">
                              <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full border border-slate-200 uppercase tracking-tighter">{n.startTime} 開始</span>
+                             {n.isFemale && <span className="text-[9px] font-black px-2.5 py-1 rounded-full border border-pink-200 bg-pink-50 text-pink-500 uppercase tracking-tighter">女性</span>}
                              <span className={`text-[9px] font-black px-2.5 py-1 rounded-full border uppercase tracking-tighter ${(n.offDays?.length > 0 || n.specificOffDays?.length > 0) ? 'bg-red-50 text-red-500 border-red-100' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>{(n.offDays?.length > 0 || n.specificOffDays?.length > 0) ? '休日あり' : '常勤'}</span>
                           </div>
                           <div className="w-full pt-4 border-t border-slate-50">
