@@ -157,6 +157,7 @@
         return { totalTravel, totalVisit, count: schedule.length, lateCount };
       }, [schedule]);
 
+      // --- 自動編成ロジック (優先順位対応版) ---
       const handleAutoAssign = () => {
         // その日に出勤している(休みではない)看護師のみを抽出
         const availableNurses = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
@@ -188,7 +189,11 @@
             let bestNurse = null;
             let minTravel = Infinity;
 
+            // 1. まず優先度が「通常」の看護師から間に合う人を探す
             nurseStates.forEach(ns => {
+              const nurseDef = availableNurses.find(n => n.id === ns.id);
+              if (nurseDef && nurseDef.isLowPriority) return; // 優先度低はスキップ
+
               const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
               const travel = Math.round(dist * 1.5);
               if (ns.time + travel <= targetStart) {
@@ -199,14 +204,41 @@
               }
             });
 
+            // 2. 通常優先度で間に合う人がいなければ、優先度「低」の看護師から間に合う人を探す
+            if (!bestNurse) {
+              minTravel = Infinity;
+              nurseStates.forEach(ns => {
+                const nurseDef = availableNurses.find(n => n.id === ns.id);
+                if (nurseDef && !nurseDef.isLowPriority) return; // 優先度低の人だけを対象にする
+
+                const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
+                const travel = Math.round(dist * 1.5);
+                if (ns.time + travel <= targetStart) {
+                  if (travel < minTravel) {
+                    minTravel = travel;
+                    bestNurse = ns;
+                  }
+                }
+              });
+            }
+
+            // 3. 誰も間に合わない場合、全体から一番遅刻がマシな人を探す
             if (!bestNurse) {
               let earliest = Infinity;
+              let isBestNurseLowPriority = true;
+
               nurseStates.forEach(ns => {
+                const nurseDef = availableNurses.find(n => n.id === ns.id);
+                const isLow = nurseDef ? !!nurseDef.isLowPriority : false;
+
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
                 const arrival = ns.time + Math.round(dist * 1.5);
-                if (arrival < earliest) {
+
+                // より早く着く、または同じ時間だけど優先度が通常の人を優先する
+                if (arrival < earliest || (arrival === earliest && isBestNurseLowPriority && !isLow)) {
                   earliest = arrival;
                   bestNurse = ns;
+                  isBestNurseLowPriority = isLow;
                 }
               });
             }
@@ -349,13 +381,23 @@
                 }
               }
 
+              // 優先度低フラグを抽出 (例: "低", "下")
+              let isLowPriority = false;
+              if (parts.length > 3 && parts[3].trim()) {
+                const p = parts[3].trim();
+                if (p === '低' || p === '下' || p === '優先順位低' || p === '優先度低') {
+                  isLowPriority = true;
+                }
+              }
+
               const newNurse = {
                 id: Date.now() + i,
                 name: name,
                 startLocation: { x: 50, y: 50 }, // 仮座標
                 color: colors[imported.length % colors.length],
                 startTime: startTime,
-                offDays: offDays // 休みの配列 [0, 6] など
+                offDays: offDays, // 休みの配列 [0, 6] など
+                isLowPriority: isLowPriority
               };
 
               // ファイル内での重複はスキップ
@@ -467,11 +509,13 @@
                         const isOff = (nurse.offDays || []).includes(selectedDay);
                         return (
                           <button key={nurse.id} onClick={() => setSelectedNurseId(nurse.id)}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap 
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-1 whitespace-nowrap 
                               ${selectedNurseId === nurse.id ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}
                               ${isOff ? 'opacity-50 line-through' : ''}`}
                           >
-                            {nurse.name} {isOff && '(休)'}
+                            {nurse.name} 
+                            {isOff && '(休)'}
+                            {nurse.isLowPriority && !isOff && <span className="text-[10px] bg-slate-200 text-slate-500 px-1 rounded">優先:低</span>}
                           </button>
                         );
                       })}
@@ -760,7 +804,7 @@
                         ※「再読み込み」を行うと、現在アプリ内に表示されている看護師リストはスプレッドシートの内容で【完全に上書き】されます。
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        スプレッドシートの入力ルール（列の順番）: 氏名, 勤務開始時間, <span className="font-bold text-slate-700">休みの曜日 (例: 日・土)</span>
+                        スプレッドシートの入力ルール（列の順番）: 氏名, 勤務開始時間, 休みの曜日 (例: 日・土), <span className="font-bold text-slate-700">優先度 (例: 低)</span>
                       </p>
                     </div>
                   </div>
@@ -777,6 +821,7 @@
                             <th className="p-4 font-medium">氏名</th>
                             <th className="p-4 font-medium">勤務開始時間</th>
                             <th className="p-4 font-medium">休みの曜日</th>
+                            <th className="p-4 font-medium">優先度</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -790,10 +835,13 @@
                               <td className="p-4 text-slate-600">
                                 {nurse.offDays && nurse.offDays.length > 0 ? nurse.offDays.map(d => DAYS[d]).join('・') : 'なし'}
                               </td>
+                              <td className="p-4 text-slate-600">
+                                {nurse.isLowPriority ? <span className="bg-slate-100 text-slate-500 px-2 py-1 rounded text-xs font-bold">低</span> : '通常'}
+                              </td>
                             </tr>
                           ))}
                           {nurses.length === 0 && (
-                            <tr><td colSpan="4" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
+                            <tr><td colSpan="5" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
                           )}
                         </tbody>
                       </table>
