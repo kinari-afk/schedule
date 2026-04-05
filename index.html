@@ -137,9 +137,29 @@
         const visitId = parseInt(e.dataTransfer.getData('text/plain'), 10);
         if (isNaN(visitId)) return;
         
-        setVisits(prevVisits => prevVisits.map(v => 
-          v.id === visitId ? { ...v, nurseId: targetNurseId } : v
-        ));
+        // ドラッグ開始時のマウスのYオフセットを取得
+        const offsetYStr = e.dataTransfer.getData('offsetY');
+        const offsetY = offsetYStr ? parseFloat(offsetYStr) : 0;
+        
+        // ドロップされた列の要素からの相対座標を計算
+        const rect = e.currentTarget.getBoundingClientRect();
+        const y = (e.clientY - rect.top) - offsetY;
+        
+        // Y座標から開始時間(分)を計算 (5分刻みにスナップ)
+        const minutes = y / PIXELS_PER_MINUTE + START_HOUR * 60;
+        const snappedMinutes = Math.round(minutes / 5) * 5; 
+        
+        // 時間を7:00〜19:00の範囲内に制限
+        const finalMinutes = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, snappedMinutes));
+        const newStartTime = formatTime(finalMinutes);
+        
+        setVisits(prevVisits => prevVisits.map(v => {
+          if (v.id === visitId) {
+             const original = v.originalStartTime || v.startTime;
+             return { ...v, nurseId: targetNurseId, startTime: newStartTime, originalStartTime: original };
+          }
+          return v;
+        }));
       };
 
       // --- 全体スケジュールと移動時間の計算 ---
@@ -367,6 +387,7 @@
                 duration: duration,
                 dayOfWeek: dayOfWeek,
                 startTime: startTime,
+                originalStartTime: startTime, // 変更判定用に追加
                 nurseId: null
               };
 
@@ -555,8 +576,8 @@
                     >
                       {day}
                     </button>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
             )}
 
@@ -646,12 +667,23 @@
                                  <div 
                                    key={v.id} 
                                    draggable={true}
-                                   onDragStart={(e) => e.dataTransfer.setData('text/plain', v.id)}
+                                   onDragStart={(e) => {
+                                     e.dataTransfer.setData('text/plain', v.id);
+                                     const rect = e.currentTarget.getBoundingClientRect();
+                                     e.dataTransfer.setData('offsetY', e.clientY - rect.top);
+                                   }}
                                    className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow cursor-move" 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}
                                  >
-                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{v.patientName}</div>
-                                   <div className="text-[10px] text-slate-500 font-medium mt-auto">{v.startTime} ({v.duration}分)</div>
+                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate pointer-events-none">{v.patientName}</div>
+                                   <div className="text-[10px] text-slate-500 font-medium mt-auto pointer-events-none">
+                                     {v.originalStartTime && v.originalStartTime !== v.startTime ? (
+                                       <span className="text-orange-600 font-bold">{v.originalStartTime} ➔ {v.startTime}</span>
+                                     ) : (
+                                       <span>{v.startTime}</span>
+                                     )}
+                                     <span> ({v.duration}分)</span>
+                                   </div>
                                  </div>
                                )
                              })}
@@ -715,16 +747,25 @@
                                           {/* 訪問ブロック (ドラッグ可能) */}
                                           <div 
                                                draggable={true}
-                                               onDragStart={(e) => e.dataTransfer.setData('text/plain', item.id)}
+                                               onDragStart={(e) => {
+                                                 e.dataTransfer.setData('text/plain', item.id);
+                                                 const rect = e.currentTarget.getBoundingClientRect();
+                                                 e.dataTransfer.setData('offsetY', e.clientY - rect.top);
+                                               }}
                                                className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 cursor-move ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} 
                                                style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                             <div className="flex justify-between items-start mb-0.5 pointer-events-none">
                                               <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.patientName}</div>
                                               {item.isLate && <AlertTriangle size={12} className="text-red-500 shrink-0" />}
                                             </div>
-                                            <div className="mt-auto flex justify-between text-[10px] text-slate-500 pointer-events-none">
-                                              <span>指: {item.startTime}</span>
-                                              <span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span>
+                                            <div className="mt-auto flex flex-col justify-end text-[10px] text-slate-500 pointer-events-none">
+                                              {item.originalStartTime && item.originalStartTime !== item.startTime && (
+                                                <div className="text-orange-600 font-bold text-[9px] leading-tight mb-0.5">元: {item.originalStartTime}</div>
+                                              )}
+                                              <div className="flex justify-between w-full">
+                                                <span className={item.originalStartTime !== item.startTime ? 'text-orange-600 font-bold' : ''}>指: {item.startTime}</span>
+                                                <span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span>
+                                              </div>
                                             </div>
                                           </div>
                                         </React.Fragment>
@@ -846,6 +887,9 @@
                                       <div className="flex items-center gap-2 text-sm">
                                         <span className="w-16 text-slate-500">指定時間:</span>
                                         <span className="font-bold text-slate-800">{item.startTime}</span>
+                                        {item.originalStartTime && item.originalStartTime !== item.startTime && (
+                                          <span className="text-xs text-orange-600 font-bold ml-2">(元: {item.originalStartTime})</span>
+                                        )}
                                       </div>
                                       <div className="flex items-center gap-2 text-sm">
                                         <span className="w-16 text-slate-500">到着予定:</span>
@@ -988,7 +1032,12 @@
                         <tbody className="divide-y divide-slate-100">
                           {visits.filter(v => v.dayOfWeek === selectedDay).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime)).map(v => (
                             <tr key={v.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-4 font-bold text-slate-700">{v.startTime}</td>
+                              <td className="p-4 font-bold text-slate-700">
+                                {v.startTime}
+                                {v.originalStartTime && v.originalStartTime !== v.startTime && (
+                                  <div className="text-xs text-orange-600">(元: {v.originalStartTime})</div>
+                                )}
+                              </td>
                               <td className="p-4 font-medium text-slate-800">{v.patientName}</td>
                               <td className="p-4 text-slate-600">{v.duration} 分</td>
                               <td className="p-4">
