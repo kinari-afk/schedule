@@ -133,6 +133,14 @@
       const [isLoadingSheet, setIsLoadingSheet] = useState(false);
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
 
+      // 通知（トースト）の自動非表示ロジック
+      useEffect(() => {
+        if (showToast) {
+          const timer = setTimeout(() => setShowToast(false), 4000);
+          return () => clearTimeout(timer);
+        }
+      }, [showToast]);
+
       useEffect(() => {
         if (!auth) return;
         const initAuth = async () => {
@@ -207,7 +215,6 @@
         return d.toISOString().split('T')[0];
       }, [startDate]);
 
-      // 現在選択されている曜日の具体的な日付を計算 (例: "4/6")
       const currentTargetDateLabel = useMemo(() => {
         if (!startDate) return "";
         const d = new Date(startDate);
@@ -260,7 +267,7 @@
 
       const handleAutoAssign = () => {
         const available = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
-        if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); setTimeout(() => setShowToast(false), 3000); return; }
+        if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         setIsOptimizing(true);
         setTimeout(() => {
           const newVisits = [...visits];
@@ -293,7 +300,10 @@
               best.loc = visit.location;
             }
           });
-          handleSetVisits(newVisits); setIsOptimizing(false); setToastMessage("自動編成完了"); setShowToast(true); setTimeout(() => setShowToast(false), 3000);
+          handleSetVisits(newVisits); 
+          setIsOptimizing(false); 
+          setToastMessage("自動編成完了"); 
+          setShowToast(true);
         }, 800);
       };
 
@@ -338,8 +348,10 @@
             const ex = visits.find(v => normalizeName(v.userName) === normalizeName(nv.userName) && v.dayOfWeek === nv.dayOfWeek && v.originalStartTime === nv.originalStartTime);
             return ex ? { ...nv, id: ex.id, nurseId: ex.nurseId, startTime: ex.startTime, customTravelTime: ex.customTravelTime } : nv;
           });
-          handleSetVisits(merged); setToastMessage("利用者同期成功"); setShowToast(true); setTimeout(() => setShowToast(false), 3000);
-        } catch (e) { setToastMessage("同期失敗"); setShowToast(true); setTimeout(() => setShowToast(false), 3000); } finally { setIsLoadingSheet(false); }
+          handleSetVisits(merged); 
+          setToastMessage("利用者同期成功"); 
+          setShowToast(true);
+        } catch (e) { setToastMessage("同期失敗"); setShowToast(true); } finally { setIsLoadingSheet(false); }
       };
 
       const handleFetchNurseSheet = async () => {
@@ -358,8 +370,10 @@
               result.push({ id: Date.now() + i, name: p[0].trim(), startLocation: { x: 50, y: 50 }, color: colors[result.length % colors.length], startTime: st, offDays: off, isLowPriority: p[3]?.includes('低') });
             }
           }
-          handleSetNurses(result); setToastMessage("看護師同期成功"); setShowToast(true); setTimeout(() => setShowToast(false), 3000);
-        } catch (e) { setToastMessage("同期失敗"); setShowToast(true); setTimeout(() => setShowToast(false), 3000); } finally { setIsLoadingNurseSheet(false); }
+          handleSetNurses(result); 
+          setToastMessage("看護師同期成功"); 
+          setShowToast(true);
+        } catch (e) { setToastMessage("同期失敗"); setShowToast(true); } finally { setIsLoadingNurseSheet(false); }
       };
 
       const requestVisitSort = (key) => {
@@ -397,7 +411,6 @@
               </div>
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1">Route Optimization v2.5</p>
             </div>
-            
             <nav className="flex-1 px-4 space-y-1.5 mt-2">
               <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all group ${activeTab === 'overview' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`}>
                 <div className="flex items-center gap-4"><Columns size={22} /><span className="font-bold">全体スケジュール</span></div>
@@ -416,7 +429,6 @@
                 <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'nurses' ? 'opacity-100' : ''}`} />
               </button>
             </nav>
-
             <div className="p-6 bg-slate-800/40 m-4 rounded-3xl border border-slate-700/50">
               <div className="flex items-center gap-3 text-xs text-emerald-400 font-black mb-1">
                 {db && user ? (
@@ -434,16 +446,13 @@
                   </>
                 )}
               </div>
-              <p className="text-[9px] text-slate-500 font-bold leading-tight">チーム全員にリアルタイムで反映中</p>
+              <p className="text-[9px] text-slate-500 font-bold leading-tight">チーム全員にリアルタイム反映中</p>
             </div>
           </aside>
 
           {/* モバイルヘッダー */}
           <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
-            <div className="flex items-center gap-2 font-black text-lg">
-               <Activity className="text-teal-400" size={20} />
-               <span>CareRoute</span>
-            </div>
+            <div className="flex items-center gap-2 font-black text-lg"><Activity className="text-teal-400" size={20} /><span>CareRoute</span></div>
             <div className="flex gap-0.5">
               <button onClick={() => setActiveTab('overview')} className={`p-2 rounded-xl ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Columns size={20} /></button>
               <button onClick={() => setActiveTab('schedule')} className={`p-2 rounded-xl ${activeTab === 'schedule' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Calendar size={20} /></button>
@@ -453,25 +462,19 @@
           </header>
 
           <main className="flex-1 flex flex-col overflow-hidden relative">
-            {/* 曜日・期間選択セクション (Sticky) */}
+            {/* 曜日・期間選択セクション */}
             <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
               <div className="flex items-center gap-3 overflow-x-auto hide-scrollbar whitespace-nowrap pl-2">
                 <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200">
                   <CalendarDays size={16} className="text-slate-500" />
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">開始日:</span>
-                  <input 
-                    type="date" 
-                    value={startDate} 
-                    onChange={e => handleSetStartDate(e.target.value)} 
-                    className="bg-transparent border-none p-0 text-sm font-black text-slate-700 outline-none focus:ring-0"
-                  />
+                  <input type="date" value={startDate} onChange={e => handleSetStartDate(e.target.value)} className="bg-transparent border-none p-0 text-sm font-black text-slate-700 outline-none focus:ring-0"/>
                   <div className="hidden md:block w-px h-4 bg-slate-300 mx-1"></div>
                   <span className="text-xs font-black text-slate-500 bg-white px-2 py-0.5 rounded-lg shadow-sm border border-slate-200">
                     {startDate ? `${startDate.replace(/-/g, '/')} 〜 ${scheduleEndDate.replace(/-/g, '/')}` : '期間未設定'}
                   </span>
                 </div>
               </div>
-
               <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2">
                 <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">表示曜日:</div>
                 {DAYS.map((day, idx) => (
@@ -484,9 +487,8 @@
               {/* --- タブ: 全体スケジュール --- */}
               {activeTab === 'overview' && (
                 <div className="flex flex-col h-full space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 text-sm">
                     <div className="flex flex-wrap items-center gap-4">
-                      {/* 日付ラベル (currentTargetDateLabel) をタイトルの横に追加 */}
                       <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
                         {DAYS[selectedDay]}曜日 <span className="text-xl md:text-2xl text-slate-400 ml-1 font-bold">({currentTargetDateLabel})</span>
                       </h1>
@@ -497,11 +499,8 @@
                         <span className="text-xs text-slate-400 font-bold">分</span>
                       </div>
                     </div>
-                    <button 
-                      onClick={handleAutoAssign} 
-                      disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
-                      className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-xl shadow-teal-200 transition-all flex items-center gap-3 disabled:opacity-50 whitespace-nowrap"
-                    >
+                    <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
+                      className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-xl shadow-teal-200 transition-all flex items-center gap-3 disabled:opacity-50 whitespace-nowrap">
                       <RefreshCw size={18} className={isOptimizing ? "animate-spin" : ""} />
                       {isOptimizing ? "編成中..." : "未割り当てを自動編成"}
                     </button>
@@ -527,21 +526,17 @@
                             )
                           })}
                         </div>
-
                         <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }}>
-                          <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20">
+                          <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20 text-[10px]">
                             {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
                               <div key={i} className="absolute w-full text-right pr-3 text-[11px] font-black text-slate-300" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{(START_HOUR + i).toString().padStart(2, '0')}:00</div>
                             ))}
                           </div>
-                          
                           <div className="absolute left-14 md:left-20 right-0 inset-y-0 pointer-events-none z-0">
                             {Array.from({ length: (END_HOUR - START_HOUR) * 4 }).map((_, i) => (
                               <div key={i} className={`absolute w-full border-t ${i % 4 === 0 ? 'border-slate-200' : i % 2 === 0 ? 'border-slate-100' : 'border-slate-50 border-dashed'}`} style={{ top: i * 15 * PIXELS_PER_MINUTE }}></div>
                             ))}
                           </div>
-
-                          {/* 未割り当て列 */}
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
@@ -553,15 +548,12 @@
                                    <div className="text-[9px] font-bold shrink-0">
                                      {v.originalStartTime && v.originalStartTime !== v.startTime ? (
                                        <span className="text-orange-600">{v.originalStartTime}➔{v.startTime}</span>
-                                     ) : (
-                                       <span className="text-slate-400">{v.startTime}</span>
-                                     )}
+                                     ) : ( <span className="text-slate-400">{v.startTime}</span> )}
                                    </div>
                                  </div>
                                )
                              })}
                           </div>
-
                           {nurses.map(nurse => {
                             const isOff = (nurse.offDays || []).includes(selectedDay), sch = allSchedules[nurse.id], assigned = sch?.visits || [];
                             return (
@@ -575,13 +567,8 @@
                                       {travelH > 10 && (
                                         <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-300 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
                                           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[10px] md:text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-[70] pointer-events-auto flex items-center whitespace-nowrap">
-                                            <input 
-                                              type="number" 
-                                              min="0"
-                                              className="w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0" 
-                                              value={item.customTravelTime ?? item.travelTime}
-                                              onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}
-                                            />
+                                            <input type="number" min="0" className="w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0" value={item.customTravelTime ?? item.travelTime}
+                                              onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
                                             <span>分</span>
                                           </div>
                                         </div>
@@ -624,56 +611,40 @@
                       <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">利用者の管理</h1>
                       <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{startDate ? `${startDate.replace(/-/g, '/')} 〜 ${scheduleEndDate.replace(/-/g, '/')}` : '期間未設定'}</p>
                     </div>
-                    <button onClick={handleFetchSheet} disabled={isLoadingSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-blue-200 transition-all flex items-center gap-3 disabled:opacity-50">
-                      {isLoadingSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}
-                      データ更新
+                    <button onClick={handleFetchSheet} disabled={isLoadingSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-blue-200 transition-all flex items-center gap-3 disabled:opacity-50 text-sm">
+                      {isLoadingSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}同期
                     </button>
                   </div>
                   <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
                     <div className="xl:col-span-1 space-y-6">
                        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
                           <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">接続設定</h2>
-                          <div>
-                            <label className="block text-[10px] font-black text-slate-500 mb-1.5 ml-1 uppercase">連携先 CSV URL</label>
-                            <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" placeholder="URLを入力"/>
-                          </div>
+                          <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" placeholder="CSVのURLを入力"/>
                        </div>
                     </div>
                     <div className="xl:col-span-3">
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
-                        <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center">
-                          <span className="font-black text-slate-800 flex items-center gap-2">
-                            <Users size={20} className="text-blue-500"/> {DAYS[selectedDay]}曜日 ({currentTargetDateLabel}) の利用者リスト
-                          </span>
-                          <span className="bg-white px-3 py-1 rounded-full border border-slate-200 text-xs font-black text-slate-400 uppercase">{sortedVisits.length}名</span>
+                        <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
+                          <span>{DAYS[selectedDay]}曜日 ({currentTargetDateLabel}) リスト</span>
+                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}名</span>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse min-w-[700px]">
                             <thead>
                               <tr className="bg-white text-slate-400 text-[11px] uppercase tracking-widest border-b border-slate-100">
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間</th>
                                 <th className="p-6">氏名</th>
                                 <th className="p-6">所要時間</th>
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
                               {sortedVisits.map(v => (
                                 <tr key={v.id} className="hover:bg-slate-50/80 transition-colors group">
-                                  <td className="p-6">
-                                    <div className="font-black text-slate-800">{v.startTime}</div>
-                                    {v.originalStartTime && v.originalStartTime !== v.startTime && (
-                                      <div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>
-                                    )}
-                                  </td>
+                                  <td className="p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
                                   <td className="p-6 font-bold text-slate-700">{v.userName}</td>
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
-                                  <td className="p-6">
-                                    <select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 transition-all focus:bg-white focus:ring-4 focus:ring-blue-500/5">
-                                      <option value="unassigned">-- 未指定 --</option>
-                                      {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                                    </select>
-                                  </td>
+                                  <td className="p-6"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5"><option value="unassigned">-- 未指定 --</option>{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                                 </tr>
                               ))}
                             </tbody>
@@ -694,28 +665,23 @@
                       <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{startDate ? `${startDate.replace(/-/g, '/')} 〜 ${scheduleEndDate.replace(/-/g, '/')}` : '期間未設定'}</p>
                     </div>
                     <div className="flex gap-2 overflow-x-auto hide-scrollbar bg-slate-200/50 p-1.5 rounded-[1.5rem] border border-slate-200 shadow-inner">
-                      {nurses.map(n => (
-                        <button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-6 py-3 rounded-2xl text-sm font-black whitespace-nowrap transition-all ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>
-                      ))}
+                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-6 py-3 rounded-2xl text-sm font-black whitespace-nowrap transition-all ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
                   {!selectedNurse ? (
                     <div className="bg-white rounded-[3rem] p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-6">
-                       <UserCog size={80} className="text-slate-200" />
-                       <p className="text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
+                       <UserCog size={80} className="text-slate-200" /><p className="text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                       <div className="lg:col-span-1 space-y-8">
-                        <div className="grid grid-cols-1 gap-4">
-                          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 flex items-center justify-between">
-                            <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">訪問件数</p><p className="text-4xl font-black text-slate-800">{stats.count}<span className="text-sm ml-1 text-slate-400 font-bold">件</span></p></div>
-                            <div className="w-16 h-16 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner"><Users size={32} /></div>
-                          </div>
-                          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 flex items-center justify-between">
-                            <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">移動時間合計</p><p className="text-4xl font-black text-slate-800">{stats.totalTravel}<span className="text-sm ml-1 text-slate-400 font-bold">分</span></p></div>
-                            <div className="w-16 h-16 rounded-3xl bg-teal-50 flex items-center justify-center text-teal-600 shadow-inner"><MapIcon size={32} /></div>
-                          </div>
+                        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 flex items-center justify-between">
+                          <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">訪問件数</p><p className="text-4xl font-black text-slate-800">{stats.count}<span className="text-sm ml-1 text-slate-400 font-bold">件</span></p></div>
+                          <div className="w-16 h-16 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner"><Users size={32} /></div>
+                        </div>
+                        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 flex items-center justify-between">
+                          <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">移動合計</p><p className="text-4xl font-black text-slate-800">{stats.totalTravel}<span className="text-sm ml-1 text-slate-400 font-bold">分</span></p></div>
+                          <div className="w-16 h-16 rounded-3xl bg-teal-50 flex items-center justify-center text-teal-600 shadow-inner"><MapIcon size={32} /></div>
                         </div>
                       </div>
                       <div className="lg:col-span-2">
@@ -724,58 +690,26 @@
                           <div className="space-y-10">
                             <div className="flex items-center gap-6 relative z-10">
                               <div className="w-14 h-14 rounded-3xl bg-slate-900 flex items-center justify-center text-white shrink-0 shadow-2xl shadow-slate-900/40"><MapPin size={24}/></div>
-                              <div>
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">出発</p>
-                                <div className="font-black text-slate-800 text-xl">ステーション出発 <span className="text-slate-400 ml-2 font-bold">{selectedNurse.startTime}</span></div>
-                              </div>
+                              <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">出発</p><div className="font-black text-slate-800 text-xl">ステーション出発 <span className="text-slate-400 ml-2 font-bold">{selectedNurse.startTime}</span></div></div>
                             </div>
                             {allSchedules[selectedNurse.id]?.visits.map((item, idx) => (
                               <div key={item.id} className="relative z-10">
-                                <div className="ml-20 mb-3 text-xs font-black text-slate-400 flex items-center gap-3">
-                                  <ArrowRight size={14} className="text-slate-300"/> 
-                                  <span className="bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2">
-                                    <span>移動</span>
-                                    <input 
-                                      type="number" 
-                                      className="w-8 text-center bg-transparent border-b border-slate-300 outline-none font-black text-teal-600" 
-                                      value={item.customTravelTime ?? item.travelTime}
-                                      onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}
-                                    />
-                                    <span>分</span>
-                                  </span>
-                                  {item.waitTime > 0 && <span className="text-blue-500 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">待機 {item.waitTime}分</span>}
+                                <div className="ml-20 mb-3 text-xs font-black text-slate-400 flex items-center gap-3"><ArrowRight size={14} className="text-slate-300"/> 
+                                  <span className="bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2"><span>移動</span><input type="number" className="w-8 text-center bg-transparent border-b border-slate-300 outline-none font-black text-teal-600" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/><span>分</span></span>
+                                  {item.waitTime > 0 && <span className="text-blue-500 bg-blue-50 px-3 py-1 rounded-full border border-blue-100 font-bold text-[10px]">待機 {item.waitTime}分</span>}
                                 </div>
                                 <div className="flex gap-6">
                                   <div className="w-14 h-14 rounded-3xl flex items-center justify-center text-white font-black text-xl shrink-0 shadow-xl" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                   <div className={`flex-1 p-6 md:p-8 rounded-[2rem] border-l-[8px] shadow-lg transition-transform hover:scale-[1.02] ${item.isLate ? 'border-l-red-500 bg-red-50/50 shadow-red-100' : 'border-l-teal-500 bg-white border border-slate-100 shadow-slate-100'}`}>
-                                    <div className="flex justify-between items-start mb-4 text-base">
-                                      <h4 className="font-black text-slate-800 text-2xl">{item.userName}</h4>
-                                      <span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase">{item.duration}分 滞在</span>
-                                    </div>
-                                    <div className="pt-2 border-t border-slate-100">
-                                      <p className="text-[10px] font-black text-slate-400 uppercase mb-1">指定時間</p>
-                                      <div className="flex items-center gap-4">
-                                        <p className="font-black text-slate-800 text-xl tracking-tight leading-none">{item.startTime}</p>
-                                        {item.originalStartTime && item.originalStartTime !== item.startTime && (
-                                          <span className="text-xs text-orange-600 font-black">（元: {item.originalStartTime}）</span>
-                                        )}
-                                        {item.isLate && (
-                                          <div className="flex items-center gap-1 bg-red-50 text-red-600 px-2 py-0.5 rounded-lg text-[10px] font-black shadow-sm">
-                                            <AlertTriangle size={12} /> 遅刻リスク
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
+                                    <div className="flex justify-between items-start mb-4 text-base"><h4 className="font-black text-slate-800 text-2xl">{item.userName}</h4><span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase">{item.duration}分 滞在</span></div>
+                                    <div className="pt-2 border-t border-slate-100"><p className="text-[10px] font-black text-slate-400 uppercase mb-1">指定時間</p><div className="flex items-center gap-4"><p className="font-black text-slate-800 text-xl tracking-tight leading-none">{item.startTime}</p>{item.originalStartTime && item.originalStartTime !== item.startTime && (<span className="text-xs text-orange-600 font-black">（元: {item.originalStartTime}）</span>)}{item.isLate && (<div className="flex items-center gap-1 bg-red-50 text-red-600 px-2 py-0.5 rounded-lg text-[10px] font-black shadow-sm"><AlertTriangle size={12} /> 遅刻リスク</div>)}</div></div>
                                   </div>
                                 </div>
                               </div>
                             ))}
                             <div className="flex items-center gap-6 relative z-10 pt-4">
                               <div className="w-14 h-14 rounded-3xl bg-slate-100 flex items-center justify-center text-slate-400 shrink-0 shadow-inner border border-slate-200"><MapPin size={24}/></div>
-                              <div>
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">帰着</p>
-                                <div className="font-black text-slate-800 text-xl">ステーション帰着 <span className="text-slate-400 ml-2 font-bold">{allSchedules[selectedNurse.id]?.returnTime}</span></div>
-                              </div>
+                              <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">帰着</p><div className="font-black text-slate-800 text-xl">ステーション帰着 <span className="text-slate-400 ml-2 font-bold">{allSchedules[selectedNurse.id]?.returnTime}</span></div></div>
                             </div>
                           </div>
                         </div>
@@ -790,31 +724,21 @@
                 <div className="max-w-7xl mx-auto space-y-8 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">看護師の管理</h1>
-                    <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50">
-                      {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}
-                      名簿リスト更新
+                    <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50 text-sm">
+                      {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}更新
                     </button>
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                     <div className="lg:col-span-1 space-y-6">
-                      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-                        <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
-                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/>
-                      </div>
+                      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm"><h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2><input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/></div>
                     </div>
                     <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                       {nurses.map(n => (
-                        <div key={n.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-lg shadow-slate-200/30 flex flex-col items-center text-center transition-all hover:translate-y-[-4px] hover:shadow-xl group">
-                          <div className="w-20 h-20 rounded-[2rem] shadow-xl border-4 border-white mb-6 transition-transform group-hover:scale-110" style={{ backgroundColor: n.color }}></div>
+                        <div key={n.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-lg shadow-slate-200/30 flex flex-col items-center text-center group transition-all hover:scale-105 hover:shadow-xl">
+                          <div className="w-20 h-20 rounded-[2rem] shadow-xl border-4 border-white mb-6" style={{ backgroundColor: n.color }}></div>
                           <p className="font-black text-slate-800 text-xl mb-1">{n.name}</p>
-                          <div className="flex gap-2 mb-4">
-                             <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full border border-slate-200 uppercase tracking-tighter">{n.startTime} 開始</span>
-                             <span className={`text-[9px] font-black px-2.5 py-1 rounded-full border uppercase tracking-tighter ${n.offDays?.length > 0 ? 'bg-red-50 text-red-500 border-red-100' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>{n.offDays?.length > 0 ? '休日設定あり' : '常勤'}</span>
-                          </div>
-                          <div className="w-full pt-4 border-t border-slate-50">
-                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">休日</p>
-                             <p className="text-xs font-black text-slate-600">{n.offDays?.length > 0 ? n.offDays.map(d => DAYS[d]).join('・') : 'なし'}</p>
-                          </div>
+                          <div className="flex gap-2 mb-4"><span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full border border-slate-200 uppercase tracking-tighter">{n.startTime} 開始</span><span className={`text-[9px] font-black px-2.5 py-1 rounded-full border uppercase tracking-tighter ${n.offDays?.length > 0 ? 'bg-red-50 text-red-500 border-red-100' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>{n.offDays?.length > 0 ? '休日あり' : '常勤'}</span></div>
+                          <div className="w-full pt-4 border-t border-slate-50"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">休日</p><p className="text-xs font-black text-slate-600">{n.offDays?.length > 0 ? n.offDays.map(d => DAYS[d]).join('・') : 'なし'}</p></div>
                         </div>
                       ))}
                     </div>
@@ -824,8 +748,18 @@
             </div>
           </main>
 
-          {/* 通知トースト */}
-          {showToast && <div className="fixed bottom-10 right-10 glass-effect text-slate-900 px-8 py-5 rounded-[2rem] shadow-2xl flex items-center gap-4 animate-bounce z-[100] border border-white shadow-teal-500/20 min-w-[300px]"><div className="bg-emerald-500 p-2 rounded-xl text-white shadow-lg shadow-emerald-200"><CheckCircle2 size={24} /></div><span className="font-black text-sm tracking-tight">{toastMessage}</span></div>}
+          {/* 通知トースト (修正: 自動消去の安定化とタップでの消去) */}
+          {showToast && (
+            <div 
+              onClick={() => setShowToast(false)}
+              className="fixed bottom-6 right-6 md:bottom-10 md:right-10 glass-effect text-slate-900 px-6 py-4 md:px-8 md:py-5 rounded-[1.5rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 animate-bounce z-[100] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]"
+            >
+              <div className="bg-emerald-500 p-1.5 md:p-2 rounded-lg md:rounded-xl text-white shadow-lg shadow-emerald-200 shrink-0">
+                <CheckCircle2 size={20} className="md:w-6 md:h-6" />
+              </div>
+              <span className="font-black text-xs md:text-sm tracking-tight">{toastMessage}</span>
+            </div>
+          )}
         </div>
       );
     }
