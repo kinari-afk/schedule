@@ -280,6 +280,11 @@
         handleSetVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
       };
 
+      // 訪問間隔（移動時間）を個別に修正する関数
+      const updateCustomTravelTime = (visitId, newTime) => {
+        handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, customTravelTime: newTime } : v));
+      };
+
       const handleFetchSheet = async () => {
         setIsLoadingSheet(true);
         try {
@@ -415,7 +420,7 @@
 
           <main className="flex-1 flex flex-col overflow-hidden relative">
             {/* 曜日選択セクション (Sticky) */}
-            <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex items-center gap-2 md:gap-6 overflow-x-auto hide-scrollbar shrink-0 sticky top-0 md:relative text-sm">
+            <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex items-center gap-2 md:gap-6 overflow-x-auto hide-scrollbar shrink-0 sticky top-0 md:relative text-sm text-sm">
               <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] md:text-xs whitespace-nowrap pl-2 uppercase tracking-tighter"><CalendarDays size={14} /> Schedule Day:</div>
               <div className="flex gap-2 pr-4">
                 {DAYS.map((day, idx) => (
@@ -430,11 +435,9 @@
                 <div className="flex flex-col h-full space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <div className="flex flex-wrap items-center gap-4">
-                      {/* 修正：タイトルを曜日のみに変更 */}
                       <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tighter">{DAYS[selectedDay]}曜日</h1>
                       <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
                         <Clock size={16} className="text-slate-400" />
-                        {/* 修正：ラベルを日本語に変更 */}
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
                         <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20"/>
                         <span className="text-xs text-slate-400 font-bold">分</span>
@@ -457,7 +460,6 @@
                         <div className="flex sticky top-0 z-[60] bg-slate-50/95 backdrop-blur-sm border-b border-slate-200">
                           <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-4 bg-white/50">
-                             {/* 修正：ラベルを日本語に変更 */}
                              <div className="font-black text-slate-500 text-[10px] uppercase tracking-wider mb-1">未割り当て</div>
                              <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[11px] font-black px-3 py-1 rounded-full`}>{unassignedCount}件</div>
                           </div>
@@ -487,13 +489,16 @@
                             ))}
                           </div>
 
+                          {/* 未割り当て列 */}
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
-                                 <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} className="absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2.5 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group" style={{ top: `${top}px`, height: `${Math.max(height, 32)}px` }}>
+                                 <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
+                                   className="absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group" 
+                                   style={{ top: `${top}px`, height: `${Math.max(height, 35)}px` }}>
                                    <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600">{v.userName}</div>
-                                   <div className="text-[10px] mt-auto leading-none">
+                                   <div className="text-[9px] mt-auto leading-none">
                                      {v.originalStartTime && v.originalStartTime !== v.startTime ? (
                                        <span className="text-orange-600 font-black">{v.originalStartTime} ➔ {v.startTime}</span>
                                      ) : (
@@ -516,13 +521,23 @@
                                   return (
                                     <React.Fragment key={item.id}>
                                       {travelH > 10 && (
-                                        <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-300" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
-                                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-50 whitespace-nowrap">
-                                            {item.customTravelTime ?? item.travelTime}分
+                                        <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-300 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
+                                          {/* 移動時間表示の修正: インプットを復活させ、z-indexとpointer-eventsを調整 */}
+                                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-[70] pointer-events-auto flex items-center whitespace-nowrap">
+                                            <input 
+                                              type="number" 
+                                              min="0"
+                                              className="w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0" 
+                                              value={item.customTravelTime ?? item.travelTime}
+                                              onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}
+                                            />
+                                            <span>分</span>
                                           </div>
                                         </div>
                                       )}
-                                      <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-2.5 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                      <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
+                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 35)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                         <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight">{item.userName}</div>
                                         <div className="mt-auto flex flex-col gap-0.5">
                                            {item.originalStartTime && item.originalStartTime !== item.startTime && (
@@ -576,7 +591,7 @@
                     </div>
 
                     <div className="xl:col-span-3">
-                      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
+                      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm text-sm">
                         <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center">
                           <span className="font-black text-slate-800 flex items-center gap-2"><Users size={20} className="text-blue-500"/> {DAYS[selectedDay]}曜日の利用者リスト</span>
                           <span className="bg-white px-3 py-1 rounded-full border border-slate-200 text-xs font-black text-slate-400 uppercase">{sortedVisits.length}名</span>
@@ -634,7 +649,7 @@
                   {!selectedNurse ? (
                     <div className="bg-white rounded-[3rem] p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-6">
                        <UserCog size={80} className="text-slate-200" />
-                       <p className="text-xl font-black text-slate-300 uppercase tracking-widest text-sm">担当者を選択してください</p>
+                       <p className="text-xl font-black text-slate-300 uppercase tracking-widest text-sm text-sm">担当者を選択してください</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -645,7 +660,6 @@
                             <div className="w-16 h-16 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner"><Users size={32} /></div>
                           </div>
                           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 flex items-center justify-between">
-                            {/* 修正：ラベルを日本語に変更 */}
                             <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">移動時間合計</p><p className="text-4xl font-black text-slate-800">{stats.totalTravel}<span className="text-sm ml-1 text-slate-400 font-bold">分</span></p></div>
                             <div className="w-16 h-16 rounded-3xl bg-teal-50 flex items-center justify-center text-teal-600 shadow-inner"><MapIcon size={32} /></div>
                           </div>
@@ -668,7 +682,16 @@
                               <div key={item.id} className="relative z-10">
                                 <div className="ml-20 mb-3 text-xs font-black text-slate-400 flex items-center gap-3">
                                   <ArrowRight size={14} className="text-slate-300"/> 
-                                  <span className="bg-slate-50 px-3 py-1 rounded-full border border-slate-100">移動 {item.travelTime}分</span>
+                                  <span className="bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2">
+                                    <span>移動</span>
+                                    <input 
+                                      type="number" 
+                                      className="w-8 text-center bg-transparent border-b border-slate-300 outline-none font-black text-teal-600" 
+                                      value={item.customTravelTime ?? item.travelTime}
+                                      onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}
+                                    />
+                                    <span>分</span>
+                                  </span>
                                   {item.waitTime > 0 && <span className="text-blue-500 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">待機 {item.waitTime}分</span>}
                                 </div>
                                 <div className="flex gap-6">
@@ -723,7 +746,7 @@
                     </button>
                   </div>
                   
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 text-sm">
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 text-sm text-sm">
                     <div className="lg:col-span-1 space-y-6">
                       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
                         <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
