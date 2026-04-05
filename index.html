@@ -224,17 +224,39 @@
         return `${d.getMonth() + 1}/${d.getDate()}`;
       }, [startDate, selectedDay]);
 
-      const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
-      const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
+      const isNurseOff = (nurse, dateStr) => {
+        if (!nurse || !dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
+        const dayOfWeek = d.getDay();
+        
+        if (nurse.offDays && nurse.offDays.includes(dayOfWeek)) return true;
+        if (nurse.specificOffDays && nurse.specificOffDays.includes(dateStr)) return true;
+        
+        return false;
+      };
 
-      const unassignedCount = visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).length;
+      // 選択されている曜日から日付の文字列を計算 (2026-04-06 など)
+      const selectedDate = useMemo(() => {
+        if (!startDate) return new Date().toISOString().split('T')[0];
+        const d = new Date(startDate);
+        const startDayOfWeek = d.getDay();
+        const diff = selectedDay - startDayOfWeek;
+        d.setDate(d.getDate() + diff);
+        return d.toISOString().split('T')[0];
+      }, [startDate, selectedDay]);
+
+      const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
+      const isSelectedNurseOff = selectedNurse ? isNurseOff(selectedNurse, selectedDate) : false;
+
+      const unassignedCount = visits.filter(v => v.date === selectedDate && v.nurseId === null).length;
 
       const allSchedules = useMemo(() => {
         const schedules = {};
         nurses.forEach(nurse => {
-          const isOff = (nurse.offDays || []).includes(selectedDay);
+          const isOff = isNurseOff(nurse, selectedDate);
           if (isOff) { schedules[nurse.id] = { isOff: true, visits: [] }; return; }
-          const assigned = visits.filter(v => v.nurseId === nurse.id && v.dayOfWeek === selectedDay);
+          const assigned = visits.filter(v => v.nurseId === nurse.id && v.date === selectedDate);
           const sorted = [...assigned].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
           let currentTime = parseTime(nurse.startTime);
           let calcVisits = [];
@@ -255,7 +277,7 @@
           schedules[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime };
         });
         return schedules;
-      }, [nurses, visits, selectedDay, baseTravelTime]);
+      }, [nurses, visits, selectedDate, baseTravelTime]);
 
       const stats = useMemo(() => {
         const sch = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
@@ -266,32 +288,67 @@
       }, [allSchedules, selectedNurse]);
 
       const handleAutoAssign = () => {
-        const available = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
+        const available = nurses.filter(n => !isNurseOff(n, selectedDate));
         if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         setIsOptimizing(true);
+        
         setTimeout(() => {
           const newVisits = [...visits];
-          const todayUnassigned = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+          const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+          
           const states = available.map(n => {
-            const mine = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+            const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
             const last = mine.pop();
             return { id: n.id, time: last ? parseTime(last.departureTime) : parseTime(n.startTime), loc: last ? last.location : n.startLocation };
           });
+          
           todayUnassigned.forEach(visit => {
             let best = null, min = Infinity;
+            
+            // 1. 優先度通常（高）の看護師から探す
             states.forEach(s => {
+              const nDef = available.find(n => n.id === s.id);
+              if (nDef && nDef.isLowPriority) return; // 優先度低い人はスキップ
+              
               const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
               const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
               if (s.time + travel <= parseTime(visit.startTime) && travel < min) { min = travel; best = s; }
             });
+            
+            // 2. いなければ優先度低の看護師から探す
+            if (!best) {
+              min = Infinity;
+              states.forEach(s => {
+                const nDef = available.find(n => n.id === s.id);
+                if (nDef && !nDef.isLowPriority) return; // 優先度通常はスキップ
+                
+                const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
+                const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                if (s.time + travel <= parseTime(visit.startTime) && travel < min) { min = travel; best = s; }
+              });
+            }
+            
+            // 3. 誰も間に合わない場合は、一番早く到着できる人を優先度を考慮して探す
             if (!best) {
                let earliest = Infinity;
+               let isBestLow = true;
                states.forEach(s => {
+                 const nDef = available.find(n => n.id === s.id);
+                 const isLow = nDef ? !!nDef.isLowPriority : false;
+                 
                  const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                 if (s.time + travel < earliest) { earliest = s.time + travel; best = s; }
+                 const arrival = s.time + travel;
+                 
+                 // より早く着く、または同じ時間で優先度が高い場合
+                 if (arrival < earliest || (arrival === earliest && isBestLow && !isLow)) { 
+                     earliest = arrival; 
+                     best = s; 
+                     isBestLow = isLow;
+                 }
                });
             }
+            
             if (best) {
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
               newVisits[vIdx].nurseId = best.id;
@@ -300,6 +357,7 @@
               best.loc = visit.location;
             }
           });
+          
           handleSetVisits(newVisits); 
           setIsOptimizing(false); 
           setToastMessage("自動編成完了"); 
@@ -315,9 +373,16 @@
         const rect = e.currentTarget.getBoundingClientRect();
         const y = (e.clientY - rect.top) - offsetY;
         const minutes = y / PIXELS_PER_MINUTE + START_HOUR * 60;
-        const snappedMinutes = Math.round(minutes / 5) * 5; 
-        const newStartTime = formatTime(Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, snappedMinutes)));
-        handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, nurseId: targetNurseId, startTime: newStartTime, originalStartTime: v.originalStartTime || v.startTime } : v));
+        const snappedMinutes = Math.round(minutes / 15) * 15; 
+        const newStartTime = formatTime(Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 15, snappedMinutes)));
+        
+        handleSetVisits(prev => prev.map(v => {
+          if (v.id === visitId) {
+             const original = v.originalStartTime || v.startTime;
+             return { ...v, nurseId: targetNurseId, startTime: newStartTime, originalStartTime: original, date: selectedDate };
+          }
+          return v;
+        }));
       };
 
       const updateVisitNurse = (visitId, newNurseId) => {
@@ -335,22 +400,45 @@
           const res = await fetch(sheetUrl);
           const txt = await res.text();
           const rows = txt.split(/\r\n|\n/);
-          const map = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
+          const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
             if (p[0]?.trim()) {
+              const nameStr = p[0].trim();
+              const dateOrDay = p[1]?.trim() || '';
               let st = p[2]?.trim() || '09:00'; if (st.length === 4) st = '0' + st;
-              result.push({ id: Date.now() + i, userName: p[0].includes('様') ? p[0] : p[0] + ' 様', location: getHashLoc(p[0]), duration: parseInt(p[3]) || 30, dayOfWeek: map[p[1]?.trim()] ?? 1, startTime: st, originalStartTime: st, nurseId: null });
+              const dur = parseInt(p[3]) || 30;
+              
+              let visitDate = '';
+              // 日付形式が含まれているかチェック
+              if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
+                visitDate = dateOrDay.replace(/\//g, '-');
+              } else {
+                // 互換性フォールバック：「月」などの場合、startDate以降の直近の該当曜日の日付にする
+                const targetDay = dayMap[dateOrDay];
+                if (targetDay !== undefined && startDate) {
+                  const start = new Date(startDate);
+                  const startDay = start.getDay();
+                  let diff = targetDay - startDay;
+                  if (diff < 0) diff += 7;
+                  start.setDate(start.getDate() + diff);
+                  visitDate = start.toISOString().split('T')[0];
+                } else {
+                  visitDate = startDate || new Date().toISOString().split('T')[0];
+                }
+              }
+
+              result.push({ id: Date.now() + i, userName: nameStr.includes('様') ? nameStr : nameStr + ' 様', location: getHashLoc(nameStr), duration: dur, date: visitDate, dayOfWeek: dayMap[dateOrDay] ?? 1, startTime: st, originalStartTime: st, nurseId: null });
             }
           }
           const merged = result.map(nv => {
-            const ex = visits.find(v => normalizeName(v.userName) === normalizeName(nv.userName) && v.dayOfWeek === nv.dayOfWeek && v.originalStartTime === nv.originalStartTime);
+            const ex = visits.find(v => normalizeName(v.userName) === normalizeName(nv.userName) && v.date === nv.date && v.originalStartTime === nv.originalStartTime);
             return ex ? { ...nv, id: ex.id, nurseId: ex.nurseId, startTime: ex.startTime, customTravelTime: ex.customTravelTime } : nv;
           });
           handleSetVisits(merged); 
           setToastMessage("利用者同期成功"); 
-          setShowToast(true);
+          setShowToast(true); 
         } catch (e) { setToastMessage("同期失敗"); setShowToast(true); } finally { setIsLoadingSheet(false); }
       };
 
@@ -362,12 +450,39 @@
           const rows = txt.split(/\r\n|\n/);
           const map = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
+          
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
             if (p[0]?.trim()) {
+              const nameStr = p[0].trim();
               let st = p[1]?.trim() || '08:30'; if (st.length === 4) st = '0' + st;
+              
               let off = []; Object.keys(map).forEach(d => { if (p[2]?.includes(d)) off.push(map[d]); });
-              result.push({ id: Date.now() + i, name: p[0].trim(), startLocation: { x: 50, y: 50 }, color: colors[result.length % colors.length], startTime: st, offDays: off, isLowPriority: p[3]?.includes('低') });
+              
+              let specificOffDays = [];
+              let isLow = false;
+              
+              // 3列目以降から「特定休」と「優先度(低)」を柔軟に探す
+              for(let j = 3; j < p.length; j++) {
+                 if(!p[j]) continue;
+                 if(p[j].includes('低')) {
+                    isLow = true;
+                 } else if (p[j].includes('/') || p[j].includes('-')) {
+                    const dates = p[j].split('・').map(d => d.trim().replace(/\//g, '-'));
+                    specificOffDays = specificOffDays.concat(dates.filter(d => d.length > 0));
+                 }
+              }
+              
+              result.push({ 
+                id: Date.now() + i, 
+                name: nameStr, 
+                startLocation: { x: 50, y: 50 }, 
+                color: colors[result.length % colors.length], 
+                startTime: st, 
+                offDays: off, 
+                specificOffDays: specificOffDays,
+                isLowPriority: isLow
+              });
             }
           }
           handleSetNurses(result); 
@@ -381,7 +496,7 @@
       };
 
       const sortedVisits = useMemo(() => {
-        let filtered = visits.filter(v => v.dayOfWeek === selectedDay);
+        let filtered = visits.filter(v => v.date === selectedDate);
         if (visitSortConfig.key) {
           filtered.sort((a, b) => {
             let valA, valB;
@@ -396,7 +511,7 @@
           });
         }
         return filtered;
-      }, [visits, selectedDay, visitSortConfig, nurses]);
+      }, [visits, selectedDate, visitSortConfig, nurses]);
 
       return (
         <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden">
@@ -516,7 +631,7 @@
                              <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[11px] font-black px-3 py-1 rounded-full`}>{unassignedCount}件</div>
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = (nurse.offDays || []).includes(selectedDay), assigned = allSchedules[nurse.id]?.visits || [];
+                            const isOff = isNurseOff(nurse, selectedDate), assigned = allSchedules[nurse.id]?.visits || [];
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-4 ${isOff ? 'w-14 bg-slate-100/50' : 'w-44 md:w-64 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
                                 {isOff ? <div className="text-[10px] font-black text-red-400 tracking-tighter uppercase" style={{writingMode: 'vertical-rl'}}>お休み</div> : (
@@ -538,7 +653,7 @@
                             ))}
                           </div>
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
-                             {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
+                             {visits.filter(v => v.date === selectedDate && v.nurseId === null).map(v => {
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
                                  <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
@@ -555,7 +670,7 @@
                              })}
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = (nurse.offDays || []).includes(selectedDay), sch = allSchedules[nurse.id], assigned = sch?.visits || [];
+                            const isOff = isNurseOff(nurse, selectedDate), sch = allSchedules[nurse.id], assigned = sch?.visits || [];
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-44 md:w-64'}`} onDragOver={(e) => !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
@@ -632,10 +747,10 @@
                           <table className="w-full text-left border-collapse min-w-[700px]">
                             <thead>
                               <tr className="bg-white text-slate-400 text-[11px] uppercase tracking-widest border-b border-slate-100">
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間</th>
+                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
                                 <th className="p-6">氏名</th>
                                 <th className="p-6">所要時間</th>
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師</th>
+                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -730,15 +845,28 @@
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                     <div className="lg:col-span-1 space-y-6">
-                      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm"><h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2><input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/></div>
+                      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
+                        <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
+                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/>
+                      </div>
                     </div>
                     <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                       {nurses.map(n => (
                         <div key={n.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-lg shadow-slate-200/30 flex flex-col items-center text-center group transition-all hover:scale-105 hover:shadow-xl">
                           <div className="w-20 h-20 rounded-[2rem] shadow-xl border-4 border-white mb-6" style={{ backgroundColor: n.color }}></div>
                           <p className="font-black text-slate-800 text-xl mb-1">{n.name}</p>
-                          <div className="flex gap-2 mb-4"><span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full border border-slate-200 uppercase tracking-tighter">{n.startTime} 開始</span><span className={`text-[9px] font-black px-2.5 py-1 rounded-full border uppercase tracking-tighter ${n.offDays?.length > 0 ? 'bg-red-50 text-red-500 border-red-100' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>{n.offDays?.length > 0 ? '休日あり' : '常勤'}</span></div>
-                          <div className="w-full pt-4 border-t border-slate-50"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">休日</p><p className="text-xs font-black text-slate-600">{n.offDays?.length > 0 ? n.offDays.map(d => DAYS[d]).join('・') : 'なし'}</p></div>
+                          <div className="flex gap-2 mb-4">
+                             <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full border border-slate-200 uppercase tracking-tighter">{n.startTime} 開始</span>
+                             <span className={`text-[9px] font-black px-2.5 py-1 rounded-full border uppercase tracking-tighter ${(n.offDays?.length > 0 || n.specificOffDays?.length > 0) ? 'bg-red-50 text-red-500 border-red-100' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>{(n.offDays?.length > 0 || n.specificOffDays?.length > 0) ? '休日あり' : '常勤'}</span>
+                          </div>
+                          <div className="w-full pt-4 border-t border-slate-50">
+                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">固定休 (曜日)</p>
+                             <p className="text-xs font-black text-slate-600 mb-4">{n.offDays?.length > 0 ? n.offDays.map(d => DAYS[d]).join('・') : 'なし'}</p>
+                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">特定休 (日付)</p>
+                             <p className="text-xs font-black text-slate-600 mb-4">{n.specificOffDays?.length > 0 ? n.specificOffDays.map(d => d.replace(/-/g, '/')).join('・') : 'なし'}</p>
+                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">割り当て優先度</p>
+                             <p className="text-xs font-black text-slate-600">{n.isLowPriority ? '低' : '通常'}</p>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -748,7 +876,7 @@
             </div>
           </main>
 
-          {/* 通知トースト (修正: 自動消去の安定化とタップでの消去) */}
+          {/* 通知トースト */}
           {showToast && (
             <div 
               onClick={() => setShowToast(false)}
