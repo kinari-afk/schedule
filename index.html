@@ -100,6 +100,10 @@
     const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
     const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
 
+    // 初期データは空にする
+    const initialNurses = [];
+    const initialVisits = [];
+
     function App() {
       // 認証の管理
       const [user, setUser] = useState(null);
@@ -125,21 +129,59 @@
       const [activeTab, setActiveTab] = useState('overview');
       const [selectedDay, setSelectedDay] = useState(1);
       
-      const [nurses, setNurses] = useState([]);
-      const [visits, setVisits] = useState([]);
+      const [nurses, setNurses] = useState(() => {
+        try {
+          const saved = localStorage.getItem("careRoute_nurses");
+          return saved ? JSON.parse(saved) : initialNurses;
+        } catch (e) {
+          return initialNurses;
+        }
+      });
+      const [visits, setVisits] = useState(() => {
+        try {
+          const saved = localStorage.getItem("careRoute_visits");
+          return saved ? JSON.parse(saved) : initialVisits;
+        } catch (e) {
+          return initialVisits;
+        }
+      });
+
+      // --- 基本移動時間の状態 ---
+      const [baseTravelTime, setBaseTravelTime] = useState(() => {
+        try {
+          const saved = localStorage.getItem("careRoute_baseTravelTime");
+          return saved !== null ? parseInt(saved, 10) : 10;
+        } catch (e) {
+          return 10;
+        }
+      });
+      
       const [selectedNurseId, setSelectedNurseId] = useState(null);
       
       const [isOptimizing, setIsOptimizing] = useState(false);
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       
-      const [sheetUrl, setSheetUrl] = useState(DEFAULT_USER_SHEET_URL);
+      const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem("careRoute_userSheetUrl") || localStorage.getItem("careRoute_patientSheetUrl") || DEFAULT_USER_SHEET_URL);
       const [isLoadingSheet, setIsLoadingSheet] = useState(false);
       const [showUserSheetConfig, setShowUserSheetConfig] = useState(false);
 
-      const [nurseSheetUrl, setNurseSheetUrl] = useState(DEFAULT_NURSE_SHEET_URL);
+      const [nurseSheetUrl, setNurseSheetUrl] = useState(() => localStorage.getItem("careRoute_nurseSheetUrl") || DEFAULT_NURSE_SHEET_URL);
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
       const [showNurseSheetConfig, setShowNurseSheetConfig] = useState(false);
+
+      // --- 状態の変更をローカルストレージに自動保存する ---
+      useEffect(() => {
+        localStorage.setItem("careRoute_nurses", JSON.stringify(nurses));
+      }, [nurses]);
+
+      useEffect(() => {
+        localStorage.setItem("careRoute_visits", JSON.stringify(visits));
+      }, [visits]);
+
+      useEffect(() => {
+        localStorage.setItem("careRoute_baseTravelTime", baseTravelTime.toString());
+      }, [baseTravelTime]);
 
       // --- クラウドからのデータ受信 (リアルタイム同期) ---
       useEffect(() => {
@@ -153,6 +195,7 @@
             if (data.visits) setVisits(JSON.parse(data.visits));
             if (data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl !== undefined) setNurseSheetUrl(data.nurseSheetUrl);
+            if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
           }
         }, (error) => {
           console.error("Snapshot error:", error);
@@ -186,16 +229,23 @@
         });
       };
 
+      const handleSetBaseTravelTime = (val) => {
+        setBaseTravelTime(val);
+        updateCloudData({ baseTravelTime: val });
+      };
+
       const handleSheetUrlChange = (e) => {
         const url = e.target.value;
         setSheetUrl(url);
         updateCloudData({ sheetUrl: url });
+        localStorage.setItem("careRoute_userSheetUrl", url);
       };
 
       const handleNurseSheetUrlChange = (e) => {
         const url = e.target.value;
         setNurseSheetUrl(url);
         updateCloudData({ nurseSheetUrl: url });
+        localStorage.setItem("careRoute_nurseSheetUrl", url);
       };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
@@ -248,7 +298,8 @@
 
           sortedVisits.forEach((visit) => {
             const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
-            const travelTime = Math.max(5, Math.round(dist * 0.3));
+            // 基本時間 ＋ 距離に応じた微小な変動 (最大で約5〜6分追加)
+            const travelTime = baseTravelTime + Math.round(dist * 0.05);
             const targetStart = parseTime(visit.startTime);
             const arrivalTime = currentTime + travelTime;
             const isLate = arrivalTime > targetStart;
@@ -274,7 +325,7 @@
           let finalTravelTime = 0;
           if (calcVisits.length > 0) {
             const finalDist = Math.sqrt(Math.pow(currentLoc.x - nurse.startLocation.x, 2) + Math.pow(currentLoc.y - nurse.startLocation.y, 2));
-            finalTravelTime = Math.max(5, Math.round(finalDist * 0.3));
+            finalTravelTime = baseTravelTime + Math.round(finalDist * 0.05);
             returnTime = formatTime(currentTime + finalTravelTime);
           }
 
@@ -282,7 +333,7 @@
         });
         
         return schedulesByNurse;
-      }, [nurses, visits, selectedDay]);
+      }, [nurses, visits, selectedDay, baseTravelTime]);
 
       // 個別スケジュール用
       const schedule = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
@@ -338,7 +389,7 @@
               if (nurseDef && nurseDef.isLowPriority) return;
 
               const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-              const travel = Math.max(5, Math.round(dist * 0.3));
+              const travel = baseTravelTime + Math.round(dist * 0.05);
               if (ns.time + travel <= targetStart) {
                 if (travel < minTravel) {
                   minTravel = travel;
@@ -354,7 +405,7 @@
                 if (nurseDef && !nurseDef.isLowPriority) return;
 
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = Math.max(5, Math.round(dist * 0.3));
+                const travel = baseTravelTime + Math.round(dist * 0.05);
                 if (ns.time + travel <= targetStart) {
                   if (travel < minTravel) {
                     minTravel = travel;
@@ -373,7 +424,7 @@
                 const isLow = nurseDef ? !!nurseDef.isLowPriority : false;
 
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const arrival = ns.time + Math.max(5, Math.round(dist * 0.3));
+                const arrival = ns.time + baseTravelTime + Math.round(dist * 0.05);
 
                 if (arrival < earliest || (arrival === earliest && isBestNurseLowPriority && !isLow)) {
                   earliest = arrival;
@@ -387,7 +438,7 @@
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
               newVisits[vIdx].nurseId = bestNurse.id;
               const dist = Math.sqrt(Math.pow(visit.location.x - bestNurse.loc.x, 2) + Math.pow(visit.location.y - bestNurse.loc.y, 2));
-              bestNurse.time = Math.max(bestNurse.time + Math.max(5, Math.round(dist * 0.3)), targetStart) + visit.duration;
+              bestNurse.time = Math.max(bestNurse.time + baseTravelTime + Math.round(dist * 0.05), targetStart) + visit.duration;
               bestNurse.loc = visit.location;
             }
           });
@@ -644,7 +695,21 @@
               {activeTab === 'overview' && (
                 <div className="flex flex-col h-full space-y-4">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-                    <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の全体スケジュール</h1>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の全体スケジュール</h1>
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                        <Clock size={14} className="text-slate-400" />
+                        <span className="text-xs font-bold text-slate-600">基本移動:</span>
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={baseTravelTime} 
+                          onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"
+                        />
+                        <span className="text-xs text-slate-500">分</span>
+                      </div>
+                    </div>
                     <button 
                       onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
                       className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm whitespace-nowrap"
@@ -871,7 +936,21 @@
               {activeTab === 'schedule' && (
                 <div className="max-w-6xl mx-auto space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の個別・ルート確認</h1>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の個別・ルート確認</h1>
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                        <Clock size={14} className="text-slate-400" />
+                        <span className="text-xs font-bold text-slate-600">基本移動:</span>
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={baseTravelTime} 
+                          onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"
+                        />
+                        <span className="text-xs text-slate-500">分</span>
+                      </div>
+                    </div>
                     <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm overflow-x-auto max-w-full">
                       {nurses.map(nurse => {
                         const isOff = (nurse.offDays || []).includes(selectedDay);
