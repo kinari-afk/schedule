@@ -31,6 +31,12 @@
     import { createRoot } from 'react-dom/client';
     import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns } from 'lucide-react';
 
+    // --- タイムライン用の定数 ---
+    const START_HOUR = 7; // 朝7時から開始
+    const END_HOUR = 19;  // 夜19時まで表示
+    const PIXELS_PER_MINUTE = 1.5; // 1分あたりのピクセル数 (1時間 = 90px)
+    const getTop = (minutes) => (minutes - START_HOUR * 60) * PIXELS_PER_MINUTE;
+
     // --- ユーティリティ関数 ---
     const parseTime = (timeStr) => {
       if (!timeStr) return 0;
@@ -518,7 +524,7 @@
 
             <div className="flex-1 overflow-auto p-4 md:p-8">
 
-              {/* --- タブ: 全体スケジュール (カンバン形式) --- */}
+              {/* --- タブ: 全体スケジュール (タイムライン形式) --- */}
               {activeTab === 'overview' && (
                 <div className="flex flex-col h-full space-y-4">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
@@ -539,110 +545,158 @@
                       <p className="text-sm">左のメニューの「看護師管理」から、名簿を同期してください。</p>
                     </div>
                   ) : (
-                    <div className="flex-1 overflow-x-auto overflow-y-hidden pb-2">
-                      <div className="flex h-full gap-4 pb-4 items-start w-max">
-                        
-                        {/* 未割り当て列 */}
-                        <div className="w-72 bg-slate-100 rounded-xl border border-slate-200 flex flex-col h-full max-h-full shadow-sm">
-                          <div className="p-3 border-b border-slate-200 bg-slate-200/50 rounded-t-xl shrink-0">
-                            <div className="font-bold text-slate-700 flex justify-between items-center">
-                              未割り当て
-                              <span className={`${unassignedCount > 0 ? 'bg-red-500 text-white' : 'bg-white text-slate-600'} text-xs font-bold px-2 py-1 rounded-full shadow-sm transition-colors`}>
-                                {unassignedCount}件
-                              </span>
-                            </div>
+                    <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-auto relative">
+                      <div className="min-w-max">
+                        {/* ヘッダー行 */}
+                        <div className="flex sticky top-0 z-30 bg-slate-50 border-b border-slate-200 shadow-sm">
+                          <div className="w-16 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-xs font-bold text-slate-500 sticky left-0 z-40">時間</div>
+                          
+                          <div className="w-56 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 bg-white">
+                             <div className="font-bold text-slate-700 text-sm">未割り当て</div>
+                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-600'} text-xs font-bold px-2 py-0.5 rounded-full mt-1`}>{unassignedCount}件</div>
                           </div>
-                          <div className="p-3 overflow-y-auto flex-1 space-y-3">
-                            {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime)).map(v => (
-                              <div key={v.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm border-l-4 border-l-slate-400">
-                                <div className="font-bold text-slate-800 mb-1 text-sm">{v.patientName}</div>
-                                <div className="text-xs text-slate-600 flex items-center justify-between">
-                                  <span className="flex items-center gap-1 font-medium"><Clock size={12} className="text-slate-400"/> {v.startTime}</span>
-                                  <span className="bg-slate-100 px-1.5 rounded">{v.duration}分</span>
+                          
+                          {nurses.map(nurse => {
+                            const isOff = (nurse.offDays || []).includes(selectedDay);
+                            const assignedVisits = allSchedules[nurse.id]?.visits || [];
+                            return (
+                              <div key={nurse.id} className={`w-56 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 ${isOff ? 'bg-slate-100' : 'bg-white'}`} style={{ backgroundColor: isOff ? '#f8fafc' : nurse.color + '10' }}>
+                                <div className="font-bold text-slate-800 text-sm flex items-center gap-1">
+                                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>
+                                  <span className={isOff ? 'line-through text-slate-500' : ''}>{nurse.name}</span>
+                                </div>
+                                <div className="text-xs font-bold text-slate-500 mt-1">
+                                  {isOff ? <span className="text-red-500">(休)</span> : `${assignedVisits.length}件`}
                                 </div>
                               </div>
-                            ))}
-                            {unassignedCount === 0 && <div className="text-center text-sm text-slate-500 py-6">未割り当ての訪問はありません</div>}
-                          </div>
+                            )
+                          })}
                         </div>
 
-                        {/* 各看護師の列 */}
-                        {nurses.map(nurse => {
-                          const scheduleData = allSchedules[nurse.id];
-                          const isOff = scheduleData?.isOff;
-                          const assignedVisits = scheduleData?.visits || [];
-
-                          return (
-                            <div key={nurse.id} className={`w-72 rounded-xl border flex flex-col h-full max-h-full shadow-sm transition-opacity ${isOff ? 'bg-slate-50 border-slate-200 opacity-60' : 'bg-white border-slate-200'}`}>
-                              <div className="p-3 border-b border-slate-200 rounded-t-xl shrink-0" style={{ backgroundColor: isOff ? '#f8fafc' : nurse.color + '10' }}>
-                                <div className="font-bold text-slate-800 flex justify-between items-center">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
-                                    <span className={isOff ? 'line-through text-slate-500' : ''}>{nurse.name}</span>
-                                    {isOff && <span className="text-xs text-red-500 font-bold">(休)</span>}
-                                  </div>
-                                  {!isOff && <span className="bg-white text-slate-600 text-xs font-bold px-2 py-1 rounded-full shadow-sm">{assignedVisits.length}件</span>}
-                                </div>
-                                {!isOff && (
-                                  <div className="text-[11px] text-slate-500 mt-1.5 flex justify-between font-medium">
-                                    <span>出発: {nurse.startTime}</span>
-                                    {scheduleData?.returnTime && <span>帰着: {scheduleData.returnTime}</span>}
-                                  </div>
-                                )}
+                        {/* タイムライン本体 */}
+                        <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }}>
+                          {/* 左側の時間ラベル (固定) */}
+                          <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20">
+                            {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
+                              <div key={i} className="absolute w-full text-right pr-2 text-xs font-medium text-slate-400" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>
+                                {START_HOUR + i}:00
                               </div>
-                              
-                              <div className={`p-3 overflow-y-auto flex-1 space-y-1 ${isOff ? '' : 'bg-slate-50/50'}`}>
+                            ))}
+                          </div>
+
+                          {/* 背景グリッド線 */}
+                          <div className="absolute left-16 right-0 inset-y-0 pointer-events-none z-0">
+                            {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
+                              <div key={i} className="absolute w-full border-t border-slate-200" style={{ top: i * 60 * PIXELS_PER_MINUTE }}></div>
+                            ))}
+                            {Array.from({ length: END_HOUR - START_HOUR }).map((_, i) => (
+                              <div key={`half-${i}`} className="absolute w-full border-t border-slate-100 border-dashed" style={{ top: (i * 60 + 30) * PIXELS_PER_MINUTE }}></div>
+                            ))}
+                          </div>
+
+                          {/* 未割り当て列 */}
+                          <div className="w-56 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/30">
+                             {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
+                               const startMins = parseTime(v.startTime);
+                               const top = getTop(startMins);
+                               const height = v.duration * PIXELS_PER_MINUTE;
+                               return (
+                                 <div key={v.id} className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow" style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}>
+                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{v.patientName}</div>
+                                   <div className="text-[10px] text-slate-500 font-medium mt-auto">{v.startTime} ({v.duration}分)</div>
+                                 </div>
+                               )
+                             })}
+                          </div>
+
+                          {/* 各看護師列 */}
+                          {nurses.map(nurse => {
+                            const isOff = (nurse.offDays || []).includes(selectedDay);
+                            const scheduleData = allSchedules[nurse.id];
+                            const assignedVisits = scheduleData?.visits || [];
+
+                            return (
+                              <div key={nurse.id} className={`w-56 shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'bg-slate-50/80' : ''}`}>
                                 {isOff ? (
-                                  <div className="text-center text-sm text-slate-400 py-6 font-medium flex flex-col items-center gap-2">
-                                    <CalendarDays size={24} className="opacity-50" />
-                                    お休みです
-                                  </div>
-                                ) : assignedVisits.length === 0 ? (
-                                  <div className="text-center text-sm text-slate-400 py-6">予定はありません</div>
-                                ) : (
-                                  assignedVisits.map((item, idx) => (
-                                    <div key={item.id}>
-                                      {/* 最初の移動時間 */}
-                                      {idx === 0 && (
-                                        <div className="flex flex-col items-center my-1 opacity-60">
-                                           <div className="w-0.5 h-3 bg-slate-300"></div>
-                                           <div className="text-[10px] text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full shadow-sm">移動 {item.travelTime}分</div>
-                                           <div className="w-0.5 h-3 bg-slate-300"></div>
-                                        </div>
-                                      )}
-                                      
-                                      <div className={`bg-white border rounded-lg p-3 shadow-sm border-l-4 ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} style={{ borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
-                                        <div className="flex justify-between items-start mb-1.5">
-                                          <div className="font-bold text-slate-800 text-sm leading-tight">{item.patientName}</div>
-                                          {item.isLate && <AlertTriangle size={14} className="text-red-500 shrink-0" />}
-                                        </div>
-                                        <div className="flex flex-col gap-1 text-[11px] text-slate-600">
-                                          <div className="flex justify-between items-center bg-slate-50 px-1.5 py-0.5 rounded">
-                                            <span className="font-medium text-slate-700">指定: {item.startTime}</span>
-                                            <span className="font-bold">{item.duration}分</span>
-                                          </div>
-                                          <div className="flex justify-between px-1">
-                                            <span>到着: <span className={item.isLate ? 'text-red-600 font-bold' : 'font-medium'}>{item.arrivalTime}</span></span>
-                                            <span>出発: <span className="font-medium">{item.departureTime}</span></span>
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      {/* 次の予定への移動時間、または帰還時間 */}
-                                      <div className="flex flex-col items-center my-1 opacity-60">
-                                         <div className="w-0.5 h-3 bg-slate-300"></div>
-                                         <div className="text-[10px] text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full shadow-sm">
-                                           移動 {idx === assignedVisits.length - 1 ? scheduleData.finalTravelTime : assignedVisits[idx+1]?.travelTime}分
-                                         </div>
-                                         {idx !== assignedVisits.length - 1 && <div className="w-0.5 h-3 bg-slate-300"></div>}
-                                      </div>
+                                  <div className="absolute inset-0 flex items-center justify-center text-slate-400">
+                                    <div className="text-center flex flex-col items-center sticky top-1/2 -translate-y-1/2">
+                                      <CalendarDays size={32} className="mb-2 opacity-50" />
+                                      <p className="text-sm font-bold">お休み</p>
                                     </div>
-                                  ))
+                                  </div>
+                                ) : (
+                                  <>
+                                    {assignedVisits.map((item, idx) => {
+                                      const actualStart = parseTime(item.actualStartTime);
+                                      const duration = item.duration;
+                                      
+                                      const top = getTop(actualStart);
+                                      const height = duration * PIXELS_PER_MINUTE;
+
+                                      let prevDeparture = 0;
+                                      if (idx === 0) {
+                                        prevDeparture = parseTime(nurse.startTime);
+                                      } else {
+                                        prevDeparture = parseTime(assignedVisits[idx-1].departureTime);
+                                      }
+                                      const arrival = parseTime(item.arrivalTime);
+                                      const travelTop = getTop(prevDeparture);
+                                      const travelHeight = (arrival - prevDeparture) * PIXELS_PER_MINUTE;
+
+                                      return (
+                                        <React.Fragment key={item.id}>
+                                          {/* 移動線 */}
+                                          {travelHeight > 0 && (
+                                            <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400" style={{ top: `${travelTop}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
+                                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-slate-200 whitespace-nowrap shadow-sm z-10">
+                                                {item.travelTime}分
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* 待機時間がある場合 */}
+                                          {item.waitTime > 0 && (
+                                            <div className="absolute left-1/2 w-0 border-l-4 border-dotted border-amber-300" style={{ top: `${getTop(arrival)}px`, height: `${item.waitTime * PIXELS_PER_MINUTE}px`, transform: 'translateX(-50%)' }}></div>
+                                          )}
+
+                                          {/* 訪問ブロック */}
+                                          <div className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} 
+                                               style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                            <div className="flex justify-between items-start mb-0.5">
+                                              <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.patientName}</div>
+                                              {item.isLate && <AlertTriangle size={12} className="text-red-500 shrink-0" />}
+                                            </div>
+                                            <div className="mt-auto flex justify-between text-[10px] text-slate-500">
+                                              <span>指: {item.startTime}</span>
+                                              <span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span>
+                                            </div>
+                                          </div>
+                                        </React.Fragment>
+                                      )
+                                    })}
+
+                                    {/* 帰還の移動線 */}
+                                    {assignedVisits.length > 0 && scheduleData.returnTime && (
+                                      (() => {
+                                        const lastDeparture = parseTime(assignedVisits[assignedVisits.length-1].departureTime);
+                                        const returnArr = parseTime(scheduleData.returnTime);
+                                        const rTravelTop = getTop(lastDeparture);
+                                        const rTravelHeight = (returnArr - lastDeparture) * PIXELS_PER_MINUTE;
+                                        return rTravelHeight > 0 ? (
+                                          <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400" style={{ top: `${rTravelTop}px`, height: `${rTravelHeight}px`, transform: 'translateX(-50%)' }}>
+                                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-slate-200 whitespace-nowrap shadow-sm z-10">
+                                              帰: {scheduleData.finalTravelTime}分
+                                            </div>
+                                          </div>
+                                        ) : null;
+                                      })()
+                                    )}
+                                  </>
                                 )}
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
