@@ -207,6 +207,16 @@
         return d.toISOString().split('T')[0];
       }, [startDate]);
 
+      // 現在選択されている曜日の具体的な日付を計算 (例: "4/6")
+      const currentTargetDateLabel = useMemo(() => {
+        if (!startDate) return "";
+        const d = new Date(startDate);
+        const startDayOfWeek = d.getDay();
+        const diff = selectedDay - startDayOfWeek;
+        d.setDate(d.getDate() + diff);
+        return `${d.getMonth() + 1}/${d.getDate()}`;
+      }, [startDate, selectedDay]);
+
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
 
@@ -476,7 +486,10 @@
                 <div className="flex flex-col h-full space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <div className="flex flex-wrap items-center gap-4">
-                      <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">{DAYS[selectedDay]}曜日</h1>
+                      {/* 日付ラベル (currentTargetDateLabel) をタイトルの横に追加 */}
+                      <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
+                        {DAYS[selectedDay]}曜日 <span className="text-xl md:text-2xl text-slate-400 ml-1 font-bold">({currentTargetDateLabel})</span>
+                      </h1>
                       <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
                         <Clock size={16} className="text-slate-400" />
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
@@ -629,7 +642,9 @@
                     <div className="xl:col-span-3">
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                         <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center">
-                          <span className="font-black text-slate-800 flex items-center gap-2"><Users size={20} className="text-blue-500"/> {DAYS[selectedDay]}曜日の利用者リスト</span>
+                          <span className="font-black text-slate-800 flex items-center gap-2">
+                            <Users size={20} className="text-blue-500"/> {DAYS[selectedDay]}曜日 ({currentTargetDateLabel}) の利用者リスト
+                          </span>
                           <span className="bg-white px-3 py-1 rounded-full border border-slate-200 text-xs font-black text-slate-400 uppercase">{sortedVisits.length}名</span>
                         </div>
                         <div className="overflow-x-auto">
@@ -772,7 +787,7 @@
 
               {/* 看護師管理タブ */}
               {activeTab === 'nurses' && (
-                <div className="max-w-7xl mx-auto space-y-8">
+                <div className="max-w-7xl mx-auto space-y-8 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">看護師の管理</h1>
                     <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50">
@@ -780,7 +795,7 @@
                       名簿リスト更新
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 text-sm">
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                     <div className="lg:col-span-1 space-y-6">
                       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
                         <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
