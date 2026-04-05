@@ -27,7 +27,7 @@
 
   <!-- アプリのプログラム本体 -->
   <script type="text/babel" data-type="module">
-    import React, { useState, useMemo, useRef } from 'react';
+    import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
     import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns } from 'lucide-react';
 
@@ -71,8 +71,26 @@
       // 初期タブを「全体スケジュール」に設定
       const [activeTab, setActiveTab] = useState('overview');
       const [selectedDay, setSelectedDay] = useState(1);
-      const [nurses, setNurses] = useState(initialNurses);
-      const [visits, setVisits] = useState(initialVisits);
+      
+      // ローカルストレージからデータを読み込む (看護師リスト)
+      const [nurses, setNurses] = useState(() => {
+        try {
+          const saved = localStorage.getItem("careRoute_nurses");
+          return saved ? JSON.parse(saved) : initialNurses;
+        } catch (e) {
+          return initialNurses;
+        }
+      });
+
+      // ローカルストレージからデータを読み込む (訪問予定リスト)
+      const [visits, setVisits] = useState(() => {
+        try {
+          const saved = localStorage.getItem("careRoute_visits");
+          return saved ? JSON.parse(saved) : initialVisits;
+        } catch (e) {
+          return initialVisits;
+        }
+      });
       
       const [selectedNurseId, setSelectedNurseId] = useState(null);
       
@@ -87,6 +105,15 @@
       // 看護師用スプレッドシート連携用の状態 (自動保存されたURLを読み込む)
       const [nurseSheetUrl, setNurseSheetUrl] = useState(() => localStorage.getItem("careRoute_nurseSheetUrl") || "");
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
+
+      // --- 状態の変更をローカルストレージに自動保存する ---
+      useEffect(() => {
+        localStorage.setItem("careRoute_nurses", JSON.stringify(nurses));
+      }, [nurses]);
+
+      useEffect(() => {
+        localStorage.setItem("careRoute_visits", JSON.stringify(visits));
+      }, [visits]);
 
       // URLが変更されたらローカルストレージに自動保存する
       const handleSheetUrlChange = (e) => {
@@ -528,8 +555,8 @@
                     >
                       {day}
                     </button>
-                  ))}
-                </div>
+                  </div>
+                )}
               </div>
             )}
 
