@@ -98,8 +98,8 @@
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       
-      // 患者用スプレッドシート連携用の状態 (自動保存されたURLを読み込む)
-      const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem("careRoute_patientSheetUrl") || "");
+      // 利用者用スプレッドシート連携用の状態 (自動保存されたURLを読み込む)
+      const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem("careRoute_userSheetUrl") || localStorage.getItem("careRoute_patientSheetUrl") || "");
       const [isLoadingSheet, setIsLoadingSheet] = useState(false);
 
       // 看護師用スプレッドシート連携用の状態 (自動保存されたURLを読み込む)
@@ -119,7 +119,7 @@
       const handleSheetUrlChange = (e) => {
         const url = e.target.value;
         setSheetUrl(url);
-        localStorage.setItem("careRoute_patientSheetUrl", url);
+        localStorage.setItem("careRoute_userSheetUrl", url);
       };
 
       const handleNurseSheetUrlChange = (e) => {
@@ -345,7 +345,7 @@
       };
 
 
-      // --- Googleスプレッドシートから患者インポート (完全上書き仕様) ---
+      // --- Googleスプレッドシートから利用者インポート (完全上書き仕様) ---
       const handleFetchSheet = async () => {
         if (!sheetUrl) {
           setToastMessage("スプレッドシートのURLを入力してください");
@@ -382,7 +382,7 @@
 
               const newVisit = {
                 id: Date.now() + i,
-                patientName: name.includes('様') ? name : `${name} 様`,
+                userName: name.includes('様') ? name : `${name} 様`,
                 location: { x: Math.floor(Math.random() * 80) + 10, y: Math.floor(Math.random() * 80) + 10 },
                 duration: duration,
                 dayOfWeek: dayOfWeek,
@@ -393,7 +393,7 @@
 
               // ファイル内での重複はスキップ
               const isDuplicate = imported.some(v => 
-                normalizeName(v.patientName) === normalizeName(newVisit.patientName) &&
+                normalizeName(v.userName) === normalizeName(newVisit.userName) &&
                 v.dayOfWeek === newVisit.dayOfWeek &&
                 v.startTime === newVisit.startTime
               );
@@ -542,7 +542,7 @@
                 <Calendar size={20} /> 個別・ルート確認
               </button>
               <button onClick={() => setActiveTab('visits')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'visits' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-                <Users size={20} /> 患者管理
+                <Users size={20} /> 利用者管理
               </button>
               <button onClick={() => setActiveTab('nurses')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'nurses' ? 'bg-teal-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                 <UserCog size={20} /> 看護師管理
@@ -675,7 +675,7 @@
                                    className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow cursor-move" 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}
                                  >
-                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate pointer-events-none">{v.patientName}</div>
+                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate pointer-events-none">{v.userName}</div>
                                    <div className="text-[10px] text-slate-500 font-medium mt-auto pointer-events-none">
                                      {v.originalStartTime && v.originalStartTime !== v.startTime ? (
                                        <span className="text-orange-600 font-bold">{v.originalStartTime} ➔ {v.startTime}</span>
@@ -755,7 +755,7 @@
                                                className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 cursor-move ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} 
                                                style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                             <div className="flex justify-between items-start mb-0.5 pointer-events-none">
-                                              <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.patientName}</div>
+                                              <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.userName}</div>
                                               {item.isLate && <AlertTriangle size={12} className="text-red-500 shrink-0" />}
                                             </div>
                                             <div className="mt-auto flex flex-col justify-end text-[10px] text-slate-500 pointer-events-none">
@@ -880,7 +880,7 @@
                                   <div className="w-11 h-11 rounded-full text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-sm" style={{ backgroundColor: selectedNurse?.color }}>{idx + 1}</div>
                                   <div className={`bg-white border-l-4 rounded-r-lg border-y border-r p-4 flex-1 shadow-sm ${item.isLate ? 'border-l-red-500 border-y-red-200 border-r-red-200 bg-red-50/30' : 'border-l-teal-500 border-y-slate-200 border-r-slate-200'}`}>
                                     <div className="flex justify-between items-start mb-2">
-                                      <h4 className="font-bold text-slate-800 text-lg">{item.patientName}</h4>
+                                      <h4 className="font-bold text-slate-800 text-lg">{item.userName}</h4>
                                       <span className="text-sm font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded">{item.duration}分</span>
                                     </div>
                                     <div className="flex flex-col gap-1">
@@ -932,7 +932,7 @@
                             {visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).map(visit => (
                               <g key={`unassigned-${visit.id}`}>
                                 <circle cx={visit.location.x} cy={visit.location.y} r="2.5" fill="#cbd5e1" className="animate-pulse"/>
-                                <text x={visit.location.x} y={visit.location.y - 4} fontSize="3" textAnchor="middle" fill="#64748b">{visit.patientName}</text>
+                                <text x={visit.location.x} y={visit.location.y - 4} fontSize="3" textAnchor="middle" fill="#64748b">{visit.userName}</text>
                                 <text x={visit.location.x} y={visit.location.y + 4} fontSize="2.5" textAnchor="middle" fill="#94a3b8">{visit.startTime}</text>
                               </g>
                             ))}
@@ -963,7 +963,7 @@
                             {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => (
                               <g key={`point-${visit.id}`} className="transition-transform hover:scale-110 cursor-pointer">
                                 <circle cx={visit.location.x} cy={visit.location.y} r="3.5" fill={visit.isLate ? '#fee2e2' : '#fff'} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.5" />
-                                <text x={visit.location.x} y={visit.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{visit.patientName}</text>
+                                <text x={visit.location.x} y={visit.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{visit.userName}</text>
                                 <text x={visit.location.x} y={visit.location.y + 1.2} fontSize="2.8" fontWeight="bold" textAnchor="middle" fill={visit.isLate ? '#ef4444' : selectedNurse.color}>{i + 1}</text>
                               </g>
                             ))}
@@ -974,11 +974,11 @@
                 </div>
               )}
 
-              {/* --- タブ: 患者スケジュール管理 --- */}
+              {/* --- タブ: 利用者スケジュール管理 --- */}
               {activeTab === 'visits' && (
                 <div className="max-w-6xl mx-auto space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <h1 className="text-2xl font-bold text-slate-800">患者スケジュールの管理</h1>
+                    <h1 className="text-2xl font-bold text-slate-800">利用者スケジュールの管理</h1>
                   </div>
 
                   {/* インポートセクション */}
@@ -1010,7 +1010,7 @@
                         className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                       />
                       <p className="text-xs text-red-500 mt-3 font-medium">
-                        ※「再読み込み」を行うと、現在アプリ内に表示されている患者スケジュールはスプレッドシートの内容で【完全に上書き】されます。
+                        ※「再読み込み」を行うと、現在アプリ内に表示されている利用者スケジュールはスプレッドシートの内容で【完全に上書き】されます。
                       </p>
                     </div>
                   </div>
@@ -1024,7 +1024,7 @@
                         <thead>
                           <tr className="bg-white text-slate-500 text-sm border-b border-slate-200">
                             <th className="p-4 font-medium">指定時間</th>
-                            <th className="p-4 font-medium">患者名</th>
+                            <th className="p-4 font-medium">利用者名</th>
                             <th className="p-4 font-medium">所要時間</th>
                             <th className="p-4 font-medium">担当看護師</th>
                           </tr>
@@ -1038,7 +1038,7 @@
                                   <div className="text-xs text-orange-600">(元: {v.originalStartTime})</div>
                                 )}
                               </td>
-                              <td className="p-4 font-medium text-slate-800">{v.patientName}</td>
+                              <td className="p-4 font-medium text-slate-800">{v.userName}</td>
                               <td className="p-4 text-slate-600">{v.duration} 分</td>
                               <td className="p-4">
                                 <select
