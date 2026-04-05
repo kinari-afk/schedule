@@ -39,7 +39,7 @@
     .timeline-shadow { box-shadow: inset -10px 0 10px -10px rgba(0,0,0,0.1); }
     
     /* カード内のテキストが消えないよう最小高さを確保 */
-    .visit-card { min-height: 44px; display: flex; flex-direction: column; }
+    .visit-card { min-height: 38px; display: flex; flex-direction: column; }
   </style>
 </head>
 <body>
@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, Undo } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -105,6 +105,9 @@
       return { x: Math.abs(hash % 80) + 10, y: Math.abs((hash >> 3) % 80) + 10 };
     };
 
+    // --- 月曜スタートへの変更 ---
+    // JavaScriptのDateのgetDay()は日曜=0, 月曜=1...なので、内部の判定ではこれを考慮しますが、
+    // UI表示用の配列は月曜スタートにします。
     const DISPLAY_DAYS = ['月', '火', '水', '木', '金', '土', '日'];
     const JS_DAY_TO_DISPLAY_INDEX = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 0: 6 };
     const DISPLAY_INDEX_TO_JS_DAY = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 0 };
@@ -115,6 +118,7 @@
     const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
     const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
 
+    // 日付表示のフォーマット関数
     const formatDateLabel = (dateStr) => {
       if (!dateStr) return '';
       const d = new Date(dateStr);
@@ -122,6 +126,7 @@
       return `${d.getMonth() + 1}/${d.getDate()}(${JS_DAYS[d.getDay()]})`;
     };
 
+    // 看護師が休みかどうかを判定する関数 (固定休 + 特定休)
     const isNurseOff = (nurse, dateStr) => {
       if (!nurse || !dateStr) return false;
       const d = new Date(dateStr);
@@ -232,6 +237,25 @@
         updateCloudData({ startDate: dateStr });
       };
 
+      // startDateから1週間の日付リストを生成 (月曜スタートに並び替える)
+      const displayDates = useMemo(() => {
+        if (!startDate) return [];
+        const dates = [];
+        const start = new Date(startDate);
+        
+        // 選択された開始日が何曜日かに関わらず、その週の「月曜日」を基準日とする
+        const startJsDay = start.getDay();
+        const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
+        start.setDate(start.getDate() + diffToMonday);
+
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(start);
+          d.setDate(d.getDate() + i);
+          dates.push(d.toISOString().split('T')[0]);
+        }
+        return dates;
+      }, [startDate]);
+
       const handlePrevWeek = () => {
         if (!startDate) return;
         const d = new Date(startDate);
@@ -254,22 +278,33 @@
         setSelectedDate(s.toISOString().split('T')[0]);
       };
 
-      const displayDates = useMemo(() => {
-        if (!startDate) return [];
-        const dates = [];
-        const start = new Date(startDate);
+      const handlePrevDay = () => {
+        if (!selectedDate) return;
+        const d = new Date(selectedDate);
+        d.setDate(d.getDate() - 1);
+        const newDate = d.toISOString().split('T')[0];
         
-        const startJsDay = start.getDay();
-        const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
-        start.setDate(start.getDate() + diffToMonday);
-
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(start);
-          d.setDate(d.getDate() + i);
-          dates.push(d.toISOString().split('T')[0]);
+        if (displayDates.length > 0 && newDate < displayDates[0]) {
+           const start = new Date(startDate);
+           start.setDate(start.getDate() - 7);
+           handleSetStartDate(start.toISOString().split('T')[0]);
         }
-        return dates;
-      }, [startDate]);
+        setSelectedDate(newDate);
+      };
+
+      const handleNextDay = () => {
+        if (!selectedDate) return;
+        const d = new Date(selectedDate);
+        d.setDate(d.getDate() + 1);
+        const newDate = d.toISOString().split('T')[0];
+        
+        if (displayDates.length > 0 && newDate > displayDates[6]) {
+           const start = new Date(startDate);
+           start.setDate(start.getDate() + 7);
+           handleSetStartDate(start.toISOString().split('T')[0]);
+        }
+        setSelectedDate(newDate);
+      };
 
       const scheduleEndDate = useMemo(() => {
         if (displayDates.length === 0) return "";
@@ -379,12 +414,10 @@
             
             let preferredNurseId = null;
             if (preferredNurseName) {
-                // 優先担当者の名前を含む看護師を探す
                 const prefNurseObj = available.find(n => n.name === preferredNurseName || n.name.includes(preferredNurseName) || preferredNurseName.includes(n.name));
                 if (prefNurseObj) preferredNurseId = prefNurseObj.id;
             }
 
-            // フェーズ0: 優先担当者が時間内に間に合うかチェック
             if (preferredNurseId) {
                 const s = states.find(st => st.id === preferredNurseId);
                 if (s) {
@@ -397,7 +430,6 @@
                 }
             }
             
-            // フェーズ1: 優先度通常（高）の看護師から探す
             if (!best) {
               states.forEach(s => {
                 const nDef = available.find(n => n.id === s.id);
@@ -410,7 +442,6 @@
               });
             }
             
-            // フェーズ2: いなければ優先度低の看護師から探す
             if (!best) {
               min = Infinity;
               states.forEach(s => {
@@ -424,9 +455,7 @@
               });
             }
             
-            // フェーズ3: 誰も間に合わない場合
             if (!best) {
-               // 優先担当者が出勤しているなら、遅刻してでもその人に割り当てる
                if (preferredNurseId) {
                    const s = states.find(st => st.id === preferredNurseId);
                    if (s) best = s;
@@ -795,9 +824,12 @@
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2 pb-1 md:pb-0">
+              <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2 pb-1 md:pb-0">
                 <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">日付選択:</div>
-                <button onClick={handlePrevWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="前週">
+                <button onClick={handlePrevWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="前週" title="前週">
+                  <ChevronsLeft size={18} />
+                </button>
+                <button onClick={handlePrevDay} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="前日" title="前日">
                   <ChevronLeft size={18} />
                 </button>
                 {displayDates.map((dateStr) => (
@@ -809,8 +841,11 @@
                     {formatDateLabel(dateStr)}
                   </button>
                 ))}
-                <button onClick={handleNextWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="次週">
+                <button onClick={handleNextDay} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="翌日" title="翌日">
                   <ChevronRight size={18} />
+                </button>
+                <button onClick={handleNextWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="次週" title="次週">
+                  <ChevronsRight size={18} />
                 </button>
               </div>
             </div>
@@ -885,7 +920,7 @@
                                  <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
                                    className={`absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card ${v.requiresFemaleNurse || v.preferredNurseName ? 'ring-1 ring-slate-200' : ''}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 44)}px` }}>
-                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight flex-1">
+                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600 flex-1">
                                      {v.userName}
                                      <div className="flex flex-wrap gap-0.5 mt-0.5">
                                        {v.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
