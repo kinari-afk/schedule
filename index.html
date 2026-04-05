@@ -671,32 +671,30 @@
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
             if (p[0]?.trim()) {
+              // CSVフォーマット: 氏名[0], 勤務開始時間[1], 休み曜日[2], 優先度[3], 性別[4], 特定休日[5], 出発地[6]
               const nameStr = p[0].trim();
               let st = p[1]?.trim() || '08:30'; if (st.length === 4) st = '0' + st;
               
               let off = []; 
-              Object.keys(dayMap).forEach(d => { if (p[2]?.includes(d)) off.push(dayMap[d]); });
+              if (p[2]) {
+                  Object.keys(dayMap).forEach(d => { if (p[2].includes(d)) off.push(dayMap[d]); });
+              }
+              
+              const isLow = p[3] ? p[3].includes('低') : false;
+              const isFemale = p[4] ? p[4].includes('女性') : false;
               
               let specificOffDays = [];
-              let isLow = false;
-              let isFemale = false;
-              
-              for(let j = 3; j < p.length; j++) {
-                 if(!p[j]) continue;
-                 if(p[j].includes('低')) {
-                    isLow = true;
-                 } else if (p[j].includes('女性')) {
-                    isFemale = true;
-                 } else if (p[j].includes('/') || p[j].includes('-')) {
-                    const dates = p[j].split('・').map(d => d.trim().replace(/\//g, '-'));
-                    specificOffDays = specificOffDays.concat(dates.filter(d => d.length > 0));
-                 }
+              if (p[5]) {
+                 const dates = p[5].split('・').map(d => d.trim().replace(/\//g, '-'));
+                 specificOffDays = specificOffDays.concat(dates.filter(d => d.length > 0));
               }
+
+              const address = p[6]?.trim() || '';
               
               result.push({ 
                 id: Date.now() + i, 
                 name: nameStr, 
-                startLocation: { x: 50, y: 50 }, 
+                startLocation: getHashLoc(address || nameStr), 
                 color: colors[result.length % colors.length], 
                 startTime: st, 
                 offDays: off, 
@@ -1151,6 +1149,10 @@
                       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
                         <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
                         <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/>
+                        <div className="mt-4 pt-4 border-t border-slate-100">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
+                          <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 休み曜日, 優先度, <br/>性別, 特定休日, 出発地</p>
+                        </div>
                       </div>
                     </div>
                     <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
