@@ -564,13 +564,36 @@
             }
           }
           
-          const merged = result.map(nv => {
-            const ex = visits.find(v => normalizeName(v.userName) === normalizeName(nv.userName) && v.date === nv.date && v.originalStartTime === nv.originalStartTime);
-            return ex ? { ...nv, id: ex.id, nurseId: ex.nurseId, startTime: ex.startTime, customTravelTime: ex.customTravelTime } : nv;
+          const newVisits = [...visits];
+          let addedCount = 0;
+          let updatedCount = 0;
+
+          result.forEach(nv => {
+            const existingIndex = newVisits.findIndex(v => 
+              normalizeName(v.userName) === normalizeName(nv.userName) && 
+              v.date === nv.date && 
+              v.originalStartTime === nv.originalStartTime
+            );
+            
+            if (existingIndex !== -1) {
+              // 既存データがある場合は情報をマージ（すでに割り当てた担当者などは保持する）
+              newVisits[existingIndex] = { 
+                ...nv, 
+                id: newVisits[existingIndex].id, 
+                nurseId: newVisits[existingIndex].nurseId, 
+                startTime: newVisits[existingIndex].startTime, 
+                customTravelTime: newVisits[existingIndex].customTravelTime 
+              };
+              updatedCount++;
+            } else {
+              // 既存になければ新規追加
+              newVisits.push(nv);
+              addedCount++;
+            }
           });
           
-          handleSetVisits(merged); 
-          setToastMessage(`${startDate ? startDate.replace(/-/g, '/') : ''} 〜 ${scheduleEndDate ? scheduleEndDate.replace(/-/g, '/') : ''} の同期が完了しました`); 
+          handleSetVisits(newVisits); 
+          setToastMessage(`同期完了: 新規追加 ${addedCount}件 / 更新 ${updatedCount}件`); 
           setShowToast(true);
         } catch (e) { setToastMessage("データの同期に失敗"); setShowToast(true); } 
         finally { setIsLoadingSheet(false); }
