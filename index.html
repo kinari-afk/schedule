@@ -8,7 +8,7 @@
   <!-- Tailwind CSS (デザインを整えるためのツール) -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- React, アイコンをブラウザ上で直接読み込むための設定 -->
+  <!-- React, アイコン, Firebase をブラウザ上で直接読み込むための設定 -->
   <script type="importmap">
     {
       "imports": {
@@ -29,7 +29,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2 } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react';
     
     // --- Firebase の機能 (URLから直接読み込み) ---
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
@@ -135,6 +135,9 @@
       const [nurseSheetUrl, setNurseSheetUrl] = useState(DEFAULT_NURSE_SHEET_URL);
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
       const [showNurseSheetConfig, setShowNurseSheetConfig] = useState(false);
+
+      // 利用者管理画面用のソート設定
+      const [visitSortConfig, setVisitSortConfig] = useState({ key: 'startTime', direction: 'asc' });
 
       useEffect(() => {
         if (!user || !db) return;
@@ -334,6 +337,44 @@
 
       const unassignedCount = visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).length;
 
+      // 利用者管理画面でのソートを要求する関数
+      const requestVisitSort = (key) => {
+        let direction = 'asc';
+        if (visitSortConfig.key === key && visitSortConfig.direction === 'asc') {
+          direction = 'desc';
+        }
+        setVisitSortConfig({ key, direction });
+      };
+
+      // 表示用にソート・フィルタリングされた利用者リスト
+      const sortedVisits = useMemo(() => {
+        let filtered = visits.filter(v => v.dayOfWeek === selectedDay);
+        
+        if (visitSortConfig.key) {
+          filtered.sort((a, b) => {
+            let valA, valB;
+            
+            if (visitSortConfig.key === 'startTime') {
+              valA = parseTime(a.startTime);
+              valB = parseTime(b.startTime);
+            } else if (visitSortConfig.key === 'nurseName') {
+              const nurseA = nurses.find(n => n.id === a.nurseId);
+              const nurseB = nurses.find(n => n.id === b.nurseId);
+              valA = nurseA ? nurseA.name : '未指定';
+              valB = nurseB ? nurseB.name : '未指定';
+            } else {
+              valA = a[visitSortConfig.key];
+              valB = b[visitSortConfig.key];
+            }
+
+            if (valA < valB) return visitSortConfig.direction === 'asc' ? -1 : 1;
+            if (valA > valB) return visitSortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+          });
+        }
+        return filtered;
+      }, [visits, selectedDay, visitSortConfig, nurses]);
+
       return (
         <div className="flex h-screen bg-slate-50 text-slate-800 font-sans">
           <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col hidden md:flex shrink-0">
@@ -346,7 +387,7 @@
             </nav>
             <div className="p-4 bg-slate-800 m-4 rounded-xl text-center"><div className="flex justify-center items-center gap-1.5 text-xs text-emerald-400 font-bold mb-1">
               {db && user ? <><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>クラウド同期中</> : <><div className="w-2 h-2 rounded-full bg-slate-400"></div>接続待機中...</>}
-            </div><p className="text-[10px] text-slate-400">チームで自動共有されます</p></div>
+            </div><p className="text-[10px] text-slate-400">データはチームで自動共有されます</p></div>
           </aside>
 
           <main className="flex-1 flex flex-col overflow-hidden">
@@ -465,7 +506,71 @@
                     <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4"><h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-blue-600"/> スプレッドシート同期</h2><button onClick={handleFetchSheet} disabled={isLoadingSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">{isLoadingSheet ? <RefreshCw className="animate-spin" size={16}/> : "利用者データを更新"}</button></div>
                     <div className="border border-slate-200 rounded-lg overflow-hidden"><button type="button" onClick={() => setShowUserSheetConfig(!showUserSheetConfig)} className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100"><span>URL設定 (ウェブに公開済みCSV)</span><span className="text-xs text-slate-400">{showUserSheetConfig ? '閉じる' : '変更'}</span></button>{showUserSheetConfig && <div className="p-4 bg-white border-t border-slate-200"><input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full border border-slate-300 rounded p-2 text-sm outline-none focus:ring-1 focus:ring-blue-500"/></div>}</div>
                   </div>
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div className="bg-slate-50 p-4 border-b border-slate-200 text-sm font-bold">{DAYS[selectedDay]}曜日の利用者リスト</div><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead><tr className="bg-white text-slate-500 text-xs border-b border-slate-200"><th className="p-4 font-medium">時間</th><th className="p-4 font-medium">利用者名</th><th className="p-4 font-medium">所要</th><th className="p-4 font-medium">担当者</th></tr></thead><tbody className="divide-y divide-slate-100">{visits.filter(v => v.dayOfWeek === selectedDay).map(v => (<tr key={v.id} className="hover:bg-slate-50 transition-colors text-sm"><td className="p-4 font-bold">{v.startTime}</td><td className="p-4">{v.userName}</td><td className="p-4">{v.duration}分</td><td className="p-4"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="border rounded p-1 text-xs outline-none">{<option value="unassigned">未指定</option>}{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td></tr>))}</tbody></table></div></div>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="bg-slate-50 p-4 border-b border-slate-200 text-sm font-bold">{DAYS[selectedDay]}曜日の利用者リスト</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-white text-slate-500 text-xs border-b border-slate-200">
+                            <th 
+                              className="p-4 font-medium cursor-pointer hover:bg-slate-50 transition-colors group"
+                              onClick={() => requestVisitSort('startTime')}
+                            >
+                              <div className="flex items-center gap-1">
+                                指定時間
+                                {visitSortConfig.key === 'startTime' ? (
+                                  visitSortConfig.direction === 'asc' ? <ChevronUp size={14}/> : <ChevronDown size={14}/>
+                                ) : <ArrowUpDown size={14} className="opacity-20 group-hover:opacity-100"/>}
+                              </div>
+                            </th>
+                            <th className="p-4 font-medium">利用者名</th>
+                            <th className="p-4 font-medium">所要</th>
+                            <th 
+                              className="p-4 font-medium cursor-pointer hover:bg-slate-50 transition-colors group"
+                              onClick={() => requestVisitSort('nurseName')}
+                            >
+                              <div className="flex items-center gap-1">
+                                担当看護師
+                                {visitSortConfig.key === 'nurseName' ? (
+                                  visitSortConfig.direction === 'asc' ? <ChevronUp size={14}/> : <ChevronDown size={14}/>
+                                ) : <ArrowUpDown size={14} className="opacity-20 group-hover:opacity-100"/>}
+                              </div>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {sortedVisits.map(v => {
+                            const nurse = nurses.find(n => n.id === v.nurseId);
+                            return (
+                              <tr key={v.id} className="hover:bg-slate-50 transition-colors text-sm">
+                                <td className="p-4 font-bold">
+                                  {v.startTime}
+                                  {v.originalStartTime && v.originalStartTime !== v.startTime && (
+                                    <div className="text-[10px] text-orange-600 font-normal">元: {v.originalStartTime}</div>
+                                  )}
+                                </td>
+                                <td className="p-4 font-medium">{v.userName}</td>
+                                <td className="p-4 text-slate-500">{v.duration}分</td>
+                                <td className="p-4">
+                                  <select 
+                                    value={v.nurseId || 'unassigned'} 
+                                    onChange={e => updateVisitNurse(v.id, e.target.value)} 
+                                    className={`border rounded p-1 text-xs outline-none focus:ring-1 focus:ring-blue-500 bg-white ${!v.nurseId ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-300'}`}
+                                  >
+                                    <option value="unassigned">未指定</option>
+                                    {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                                  </select>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {sortedVisits.length === 0 && (
+                            <tr><td colSpan="4" className="p-8 text-center text-slate-400">予定がありません</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               )}
               {activeTab === 'nurses' && (
