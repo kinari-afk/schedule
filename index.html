@@ -619,14 +619,24 @@
                             const isOff = (nurse.offDays || []).includes(selectedDay);
                             const assignedVisits = allSchedules[nurse.id]?.visits || [];
                             return (
-                              <div key={nurse.id} className={`w-56 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 ${isOff ? 'bg-slate-100' : 'bg-white'}`} style={{ backgroundColor: isOff ? '#f8fafc' : nurse.color + '10' }}>
-                                <div className="font-bold text-slate-800 text-sm flex items-center gap-1">
-                                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>
-                                  <span className={isOff ? 'line-through text-slate-500' : ''}>{nurse.name}</span>
-                                </div>
-                                <div className="text-xs font-bold text-slate-500 mt-1">
-                                  {isOff ? <span className="text-red-500">(休)</span> : `${assignedVisits.length}件`}
-                                </div>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 ${isOff ? 'w-12 bg-slate-100' : 'w-56 bg-white'}`} style={{ backgroundColor: isOff ? '#f8fafc' : nurse.color + '10' }}>
+                                {isOff ? (
+                                  <>
+                                    <div className="w-2 h-2 rounded-full mb-1" style={{ backgroundColor: nurse.color }}></div>
+                                    <div className="text-xs font-bold text-slate-400 mt-1 mb-1 truncate" style={{ writingMode: 'vertical-rl' }}>{nurse.name.split(/[\s　]/)[0]}</div>
+                                    <div className="text-xs font-bold text-red-400 mt-1">休</div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="font-bold text-slate-800 text-sm flex items-center gap-1">
+                                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>
+                                      <span>{nurse.name}</span>
+                                    </div>
+                                    <div className="text-xs font-bold text-slate-500 mt-1">
+                                      {assignedVisits.length}件
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             )
                           })}
@@ -698,15 +708,15 @@
                             return (
                               <div 
                                 key={nurse.id} 
-                                className={`w-56 shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'bg-slate-50/80' : ''}`}
+                                className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-12 bg-slate-50/80' : 'w-56'}`}
                                 onDragOver={(e) => { if (!isOff) e.preventDefault(); }}
                                 onDrop={(e) => { if (!isOff) handleDrop(e, nurse.id); }}
                               >
                                 {isOff ? (
-                                  <div className="absolute inset-0 flex items-center justify-center text-slate-400 pointer-events-none">
-                                    <div className="text-center flex flex-col items-center sticky top-1/2 -translate-y-1/2">
-                                      <CalendarDays size={32} className="mb-2 opacity-50" />
-                                      <p className="text-sm font-bold">お休み</p>
+                                  <div className="absolute inset-0 flex items-center justify-center text-slate-300 pointer-events-none">
+                                    <div className="sticky top-1/2 -translate-y-1/2 flex flex-col items-center">
+                                      <CalendarDays size={16} className="mb-3 opacity-50" />
+                                      <div className="text-sm font-bold tracking-widest opacity-60" style={{ writingMode: 'vertical-rl' }}>お休み</div>
                                     </div>
                                   </div>
                                 ) : (
