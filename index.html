@@ -578,11 +578,24 @@
         if (visitSortConfig.key) {
           filtered.sort((a, b) => {
             let valA, valB;
-            if (visitSortConfig.key === 'startTime') { valA = parseTime(a.startTime); valB = parseTime(b.startTime); }
+            if (visitSortConfig.key === 'startTime') { 
+              valA = parseTime(a.startTime); 
+              valB = parseTime(b.startTime); 
+            }
             else if (visitSortConfig.key === 'nurseName') {
-              const nA = nurses.find(n => n.id === a.nurseId); const nB = nurses.find(n => n.id === b.nurseId);
-              valA = nA ? nA.name : '未指定'; valB = nB ? nB.name : '未指定';
-            } else { valA = a[visitSortConfig.key]; valB = b[visitSortConfig.key]; }
+              const nA = nurses.find(n => n.id === a.nurseId); 
+              const nB = nurses.find(n => n.id === b.nurseId);
+              valA = nA ? nA.name : '未指定'; 
+              valB = nB ? nB.name : '未指定';
+              
+              // 担当看護師が同じ場合は、指定時間（昇順）でソートする
+              if (valA === valB) {
+                return parseTime(a.startTime) - parseTime(b.startTime);
+              }
+            } else { 
+              valA = a[visitSortConfig.key]; 
+              valB = b[visitSortConfig.key]; 
+            }
             if (valA < valB) return visitSortConfig.direction === 'asc' ? -1 : 1;
             if (valA > valB) return visitSortConfig.direction === 'asc' ? 1 : -1;
             return 0;
