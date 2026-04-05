@@ -8,13 +8,16 @@
   <!-- Tailwind CSS (デザインを整えるためのツール) -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- React, アイコンをブラウザ上で直接読み込むための設定 -->
+  <!-- React, アイコン, Firebase をブラウザ上で直接読み込むための設定 -->
   <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
         "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
       }
     }
   </script>
@@ -264,6 +267,16 @@
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
 
+      // --- 手動で移動時間を上書きする関数 ---
+      const updateCustomTravelTime = (visitId, newTime) => {
+        handleSetVisits(prevVisits => prevVisits.map(v => {
+          if (v.id === visitId) {
+            return { ...v, customTravelTime: newTime };
+          }
+          return v;
+        }));
+      };
+
       // --- ドラッグ&ドロップのハンドラー ---
       const handleDrop = (e, targetNurseId) => {
         e.preventDefault();
@@ -311,7 +324,10 @@
 
           sortedVisits.forEach((visit) => {
             const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
-            const travelTime = baseTravelTime + Math.round(dist * 0.05);
+            const calculatedTravelTime = baseTravelTime + Math.round(dist * 0.05);
+            // カスタム移動時間が設定されていればそれを使う
+            const travelTime = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : calculatedTravelTime;
+            
             const targetStart = parseTime(visit.startTime);
             const arrivalTime = currentTime + travelTime;
             const isLate = arrivalTime > targetStart;
@@ -401,7 +417,9 @@
               if (nurseDef && nurseDef.isLowPriority) return;
 
               const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-              const travel = baseTravelTime + Math.round(dist * 0.05);
+              // カスタム移動時間が設定されていればそれを優先
+              const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
+              
               if (ns.time + travel <= targetStart) {
                 if (travel < minTravel) {
                   minTravel = travel;
@@ -417,7 +435,7 @@
                 if (nurseDef && !nurseDef.isLowPriority) return;
 
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = baseTravelTime + Math.round(dist * 0.05);
+                const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
                 if (ns.time + travel <= targetStart) {
                   if (travel < minTravel) {
                     minTravel = travel;
@@ -436,7 +454,8 @@
                 const isLow = nurseDef ? !!nurseDef.isLowPriority : false;
 
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const arrival = ns.time + baseTravelTime + Math.round(dist * 0.05);
+                const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
+                const arrival = ns.time + travel;
 
                 if (arrival < earliest || (arrival === earliest && isBestNurseLowPriority && !isLow)) {
                   earliest = arrival;
@@ -450,7 +469,8 @@
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
               newVisits[vIdx].nurseId = bestNurse.id;
               const dist = Math.sqrt(Math.pow(visit.location.x - bestNurse.loc.x, 2) + Math.pow(visit.location.y - bestNurse.loc.y, 2));
-              bestNurse.time = Math.max(bestNurse.time + baseTravelTime + Math.round(dist * 0.05), targetStart) + visit.duration;
+              const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
+              bestNurse.time = Math.max(bestNurse.time + travel, targetStart) + visit.duration;
               bestNurse.loc = visit.location;
             }
           });
@@ -517,7 +537,7 @@
               const isDuplicate = imported.some(v => 
                 normalizeName(v.userName) === normalizeName(newVisit.userName) &&
                 v.dayOfWeek === newVisit.dayOfWeek &&
-                v.startTime === newVisit.startTime
+                v.originalStartTime === newVisit.originalStartTime
               );
 
               if (!isDuplicate) {
@@ -526,8 +546,27 @@
             }
           }
           
-          handleSetVisits(imported);
-          setToastMessage(`スプレッドシートから ${imported.length}件のスケジュールを読み込みました`);
+          // 既存の割り当て状態や変更した時間(手動移動時間も)を引き継ぐ
+          const mergedVisits = imported.map(newV => {
+            const existing = visits.find(v => 
+              normalizeName(v.userName) === normalizeName(newV.userName) && 
+              v.dayOfWeek === newV.dayOfWeek && 
+              v.originalStartTime === newV.originalStartTime
+            );
+            if (existing) {
+              return { 
+                ...newV, 
+                id: existing.id, 
+                nurseId: existing.nurseId, 
+                startTime: existing.startTime,
+                customTravelTime: existing.customTravelTime
+              };
+            }
+            return newV;
+          });
+          
+          handleSetVisits(mergedVisits);
+          setToastMessage(`スプレッドシートから ${imported.length}件のスケジュールを同期しました`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 4000);
         } catch (error) {
@@ -883,11 +922,21 @@
 
                                       return (
                                         <React.Fragment key={item.id}>
-                                          {/* 移動線 */}
+                                          {/* 移動線 (手動で時間を変更できるように input を追加) */}
                                           {travelHeight > 0 && (
                                             <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${travelTop}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
-                                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-slate-200 whitespace-nowrap shadow-sm z-10">
-                                                {item.travelTime}分
+                                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1 py-0.5 rounded-full border border-slate-200 shadow-sm z-20 flex items-center pointer-events-auto">
+                                                <input 
+                                                  type="number"
+                                                  min="0"
+                                                  value={item.customTravelTime !== undefined && item.customTravelTime !== null ? item.customTravelTime : item.travelTime}
+                                                  onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    updateCustomTravelTime(item.id, val === '' ? null : parseInt(val, 10));
+                                                  }}
+                                                  className={`w-6 text-center bg-transparent outline-none ${item.customTravelTime !== undefined && item.customTravelTime !== null ? 'text-teal-600 font-bold' : ''}`}
+                                                />
+                                                <span>分</span>
                                               </div>
                                             </div>
                                           )}
@@ -1040,7 +1089,21 @@
                               <div key={item.id} className="relative z-10">
                                 <div className={`ml-16 mb-2 flex items-center gap-2 text-xs font-medium py-1 px-3 rounded-full w-max border ${item.isLate ? 'bg-red-50 text-red-600 border-red-200' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
                                   <ArrowRight size={12} />
-                                  移動: 約 {item.travelTime} 分 {item.waitTime > 0 && `(待機: ${item.waitTime}分)`}
+                                  移動: 
+                                  <input 
+                                    type="number"
+                                    min="0"
+                                    value={item.customTravelTime !== undefined && item.customTravelTime !== null ? item.customTravelTime : item.travelTime}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      updateCustomTravelTime(item.id, val === '' ? null : parseInt(val, 10));
+                                    }}
+                                    className={`w-10 text-center bg-transparent border-b border-slate-300 focus:border-teal-500 outline-none ml-1 ${item.customTravelTime !== undefined && item.customTravelTime !== null ? 'text-teal-600 font-bold' : ''}`}
+                                  /> 分 
+                                  {item.customTravelTime !== undefined && item.customTravelTime !== null && (
+                                    <button onClick={() => updateCustomTravelTime(item.id, null)} className="text-[10px] text-slate-400 hover:text-slate-600 ml-1 underline">自動</button>
+                                  )}
+                                  {item.waitTime > 0 && <span className="ml-2">(待機: {item.waitTime}分)</span>}
                                 </div>
                                 
                                 <div className="flex gap-4 items-start">
