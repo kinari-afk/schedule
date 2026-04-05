@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>訪問看護ルート最適化アプリ</title>
   
   <!-- Tailwind CSS -->
@@ -20,16 +20,26 @@
   </script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    /* スムーズなスクロールのためのカスタムCSS */
+    /* 画面回転時のテキストサイズ自動調整を防止 */
+    html { -webkit-text-size-adjust: 100%; }
+    
+    /* スムーズなスクロール */
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     
     /* モバイルでのタップ感向上 */
     button, select, input { touch-action: manipulation; }
     
-    /* デザイン装飾 */
+    /* モバイルでの入力時ズーム防止（フォントサイズ16px以上） */
+    @media (max-width: 768px) {
+      input, select, textarea { font-size: 16px !important; }
+    }
+    
     .glass-effect { backdrop-filter: blur(8px); background-color: rgba(255, 255, 255, 0.8); }
     .timeline-shadow { box-shadow: inset -10px 0 10px -10px rgba(0,0,0,0.1); }
+    
+    /* カード内のテキストが消えないよう最小高さを確保 */
+    .visit-card { min-height: 38px; display: flex; flex-direction: column; }
   </style>
 </head>
 <body>
@@ -106,8 +116,6 @@
       const [isSyncing, setIsSyncing] = useState(false);
       const [activeTab, setActiveTab] = useState('overview');
       const [selectedDay, setSelectedDay] = useState(new Date().getDay() || 1);
-      
-      // スケジュール期間管理用のState
       const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
       
       const [nurses, setNurses] = useState([]);
@@ -455,7 +463,7 @@
               </div>
 
               <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2">
-                <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">DAY SELECT:</div>
+                <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">表示曜日:</div>
                 {DAYS.map((day, idx) => (
                   <button key={idx} onClick={() => setSelectedDay(idx)} className={`min-w-[42px] h-9 md:min-w-[48px] md:h-11 rounded-2xl flex items-center justify-center font-black text-sm md:text-base transition-all ${selectedDay === idx ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30 scale-105' : 'bg-white border border-slate-200 text-slate-400 hover:border-slate-300'}`}>{day}</button>
                 ))}
@@ -468,10 +476,7 @@
                 <div className="flex flex-col h-full space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <div className="flex flex-wrap items-center gap-4">
-                      <div className="flex flex-col">
-                        <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">{DAYS[selectedDay]}曜日</h1>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-1">Target Schedule Period</p>
-                      </div>
+                      <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">{DAYS[selectedDay]}曜日</h1>
                       <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
                         <Clock size={16} className="text-slate-400" />
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
@@ -492,7 +497,6 @@
                   <div className="flex-1 bg-white rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
                     <div className="overflow-auto relative flex-1 timeline-shadow">
                       <div className="min-w-max flex flex-col">
-                        {/* タイムラインヘッダー */}
                         <div className="flex sticky top-0 z-[60] bg-slate-50/95 backdrop-blur-sm border-b border-slate-200">
                           <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-4 bg-white/50">
@@ -511,7 +515,6 @@
                           })}
                         </div>
 
-                        {/* タイムラインボディ */}
                         <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }}>
                           <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20">
                             {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
@@ -531,14 +534,14 @@
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
                                  <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                   className="absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group" 
-                                   style={{ top: `${top}px`, height: `${Math.max(height, 35)}px` }}>
-                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600">{v.userName}</div>
-                                   <div className="text-[9px] mt-auto leading-none">
+                                   className="absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card" 
+                                   style={{ top: `${top}px`, height: `${Math.max(height, 38)}px` }}>
+                                   <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight group-hover:text-teal-600 flex-1">{v.userName}</div>
+                                   <div className="text-[9px] font-bold shrink-0">
                                      {v.originalStartTime && v.originalStartTime !== v.startTime ? (
-                                       <span className="text-orange-600 font-black">{v.originalStartTime} ➔ {v.startTime}</span>
+                                       <span className="text-orange-600">{v.originalStartTime}➔{v.startTime}</span>
                                      ) : (
-                                       <span className="text-slate-400 font-bold">{v.startTime}</span>
+                                       <span className="text-slate-400">{v.startTime}</span>
                                      )}
                                    </div>
                                  </div>
@@ -558,7 +561,7 @@
                                     <React.Fragment key={item.id}>
                                       {travelH > 10 && (
                                         <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-300 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
-                                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-[70] pointer-events-auto flex items-center whitespace-nowrap">
+                                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[10px] md:text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-[70] pointer-events-auto flex items-center whitespace-nowrap">
                                             <input 
                                               type="number" 
                                               min="0"
@@ -571,20 +574,19 @@
                                         </div>
                                       )}
                                       <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(h, 35)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
-                                        <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight">{item.userName}</div>
-                                        <div className="mt-auto flex flex-col gap-0.5">
+                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-2 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 38)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                        <div className="font-black text-slate-800 text-[10px] md:text-xs truncate leading-tight flex-1">{item.userName}</div>
+                                        <div className="mt-auto shrink-0">
                                            {item.originalStartTime && item.originalStartTime !== item.startTime && (
-                                             <div className="text-[8px] text-orange-600 font-black leading-none">元: {item.originalStartTime}</div>
+                                             <div className="text-[8px] text-orange-600 font-black leading-none mb-0.5">元:{item.originalStartTime}</div>
                                            )}
-                                           <div className="flex justify-between items-center text-[9px]">
-                                              <div className="flex items-center gap-1 font-black">
-                                                <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指: {item.startTime}</span>
-                                                {item.isLate && <AlertTriangle size={8} className="text-red-500 ml-1" />}
-                                                {item.isLate && <span className="text-red-600 text-[7px] font-black ml-0.5">遅延</span>}
+                                           <div className="flex justify-between items-center text-[9px] font-black">
+                                              <div className="flex items-center gap-0.5">
+                                                <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指:{item.startTime}</span>
+                                                {item.isLate && <AlertTriangle size={8} className="text-red-500 ml-0.5" />}
                                               </div>
-                                              <span className="text-[8px] font-black text-slate-300 uppercase">{item.duration}分</span>
+                                              <span className="text-slate-300 uppercase">{item.duration}分</span>
                                            </div>
                                         </div>
                                       </div>
@@ -601,7 +603,7 @@
                 </div>
               )}
 
-              {/* --- タブ: 利用者管理 --- */}
+              {/* 利用者管理タブ */}
               {activeTab === 'visits' && (
                 <div className="max-w-7xl mx-auto space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -614,20 +616,16 @@
                       データ更新
                     </button>
                   </div>
-
                   <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
                     <div className="xl:col-span-1 space-y-6">
                        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
                           <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">接続設定</h2>
-                          <div className="space-y-4">
-                            <div>
-                              <label className="block text-[10px] font-black text-slate-500 mb-1.5 ml-1 uppercase">連携先 CSV URL</label>
-                              <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" placeholder="CSVのURLを入力してください"/>
-                            </div>
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-500 mb-1.5 ml-1 uppercase">連携先 CSV URL</label>
+                            <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" placeholder="URLを入力"/>
                           </div>
                        </div>
                     </div>
-
                     <div className="xl:col-span-3">
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                         <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center">
@@ -650,7 +648,7 @@
                                   <td className="p-6">
                                     <div className="font-black text-slate-800">{v.startTime}</div>
                                     {v.originalStartTime && v.originalStartTime !== v.startTime && (
-                                      <div className="text-[10px] text-orange-600 font-black">元: {v.originalStartTime}</div>
+                                      <div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>
                                     )}
                                   </td>
                                   <td className="p-6 font-bold text-slate-700">{v.userName}</td>
@@ -672,9 +670,9 @@
                 </div>
               )}
 
-              {/* --- タブ: 個別ルート --- */}
+              {/* 個別ルート確認タブ */}
               {activeTab === 'schedule' && (
-                <div className="max-w-6xl mx-auto space-y-8">
+                <div className="max-w-6xl mx-auto space-y-8 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 shrink-0">
                     <div className="flex flex-col">
                       <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認</h1>
@@ -686,11 +684,10 @@
                       ))}
                     </div>
                   </div>
-
                   {!selectedNurse ? (
                     <div className="bg-white rounded-[3rem] p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-6">
                        <UserCog size={80} className="text-slate-200" />
-                       <p className="text-xl font-black text-slate-300 uppercase tracking-widest text-sm text-sm">担当者を選択してください</p>
+                       <p className="text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -706,7 +703,6 @@
                           </div>
                         </div>
                       </div>
-
                       <div className="lg:col-span-2">
                         <div className="bg-white rounded-[3rem] border border-slate-200 shadow-2xl shadow-slate-200/40 p-10 relative">
                           <div className="absolute left-[3.25rem] top-24 bottom-24 w-1.5 bg-slate-50 rounded-full"></div>
@@ -718,7 +714,6 @@
                                 <div className="font-black text-slate-800 text-xl">ステーション出発 <span className="text-slate-400 ml-2 font-bold">{selectedNurse.startTime}</span></div>
                               </div>
                             </div>
-
                             {allSchedules[selectedNurse.id]?.visits.map((item, idx) => (
                               <div key={item.id} className="relative z-10">
                                 <div className="ml-20 mb-3 text-xs font-black text-slate-400 flex items-center gap-3">
@@ -738,7 +733,7 @@
                                 <div className="flex gap-6">
                                   <div className="w-14 h-14 rounded-3xl flex items-center justify-center text-white font-black text-xl shrink-0 shadow-xl" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                   <div className={`flex-1 p-6 md:p-8 rounded-[2rem] border-l-[8px] shadow-lg transition-transform hover:scale-[1.02] ${item.isLate ? 'border-l-red-500 bg-red-50/50 shadow-red-100' : 'border-l-teal-500 bg-white border border-slate-100 shadow-slate-100'}`}>
-                                    <div className="flex justify-between items-start mb-4">
+                                    <div className="flex justify-between items-start mb-4 text-base">
                                       <h4 className="font-black text-slate-800 text-2xl">{item.userName}</h4>
                                       <span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase">{item.duration}分 滞在</span>
                                     </div>
@@ -751,7 +746,7 @@
                                         )}
                                         {item.isLate && (
                                           <div className="flex items-center gap-1 bg-red-50 text-red-600 px-2 py-0.5 rounded-lg text-[10px] font-black shadow-sm">
-                                            <AlertTriangle size={12} /> 遅刻のリスク
+                                            <AlertTriangle size={12} /> 遅刻リスク
                                           </div>
                                         )}
                                       </div>
@@ -760,7 +755,6 @@
                                 </div>
                               </div>
                             ))}
-                            
                             <div className="flex items-center gap-6 relative z-10 pt-4">
                               <div className="w-14 h-14 rounded-3xl bg-slate-100 flex items-center justify-center text-slate-400 shrink-0 shadow-inner border border-slate-200"><MapPin size={24}/></div>
                               <div>
@@ -776,25 +770,23 @@
                 </div>
               )}
 
-              {/* --- タブ: 看護師管理 --- */}
+              {/* 看護師管理タブ */}
               {activeTab === 'nurses' && (
                 <div className="max-w-7xl mx-auto space-y-8">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">看護師の管理</h1>
                     <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50">
                       {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}
-                      名簿リストの更新
+                      名簿リスト更新
                     </button>
                   </div>
-                  
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 text-sm text-sm">
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 text-sm">
                     <div className="lg:col-span-1 space-y-6">
                       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
                         <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
-                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力してください"/>
+                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/>
                       </div>
                     </div>
-                    
                     <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                       {nurses.map(n => (
                         <div key={n.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-lg shadow-slate-200/30 flex flex-col items-center text-center transition-all hover:translate-y-[-4px] hover:shadow-xl group">
