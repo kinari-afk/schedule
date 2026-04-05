@@ -95,10 +95,11 @@
       };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
+      const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
 
       // --- スケジュールと移動時間の計算 ---
       const schedule = useMemo(() => {
-        if (!selectedNurse) return [];
+        if (!selectedNurse || isSelectedNurseOff) return [];
         
         const assignedVisits = visits.filter(v => v.nurseId === selectedNurse?.id && v.dayOfWeek === selectedDay);
         const sortedVisits = [...assignedVisits].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
@@ -139,7 +140,7 @@
         }
 
         return calculatedSchedule;
-      }, [selectedNurse, visits, selectedDay]);
+      }, [selectedNurse, visits, selectedDay, isSelectedNurseOff]);
 
       const stats = useMemo(() => {
         let totalTravel = 0;
@@ -157,8 +158,11 @@
       }, [schedule]);
 
       const handleAutoAssign = () => {
-        if (nurses.length === 0) {
-          setToastMessage("担当できる看護師がいません。先に看護師を登録してください。");
+        // その日に出勤している(休みではない)看護師のみを抽出
+        const availableNurses = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
+
+        if (availableNurses.length === 0) {
+          setToastMessage(`この曜日に出勤している看護師がいません。`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 3000);
           return;
@@ -170,7 +174,7 @@
           const unassignedToday = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null);
           unassignedToday.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
 
-          const nurseStates = nurses.map(n => {
+          const nurseStates = availableNurses.map(n => {
             const myVisits = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === n.id);
             if (myVisits.length === 0) {
               return { id: n.id, time: parseTime(n.startTime), loc: n.startLocation };
@@ -293,7 +297,6 @@
           setToastMessage(`スプレッドシートから ${imported.length}件のスケジュールを読み込み、更新しました`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 4000);
-          // 読み込み後もURLを消さないように削除
         } catch (error) {
           console.error("Sheet fetch error:", error);
           setToastMessage("読み込みに失敗しました。URLや公開設定（CSV形式）を確認してください。");
@@ -322,6 +325,7 @@
           if (lines.length < 2) throw new Error('データがありません');
 
           const imported = [];
+          const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
 
           for (let i = 1; i < lines.length; i++) {
             const line = lines[i].trim();
@@ -334,12 +338,24 @@
               let startTime = parts.length > 1 && parts[1].trim() ? parts[1].trim() : '08:30';
               if (startTime.length === 4) startTime = '0' + startTime;
               
+              // 休みの曜日を抽出 (例: "日・土", "水" など)
+              let offDays = [];
+              if (parts.length > 2 && parts[2].trim()) {
+                const offDaysStr = parts[2].trim();
+                for (let d of Object.keys(dayMap)) {
+                  if (offDaysStr.includes(d)) {
+                    offDays.push(dayMap[d]);
+                  }
+                }
+              }
+
               const newNurse = {
                 id: Date.now() + i,
                 name: name,
                 startLocation: { x: 50, y: 50 }, // 仮座標
                 color: colors[imported.length % colors.length],
-                startTime: startTime
+                startTime: startTime,
+                offDays: offDays // 休みの配列 [0, 6] など
               };
 
               // ファイル内での重複はスキップ
@@ -351,12 +367,15 @@
           }
 
           // 既存の訪問スケジュールの「担当看護師」の整合性をとる
-          // 名前が一致する人が新しいリストに居れば引き継ぎ、居なければ未割り当てに戻す
           setVisits(prevVisits => prevVisits.map(v => {
             if (v.nurseId === null) return v;
             const oldNurse = nurses.find(n => n.id === v.nurseId);
             if (!oldNurse) return { ...v, nurseId: null };
             const newNurse = imported.find(n => normalizeName(n.name) === normalizeName(oldNurse.name));
+            // もし新しい看護師がその曜日に休みなら未割り当てに戻す
+            if (newNurse && (newNurse.offDays || []).includes(v.dayOfWeek)) {
+              return { ...v, nurseId: null };
+            }
             return { ...v, nurseId: newNurse ? newNurse.id : null };
           }));
 
@@ -371,7 +390,6 @@
           setToastMessage(`スプレッドシートから ${imported.length}名の看護師リストを読み込み、更新しました`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 4000);
-          // 読み込み後もURLを消さないように削除
         } catch (error) {
           console.error("Sheet fetch error:", error);
           setToastMessage("読み込みに失敗しました。URLや公開設定を確認してください。");
@@ -445,12 +463,18 @@
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日のスケジュール編成</h1>
                     <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm overflow-x-auto max-w-full">
-                      {nurses.map(nurse => (
-                        <button key={nurse.id} onClick={() => setSelectedNurseId(nurse.id)}
-                          className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${selectedNurseId === nurse.id ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                          {nurse.name}
-                        </button>
-                      ))}
+                      {nurses.map(nurse => {
+                        const isOff = (nurse.offDays || []).includes(selectedDay);
+                        return (
+                          <button key={nurse.id} onClick={() => setSelectedNurseId(nurse.id)}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap 
+                              ${selectedNurseId === nurse.id ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}
+                              ${isOff ? 'opacity-50 line-through' : ''}`}
+                          >
+                            {nurse.name} {isOff && '(休)'}
+                          </button>
+                        );
+                      })}
                       {nurses.length === 0 && <span className="px-4 py-2 text-sm text-slate-400">看護師が登録されていません</span>}
                     </div>
                   </div>
@@ -491,6 +515,11 @@
                           <Users size={48} className="mx-auto mb-3 opacity-20" />
                           <p>担当者が選択されていません。</p>
                           <p className="text-sm">左メニューの「看護師管理」からスプレッドシートを読み込んでください。</p>
+                        </div>
+                      ) : isSelectedNurseOff ? (
+                         <div className="text-center py-12 text-slate-500">
+                          <AlertTriangle size={48} className="mx-auto mb-3 opacity-20" />
+                          <p>この担当者は{DAYS[selectedDay]}曜日はお休みです。</p>
                         </div>
                       ) : schedule.length === 0 ? (
                         <div className="text-center py-12 text-slate-500">
@@ -576,26 +605,26 @@
                               <circle key={`other-${visit.id}`} cx={visit.location.x} cy={visit.location.y} r="1.5" fill="#e2e8f0" />
                             ))}
 
-                            {selectedNurse && schedule.map((visit, i) => {
+                            {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => {
                               const prev = i === 0 ? selectedNurse.startLocation : schedule[i-1].location;
                               return (
                                 <line key={`line-${visit.id}`} x1={prev.x} y1={prev.y} x2={visit.location.x} y2={visit.location.y}
                                   stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.2" strokeDasharray="2 2" className="animate-pulse" />
                               );
                             })}
-                            {selectedNurse && schedule.length > 0 && (
+                            {!isSelectedNurseOff && selectedNurse && schedule.length > 0 && (
                               <line x1={schedule[schedule.length-1].location.x} y1={schedule[schedule.length-1].location.y}
                                 x2={selectedNurse.startLocation.x} y2={selectedNurse.startLocation.y} stroke={selectedNurse.color} strokeWidth="0.8" strokeDasharray="1 2" opacity="0.5" />
                             )}
                             
-                            {selectedNurse && (
+                            {!isSelectedNurseOff && selectedNurse && (
                               <>
                                 <rect x={selectedNurse.startLocation.x - 3} y={selectedNurse.startLocation.y - 3} width="6" height="6" fill={selectedNurse.color} rx="1" />
                                 <text x={selectedNurse.startLocation.x} y={selectedNurse.startLocation.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">ステーション</text>
                               </>
                             )}
 
-                            {selectedNurse && schedule.map((visit, i) => (
+                            {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => (
                               <g key={`point-${visit.id}`} className="transition-transform hover:scale-110 cursor-pointer">
                                 <circle cx={visit.location.x} cy={visit.location.y} r="3.5" fill={visit.isLate ? '#fee2e2' : '#fff'} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.5" />
                                 <text x={visit.location.x} y={visit.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{visit.patientName}</text>
@@ -731,7 +760,7 @@
                         ※「再読み込み」を行うと、現在アプリ内に表示されている看護師リストはスプレッドシートの内容で【完全に上書き】されます。
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        フォーマット: 氏名, 勤務開始時間, (住所等)
+                        スプレッドシートの入力ルール（列の順番）: 氏名, 勤務開始時間, <span className="font-bold text-slate-700">休みの曜日 (例: 日・土)</span>
                       </p>
                     </div>
                   </div>
@@ -747,6 +776,7 @@
                             <th className="p-4 font-medium">カラー</th>
                             <th className="p-4 font-medium">氏名</th>
                             <th className="p-4 font-medium">勤務開始時間</th>
+                            <th className="p-4 font-medium">休みの曜日</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -757,10 +787,13 @@
                               </td>
                               <td className="p-4 font-bold text-slate-700">{nurse.name}</td>
                               <td className="p-4 text-slate-600">{nurse.startTime}</td>
+                              <td className="p-4 text-slate-600">
+                                {nurse.offDays && nurse.offDays.length > 0 ? nurse.offDays.map(d => DAYS[d]).join('・') : 'なし'}
+                              </td>
                             </tr>
                           ))}
                           {nurses.length === 0 && (
-                            <tr><td colSpan="3" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
+                            <tr><td colSpan="4" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
                           )}
                         </tbody>
                       </table>
