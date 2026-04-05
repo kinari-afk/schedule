@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, Undo } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, Undo } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -235,6 +235,29 @@
       const handleSetStartDate = (dateStr) => {
         setStartDate(dateStr);
         updateCloudData({ startDate: dateStr });
+      };
+
+      // 前週・次週への遷移処理
+      const handlePrevWeek = () => {
+        if (!startDate) return;
+        const d = new Date(startDate);
+        d.setDate(d.getDate() - 7);
+        handleSetStartDate(d.toISOString().split('T')[0]);
+        
+        const s = new Date(selectedDate);
+        s.setDate(s.getDate() - 7);
+        setSelectedDate(s.toISOString().split('T')[0]);
+      };
+
+      const handleNextWeek = () => {
+        if (!startDate) return;
+        const d = new Date(startDate);
+        d.setDate(d.getDate() + 7);
+        handleSetStartDate(d.toISOString().split('T')[0]);
+        
+        const s = new Date(selectedDate);
+        s.setDate(s.getDate() + 7);
+        setSelectedDate(s.toISOString().split('T')[0]);
       };
 
       // startDateから1週間の日付リストを生成 (月曜スタートに並び替える)
@@ -718,6 +741,9 @@
               </div>
               <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2 pb-1 md:pb-0">
                 <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">日付選択:</div>
+                <button onClick={handlePrevWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="前週">
+                  <ChevronLeft size={18} />
+                </button>
                 {/* displayDatesは必ず月曜〜日曜の順に生成されている */}
                 {displayDates.map((dateStr) => (
                   <button 
@@ -728,6 +754,9 @@
                     {formatDateLabel(dateStr)}
                   </button>
                 ))}
+                <button onClick={handleNextWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="次週">
+                  <ChevronRight size={18} />
+                </button>
               </div>
             </div>
 
