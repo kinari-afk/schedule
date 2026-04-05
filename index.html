@@ -8,16 +8,13 @@
   <!-- Tailwind CSS (デザインを整えるためのツール) -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- React, アイコン, Firebase をブラウザ上で直接読み込むための設定 -->
+  <!-- React, アイコンをブラウザ上で直接読み込むための設定 -->
   <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
         "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "lucide-react": "https://esm.sh/lucide-react@0.292.0",
-        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
-        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
-        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0"
       }
     }
   </script>
@@ -39,25 +36,44 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
     import { getFirestore, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
-    // Firebaseの初期化設定 (環境によって自動で設定されます)
+    // --- Firebase の初期化設定 ---
+    const myFirebaseConfig = {
+      apiKey: "AIzaSyBQFSkTTh582w-WwlfU6mwejs8rPAGrm8M",
+      authDomain: "care-route-app.firebaseapp.com",
+      projectId: "care-route-app",
+      storageBucket: "care-route-app.firebasestorage.app",
+      messagingSenderId: "1086680205439",
+      appId: "1:1086680205439:web:d0a6a39a25555b7ae3174a"
+    };
+
     let app, auth, db, appId;
     try {
-      const configStr = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : (typeof __firebase_config !== 'undefined' ? __firebase_config : null);
-      if (configStr) {
-        const firebaseConfig = typeof configStr === 'string' ? JSON.parse(configStr) : configStr;
+      // 1. Canvas環境かどうかの判定
+      const envFirebaseConfig = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : (typeof __firebase_config !== 'undefined' ? __firebase_config : null);
+      
+      if (envFirebaseConfig) {
+        const firebaseConfig = typeof envFirebaseConfig === 'string' ? JSON.parse(envFirebaseConfig) : envFirebaseConfig;
         app = initializeApp(firebaseConfig);
+        appId = typeof window.__app_id !== 'undefined' ? window.__app_id : (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
+      } 
+      // 2. 独自環境（GitHub Pages等）での動作
+      else {
+        app = initializeApp(myFirebaseConfig);
+        appId = myFirebaseConfig.projectId;
+      }
+      
+      if (app) {
         auth = getAuth(app);
         db = getFirestore(app);
-        appId = typeof window.__app_id !== 'undefined' ? window.__app_id : (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
       }
     } catch (e) {
       console.error("Firebase init error", e);
     }
 
     // --- タイムライン用の定数 ---
-    const START_HOUR = 7; // 朝7時から開始
-    const END_HOUR = 19;  // 夜19時まで表示
-    const PIXELS_PER_MINUTE = 1.5; // 1分あたりのピクセル数 (1時間 = 90px)
+    const START_HOUR = 7;
+    const END_HOUR = 19;
+    const PIXELS_PER_MINUTE = 1.5;
     const getTop = (minutes) => (minutes - START_HOUR * 60) * PIXELS_PER_MINUTE;
 
     // --- ユーティリティ関数 ---
@@ -79,7 +95,6 @@
       return name.replace(/[\s　]/g, '').replace(/様$/, '');
     };
 
-    // 名前から固定の座標を生成する関数 (同じ人なら必ず同じ家・座標になる)
     const getHashLoc = (str) => {
       let hash = 0;
       for (let i = 0; i < str.length; i++) {
@@ -92,20 +107,12 @@
     };
 
     const DAYS = ['日', '月', '火', '水', '木', '金', '土'];
-
-    // 色のパレット (看護師追加時に自動割り当て)
     const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
 
-    // --- デフォルトのスプレッドシートURL ---
     const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
     const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
 
-    // 初期データは空にする
-    const initialNurses = [];
-    const initialVisits = [];
-
     function App() {
-      // 認証の管理
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
 
@@ -131,61 +138,24 @@
       const [activeTab, setActiveTab] = useState('overview');
       const [selectedDay, setSelectedDay] = useState(1);
       
-      const [nurses, setNurses] = useState(() => {
-        try {
-          const saved = localStorage.getItem("careRoute_nurses");
-          return saved ? JSON.parse(saved) : initialNurses;
-        } catch (e) {
-          return initialNurses;
-        }
-      });
-      const [visits, setVisits] = useState(() => {
-        try {
-          const saved = localStorage.getItem("careRoute_visits");
-          return saved ? JSON.parse(saved) : initialVisits;
-        } catch (e) {
-          return initialVisits;
-        }
-      });
-
-      // --- 基本移動時間の状態 ---
-      const [baseTravelTime, setBaseTravelTime] = useState(() => {
-        try {
-          const saved = localStorage.getItem("careRoute_baseTravelTime");
-          return saved !== null ? parseInt(saved, 10) : 10;
-        } catch (e) {
-          return 10;
-        }
-      });
+      const [nurses, setNurses] = useState([]);
+      const [visits, setVisits] = useState([]);
+      const [baseTravelTime, setBaseTravelTime] = useState(10);
       
       const [selectedNurseId, setSelectedNurseId] = useState(null);
-      
       const [isOptimizing, setIsOptimizing] = useState(false);
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       
-      const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem("careRoute_userSheetUrl") || localStorage.getItem("careRoute_patientSheetUrl") || DEFAULT_USER_SHEET_URL);
+      const [sheetUrl, setSheetUrl] = useState(DEFAULT_USER_SHEET_URL);
       const [isLoadingSheet, setIsLoadingSheet] = useState(false);
       const [showUserSheetConfig, setShowUserSheetConfig] = useState(false);
 
-      const [nurseSheetUrl, setNurseSheetUrl] = useState(() => localStorage.getItem("careRoute_nurseSheetUrl") || DEFAULT_NURSE_SHEET_URL);
+      const [nurseSheetUrl, setNurseSheetUrl] = useState(DEFAULT_NURSE_SHEET_URL);
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
       const [showNurseSheetConfig, setShowNurseSheetConfig] = useState(false);
 
-      // --- 状態の変更をローカルストレージに自動保存する ---
-      useEffect(() => {
-        localStorage.setItem("careRoute_nurses", JSON.stringify(nurses));
-      }, [nurses]);
-
-      useEffect(() => {
-        localStorage.setItem("careRoute_visits", JSON.stringify(visits));
-      }, [visits]);
-
-      useEffect(() => {
-        localStorage.setItem("careRoute_baseTravelTime", baseTravelTime.toString());
-      }, [baseTravelTime]);
-
-      // --- クラウドからのデータ受信 (リアルタイム同期) ---
+      // --- クラウドとの同期 ---
       useEffect(() => {
         if (!user || !db) return;
         setIsSyncing(true);
@@ -200,16 +170,13 @@
             if (data.nurseSheetUrl !== undefined) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
           } else {
-            // クラウドにデータが存在しない場合は、ローカルのデータをプッシュして初期化する
-            if (nurses.length > 0 || visits.length > 0) {
-              setDoc(docRef, {
-                nurses: JSON.stringify(nurses),
-                visits: JSON.stringify(visits),
-                sheetUrl: sheetUrl,
-                nurseSheetUrl: nurseSheetUrl,
-                baseTravelTime: baseTravelTime
-              }).catch(e => console.error("Initial sync error:", e));
-            }
+            setDoc(docRef, {
+              nurses: JSON.stringify([]),
+              visits: JSON.stringify([]),
+              sheetUrl: DEFAULT_USER_SHEET_URL,
+              nurseSheetUrl: DEFAULT_NURSE_SHEET_URL,
+              baseTravelTime: 10
+            }).catch(e => console.error("Initial doc creation error:", e));
           }
           setIsSyncing(false);
         }, (error) => {
@@ -220,7 +187,6 @@
         return () => unsubscribe();
       }, [user]);
 
-      // --- クラウドへのデータ保存関数 ---
       const updateCloudData = (newData) => {
         if (user && db) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
@@ -228,7 +194,6 @@
         }
       };
 
-      // 状態を更新すると同時にクラウドに同期するラッパー関数
       const handleSetNurses = (newNursesFn) => {
         setNurses(prev => {
            const next = typeof newNursesFn === 'function' ? newNursesFn(prev) : newNursesFn;
@@ -254,20 +219,17 @@
         const url = e.target.value;
         setSheetUrl(url);
         updateCloudData({ sheetUrl: url });
-        localStorage.setItem("careRoute_userSheetUrl", url);
       };
 
       const handleNurseSheetUrlChange = (e) => {
         const url = e.target.value;
         setNurseSheetUrl(url);
         updateCloudData({ nurseSheetUrl: url });
-        localStorage.setItem("careRoute_nurseSheetUrl", url);
       };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const isSelectedNurseOff = selectedNurse ? (selectedNurse.offDays || []).includes(selectedDay) : false;
 
-      // --- 手動で移動時間を上書きする関数 ---
       const updateCustomTravelTime = (visitId, newTime) => {
         handleSetVisits(prevVisits => prevVisits.map(v => {
           if (v.id === visitId) {
@@ -277,21 +239,15 @@
         }));
       };
 
-      // --- ドラッグ&ドロップのハンドラー ---
       const handleDrop = (e, targetNurseId) => {
         e.preventDefault();
         const visitId = parseInt(e.dataTransfer.getData('text/plain'), 10);
         if (isNaN(visitId)) return;
-        
-        const offsetYStr = e.dataTransfer.getData('offsetY');
-        const offsetY = offsetYStr ? parseFloat(offsetYStr) : 0;
-        
+        const offsetY = parseFloat(e.dataTransfer.getData('offsetY') || 0);
         const rect = e.currentTarget.getBoundingClientRect();
         const y = (e.clientY - rect.top) - offsetY;
-        
         const minutes = y / PIXELS_PER_MINUTE + START_HOUR * 60;
         const snappedMinutes = Math.round(minutes / 5) * 5; 
-        
         const finalMinutes = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, snappedMinutes));
         const newStartTime = formatTime(finalMinutes);
         
@@ -304,51 +260,38 @@
         }));
       };
 
-      // --- 全体スケジュールと移動時間の計算 ---
       const allSchedules = useMemo(() => {
         const schedulesByNurse = {};
-        
         nurses.forEach(nurse => {
           const isOff = (nurse.offDays || []).includes(selectedDay);
           if (isOff) {
             schedulesByNurse[nurse.id] = { isOff: true, visits: [] };
             return;
           }
-          
           const assignedVisits = visits.filter(v => v.nurseId === nurse.id && v.dayOfWeek === selectedDay);
           const sortedVisits = [...assignedVisits].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
-          
           let currentTime = parseTime(nurse.startTime);
           let calcVisits = [];
           let currentLoc = nurse.startLocation;
-
           sortedVisits.forEach((visit) => {
             const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
             const calculatedTravelTime = baseTravelTime + Math.round(dist * 0.05);
-            // カスタム移動時間が設定されていればそれを使う
             const travelTime = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : calculatedTravelTime;
-            
             const targetStart = parseTime(visit.startTime);
             const arrivalTime = currentTime + travelTime;
             const isLate = arrivalTime > targetStart;
             const actualStart = Math.max(arrivalTime, targetStart);
             const waitTime = actualStart > arrivalTime ? actualStart - arrivalTime : 0;
             const departureTime = actualStart + visit.duration;
-
             calcVisits.push({
-              ...visit,
-              travelTime,
-              waitTime,
-              isLate,
+              ...visit, travelTime, waitTime, isLate,
               arrivalTime: formatTime(arrivalTime),
               actualStartTime: formatTime(actualStart),
               departureTime: formatTime(departureTime)
             });
-
             currentTime = departureTime;
             currentLoc = visit.location;
           });
-
           let returnTime = null;
           let finalTravelTime = 0;
           if (calcVisits.length > 0) {
@@ -356,23 +299,16 @@
             finalTravelTime = baseTravelTime + Math.round(finalDist * 0.05);
             returnTime = formatTime(currentTime + finalTravelTime);
           }
-
           schedulesByNurse[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime };
         });
-        
         return schedulesByNurse;
       }, [nurses, visits, selectedDay, baseTravelTime]);
 
-      // 個別スケジュール用
       const schedule = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
-
       const stats = useMemo(() => {
-        let totalTravel = 0;
-        let totalVisit = 0;
-        let lateCount = 0;
+        let totalTravel = 0, totalVisit = 0, lateCount = 0;
         schedule.forEach(s => {
-          totalTravel += s.travelTime;
-          totalVisit += s.duration;
+          totalTravel += s.travelTime; totalVisit += s.duration;
           if (s.isLate) lateCount++;
         });
         if (schedule.length > 0 && selectedNurse) {
@@ -381,299 +317,134 @@
         return { totalTravel, totalVisit, count: schedule.length, lateCount };
       }, [schedule, allSchedules, selectedNurse]);
 
-      // --- 自動編成ロジック ---
       const handleAutoAssign = () => {
         const availableNurses = nurses.filter(n => !(n.offDays || []).includes(selectedDay));
-
         if (availableNurses.length === 0) {
           setToastMessage(`この曜日に出勤している看護師がいません。`);
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 3000);
+          setShowToast(true); setTimeout(() => setShowToast(false), 3000);
           return;
         }
-
         setIsOptimizing(true);
         setTimeout(() => {
           const newVisits = [...visits];
           const unassignedToday = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null);
           unassignedToday.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
-
           const nurseStates = availableNurses.map(n => {
             const myVisits = newVisits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === n.id);
-            if (myVisits.length === 0) {
-              return { id: n.id, time: parseTime(n.startTime), loc: n.startLocation };
-            }
+            if (myVisits.length === 0) return { id: n.id, time: parseTime(n.startTime), loc: n.startLocation };
             const last = myVisits.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime)).pop();
             return { id: n.id, time: parseTime(last.startTime) + last.duration, loc: last.location };
           });
-
           unassignedToday.forEach(visit => {
             const targetStart = parseTime(visit.startTime);
-            let bestNurse = null;
-            let minTravel = Infinity;
-
+            let bestNurse = null, minTravel = Infinity;
             nurseStates.forEach(ns => {
               const nurseDef = availableNurses.find(n => n.id === ns.id);
               if (nurseDef && nurseDef.isLowPriority) return;
-
               const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-              // カスタム移動時間が設定されていればそれを優先
-              const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
-              
-              if (ns.time + travel <= targetStart) {
-                if (travel < minTravel) {
-                  minTravel = travel;
-                  bestNurse = ns;
-                }
-              }
+              const travel = baseTravelTime + Math.round(dist * 0.05);
+              if (ns.time + travel <= targetStart && travel < minTravel) { minTravel = travel; bestNurse = ns; }
             });
-
             if (!bestNurse) {
               minTravel = Infinity;
               nurseStates.forEach(ns => {
                 const nurseDef = availableNurses.find(n => n.id === ns.id);
                 if (nurseDef && !nurseDef.isLowPriority) return;
-
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
-                if (ns.time + travel <= targetStart) {
-                  if (travel < minTravel) {
-                    minTravel = travel;
-                    bestNurse = ns;
-                  }
-                }
+                const travel = baseTravelTime + Math.round(dist * 0.05);
+                if (ns.time + travel <= targetStart && travel < minTravel) { minTravel = travel; bestNurse = ns; }
               });
             }
-
             if (!bestNurse) {
-              let earliest = Infinity;
-              let isBestNurseLowPriority = true;
-
+              let earliest = Infinity, isBestNurseLowPriority = true;
               nurseStates.forEach(ns => {
                 const nurseDef = availableNurses.find(n => n.id === ns.id);
                 const isLow = nurseDef ? !!nurseDef.isLowPriority : false;
-
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
+                const travel = baseTravelTime + Math.round(dist * 0.05);
                 const arrival = ns.time + travel;
-
                 if (arrival < earliest || (arrival === earliest && isBestNurseLowPriority && !isLow)) {
-                  earliest = arrival;
-                  bestNurse = ns;
-                  isBestNurseLowPriority = isLow;
+                  earliest = arrival; bestNurse = ns; isBestNurseLowPriority = isLow;
                 }
               });
             }
-
             if (bestNurse) {
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
               newVisits[vIdx].nurseId = bestNurse.id;
               const dist = Math.sqrt(Math.pow(visit.location.x - bestNurse.loc.x, 2) + Math.pow(visit.location.y - bestNurse.loc.y, 2));
-              const travel = visit.customTravelTime !== undefined && visit.customTravelTime !== null ? visit.customTravelTime : (baseTravelTime + Math.round(dist * 0.05));
+              const travel = baseTravelTime + Math.round(dist * 0.05);
               bestNurse.time = Math.max(bestNurse.time + travel, targetStart) + visit.duration;
               bestNurse.loc = visit.location;
             }
           });
-
           handleSetVisits(newVisits);
           setIsOptimizing(false);
           setToastMessage(`${DAYS[selectedDay]}曜日の担当者を自動編成しました`);
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 3000);
+          setShowToast(true); setTimeout(() => setShowToast(false), 3000);
         }, 800);
       };
 
-      const updateVisitNurse = (visitId, newNurseId) => {
-        const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
-        handleSetVisits(prevVisits => prevVisits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
-      };
-
-      // --- スプレッドシートからの読み込み ---
       const handleFetchSheet = async () => {
-        if (!sheetUrl) {
-          setToastMessage("スプレッドシートのURLを設定してください");
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 3000);
-          return;
-        }
-
         setIsLoadingSheet(true);
         try {
           const response = await fetch(sheetUrl);
-          if (!response.ok) throw new Error('ネットワークエラー');
           const text = await response.text();
           const lines = text.split(/\r\n|\n/);
-          if (lines.length < 2) throw new Error('データがありません');
-
           const imported = [];
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
-
           for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            const parts = line.split(',');
-            
+            const parts = lines[i].split(',');
             if (parts.length > 0 && parts[0].trim()) {
-              const name = parts[0].trim();
-              const dayStr = parts.length > 1 ? parts[1].trim() : '';
-              const dayOfWeek = dayMap[dayStr] !== undefined ? dayMap[dayStr] : 1;
-              
-              let startTime = parts.length > 2 && parts[2].trim() ? parts[2].trim() : '09:00';
-              if (startTime.length === 4) startTime = '0' + startTime;
-              
-              const duration = parts.length > 3 && !isNaN(parseInt(parts[3])) ? parseInt(parts[3]) : 30;
-
-              const newVisit = {
-                id: Date.now() + i,
-                userName: name.includes('様') ? name : `${name} 様`,
-                location: getHashLoc(name),
-                duration: duration,
-                dayOfWeek: dayOfWeek,
-                startTime: startTime,
-                originalStartTime: startTime,
-                nurseId: null
-              };
-
-              const isDuplicate = imported.some(v => 
-                normalizeName(v.userName) === normalizeName(newVisit.userName) &&
-                v.dayOfWeek === newVisit.dayOfWeek &&
-                v.originalStartTime === newVisit.originalStartTime
-              );
-
-              if (!isDuplicate) {
-                imported.push(newVisit);
-              }
+              const name = parts[0].trim(), dayStr = parts[1]?.trim(), dayOfWeek = dayMap[dayStr] ?? 1;
+              let start = parts[2]?.trim() || '09:00'; if (start.length === 4) start = '0' + start;
+              imported.push({
+                id: Date.now() + i, userName: name.includes('様') ? name : `${name} 様`,
+                location: getHashLoc(name), duration: parseInt(parts[3]) || 30,
+                dayOfWeek, startTime: start, originalStartTime: start, nurseId: null
+              });
             }
           }
-          
-          // 既存の割り当て状態や変更した時間(手動移動時間も)を引き継ぐ
-          const mergedVisits = imported.map(newV => {
-            const existing = visits.find(v => 
-              normalizeName(v.userName) === normalizeName(newV.userName) && 
-              v.dayOfWeek === newV.dayOfWeek && 
-              v.originalStartTime === newV.originalStartTime
-            );
-            if (existing) {
-              return { 
-                ...newV, 
-                id: existing.id, 
-                nurseId: existing.nurseId, 
-                startTime: existing.startTime,
-                customTravelTime: existing.customTravelTime
-              };
-            }
-            return newV;
+          const merged = imported.map(newV => {
+            const existing = visits.find(v => normalizeName(v.userName) === normalizeName(newV.userName) && v.dayOfWeek === newV.dayOfWeek && v.originalStartTime === newV.originalStartTime);
+            return existing ? { ...newV, id: existing.id, nurseId: existing.nurseId, startTime: existing.startTime, customTravelTime: existing.customTravelTime } : newV;
           });
-          
-          handleSetVisits(mergedVisits);
-          setToastMessage(`スプレッドシートから ${imported.length}件のスケジュールを同期しました`);
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 4000);
-        } catch (error) {
-          console.error("Sheet fetch error:", error);
-          setToastMessage("読み込みに失敗しました。URLや公開設定を確認してください。");
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 4000);
-        } finally {
-          setIsLoadingSheet(false);
-        }
+          handleSetVisits(merged);
+          setToastMessage(`スケジュールを同期しました`);
+          setShowToast(true); setTimeout(() => setShowToast(false), 4000);
+        } catch (e) { setToastMessage("読み込み失敗"); setShowToast(true); }
+        finally { setIsLoadingSheet(false); }
       };
 
       const handleFetchNurseSheet = async () => {
-        if (!nurseSheetUrl) {
-          setToastMessage("スプレッドシートのURLを設定してください");
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 3000);
-          return;
-        }
-
         setIsLoadingNurseSheet(true);
         try {
           const response = await fetch(nurseSheetUrl);
-          if (!response.ok) throw new Error('ネットワークエラー');
           const text = await response.text();
           const lines = text.split(/\r\n|\n/);
-          if (lines.length < 2) throw new Error('データがありません');
-
           const imported = [];
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
-
           for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            const parts = line.split(',');
-            
+            const parts = lines[i].split(',');
             if (parts.length > 0 && parts[0].trim()) {
               const name = parts[0].trim();
-              let startTime = parts.length > 1 && parts[1].trim() ? parts[1].trim() : '08:30';
-              if (startTime.length === 4) startTime = '0' + startTime;
-              
+              let start = parts[1]?.trim() || '08:30'; if (start.length === 4) start = '0' + start;
               let offDays = [];
-              if (parts.length > 2 && parts[2].trim()) {
-                const offDaysStr = parts[2].trim();
-                for (let d of Object.keys(dayMap)) {
-                  if (offDaysStr.includes(d)) {
-                    offDays.push(dayMap[d]);
-                  }
-                }
-              }
-
-              let isLowPriority = false;
-              if (parts.length > 3 && parts[3].trim()) {
-                const p = parts[3].trim();
-                if (p === '低' || p === '下' || p === '優先順位低' || p === '優先度低') {
-                  isLowPriority = true;
-                }
-              }
-
-              const newNurse = {
-                id: Date.now() + i,
-                name: name,
-                startLocation: { x: 50, y: 50 },
-                color: colors[imported.length % colors.length],
-                startTime: startTime,
-                offDays: offDays,
-                isLowPriority: isLowPriority
-              };
-
-              const isDuplicate = imported.some(n => normalizeName(n.name) === normalizeName(newNurse.name));
-              if (!isDuplicate) {
-                imported.push(newNurse);
-              }
+              Object.keys(dayMap).forEach(d => { if (parts[2]?.includes(d)) offDays.push(dayMap[d]); });
+              imported.push({
+                id: Date.now() + i, name, startLocation: { x: 50, y: 50 },
+                color: colors[imported.length % colors.length], startTime: start,
+                offDays, isLowPriority: parts[3]?.includes('低')
+              });
             }
           }
-
-          handleSetVisits(prevVisits => prevVisits.map(v => {
-            if (v.nurseId === null) return v;
-            const oldNurse = nurses.find(n => n.id === v.nurseId);
-            if (!oldNurse) return { ...v, nurseId: null };
-            const newNurse = imported.find(n => normalizeName(n.name) === normalizeName(oldNurse.name));
-            if (newNurse && (newNurse.offDays || []).includes(v.dayOfWeek)) {
-              return { ...v, nurseId: null };
-            }
-            return { ...v, nurseId: newNurse ? newNurse.id : null };
-          }));
-
           handleSetNurses(imported);
-          if (imported.length > 0) {
-            setSelectedNurseId(imported[0].id);
-          } else {
-            setSelectedNurseId(null);
-          }
-          
-          setToastMessage(`スプレッドシートから ${imported.length}名の看護師リストを読み込みました`);
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 4000);
-        } catch (error) {
-          console.error("Sheet fetch error:", error);
-          setToastMessage("読み込みに失敗しました。URLや公開設定を確認してください。");
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 4000);
-        } finally {
-          setIsLoadingNurseSheet(false);
-        }
+          setToastMessage(`看護師リストを読み込みました`);
+          setShowToast(true); setTimeout(() => setShowToast(false), 4000);
+        } catch (e) { setToastMessage("読み込み失敗"); setShowToast(true); }
+        finally { setIsLoadingNurseSheet(false); }
       };
 
+      // 定義漏れしていた変数を追加
       const unassignedCount = visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).length;
 
       return (
@@ -732,26 +503,17 @@
             {activeTab !== 'nurses' && (
               <div className="bg-white border-b border-slate-200 p-4 shadow-sm z-10 flex items-center gap-4 overflow-x-auto shrink-0">
                 <div className="flex items-center gap-2 text-slate-500 font-medium whitespace-nowrap">
-                  <CalendarDays size={18} />
-                  対象曜日:
+                  <CalendarDays size={18} /> 対象曜日:
                 </div>
                 <div className="flex gap-2">
                   {DAYS.map((day, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setSelectedDay(idx)}
-                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-colors shrink-0 ${selectedDay === idx ? 'bg-teal-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                    >
-                      {day}
-                    </button>
+                    <button key={idx} onClick={() => setSelectedDay(idx)} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-colors shrink-0 ${selectedDay === idx ? 'bg-teal-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{day}</button>
                   ))}
                 </div>
               </div>
             )}
 
             <div className="flex-1 overflow-auto p-4 md:p-8">
-
-              {/* --- タブ: 全体スケジュール (タイムライン形式) --- */}
               {activeTab === 'overview' && (
                 <div className="flex flex-col h-full space-y-4">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
@@ -760,236 +522,98 @@
                       <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
                         <Clock size={14} className="text-slate-400" />
                         <span className="text-xs font-bold text-slate-600">基本移動:</span>
-                        <input 
-                          type="number" 
-                          min="0"
-                          value={baseTravelTime} 
-                          onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))}
-                          className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"
-                        />
+                        <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"/>
                         <span className="text-xs text-slate-500">分</span>
                       </div>
                     </div>
-                    <button 
-                      onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
-                      className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm whitespace-nowrap"
-                    >
-                      <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
-                      未割り当てを自動編成
+                    <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0} className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm whitespace-nowrap">
+                      <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} /> 未割り当てを自動編成
                     </button>
                   </div>
-
                   {nurses.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-slate-500 bg-white rounded-xl border border-slate-200 shadow-sm p-12">
                       <UserCog size={48} className="mb-4 opacity-20" />
                       <p className="text-lg font-medium text-slate-600 mb-2">看護師が登録されていません</p>
-                      <p className="text-sm">左のメニューの「看護師管理」から、名簿を同期してください。</p>
                     </div>
                   ) : (
                     <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-auto relative">
                       <div className="min-w-max">
-                        {/* ヘッダー行 */}
                         <div className="flex sticky top-0 z-30 bg-slate-50 border-b border-slate-200 shadow-sm">
                           <div className="w-16 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-xs font-bold text-slate-500 sticky left-0 z-40">時間</div>
-                          
                           <div className="w-56 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 bg-white">
                              <div className="font-bold text-slate-700 text-sm">未割り当て</div>
                              <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-600'} text-xs font-bold px-2 py-0.5 rounded-full mt-1`}>{unassignedCount}件</div>
                           </div>
-                          
                           {nurses.map(nurse => {
                             const isOff = (nurse.offDays || []).includes(selectedDay);
                             const assignedVisits = allSchedules[nurse.id]?.visits || [];
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 ${isOff ? 'w-12 bg-slate-100' : 'w-56 bg-white'}`} style={{ backgroundColor: isOff ? '#f8fafc' : nurse.color + '10' }}>
                                 {isOff ? (
-                                  <>
-                                    <div className="w-2 h-2 rounded-full mb-1" style={{ backgroundColor: nurse.color }}></div>
-                                    <div className="text-xs font-bold text-slate-400 mt-1 mb-1 truncate" style={{ writingMode: 'vertical-rl' }}>{nurse.name.split(/[\s　]/)[0]}</div>
-                                    <div className="text-xs font-bold text-red-400 mt-1">休</div>
-                                  </>
+                                  <><div className="text-xs font-bold text-slate-400 mb-1 truncate" style={{ writingMode: 'vertical-rl' }}>{nurse.name.split(/[\s　]/)[0]}</div><div className="text-xs font-bold text-red-400">休</div></>
                                 ) : (
-                                  <>
-                                    <div className="font-bold text-slate-800 text-sm flex items-center gap-1">
-                                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>
-                                      <span>{nurse.name}</span>
-                                    </div>
-                                    <div className="text-xs font-bold text-slate-500 mt-1">
-                                      {assignedVisits.length}件
-                                    </div>
-                                  </>
+                                  <><div className="font-bold text-slate-800 text-sm flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div><div className="text-xs font-bold text-slate-500 mt-1">{assignedVisits.length}件</div></>
                                 )}
                               </div>
                             )
                           })}
                         </div>
-
-                        {/* タイムライン本体 */}
                         <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }}>
-                          {/* 左側の時間ラベル (固定) */}
                           <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20">
                             {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
-                              <div key={i} className="absolute w-full text-right pr-2 text-xs font-medium text-slate-400" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>
-                                {START_HOUR + i}:00
-                              </div>
+                              <div key={i} className="absolute w-full text-right pr-2 text-xs font-medium text-slate-400" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{START_HOUR + i}:00</div>
                             ))}
                           </div>
-
-                          {/* 背景グリッド線 */}
                           <div className="absolute left-16 right-0 inset-y-0 pointer-events-none z-0">
                             {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
                               <div key={i} className="absolute w-full border-t border-slate-200" style={{ top: i * 60 * PIXELS_PER_MINUTE }}></div>
                             ))}
-                            {Array.from({ length: END_HOUR - START_HOUR }).map((_, i) => (
-                              <div key={`half-${i}`} className="absolute w-full border-t border-slate-100 border-dashed" style={{ top: (i * 60 + 30) * PIXELS_PER_MINUTE }}></div>
-                            ))}
                           </div>
-
-                          {/* 未割り当て列 (ドロップ可能) */}
-                          <div 
-                            className="w-56 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/30"
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => handleDrop(e, null)}
-                          >
+                          <div className="w-56 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/30" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {visits.filter(v => v.nurseId === null && v.dayOfWeek === selectedDay).map(v => {
-                               const startMins = parseTime(v.startTime);
-                               const top = getTop(startMins);
-                               const height = v.duration * PIXELS_PER_MINUTE;
+                               const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
-                                 <div 
-                                   key={v.id} 
-                                   draggable={true}
-                                   onDragStart={(e) => {
-                                     e.dataTransfer.setData('text/plain', v.id);
-                                     const rect = e.currentTarget.getBoundingClientRect();
-                                     e.dataTransfer.setData('offsetY', e.clientY - rect.top);
-                                   }}
-                                   className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow cursor-move" 
-                                   style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}
-                                 >
-                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate pointer-events-none">{v.userName}</div>
-                                   <div className="text-[10px] text-slate-500 font-medium mt-auto pointer-events-none">
-                                     {v.originalStartTime && v.originalStartTime !== v.startTime ? (
-                                       <span className="text-orange-600 font-bold">{v.originalStartTime} ➔ {v.startTime}</span>
-                                     ) : (
-                                       <span>{v.startTime}</span>
-                                     )}
-                                     <span> ({v.duration}分)</span>
+                                 <div key={v.id} draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} className="absolute left-2 right-2 bg-white border border-slate-300 border-l-4 border-l-slate-400 rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow cursor-move" style={{ top: `${top}px`, height: `${Math.max(height, 24)}px` }}>
+                                   <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{v.userName}</div>
+                                   <div className="text-[10px] text-slate-500 font-medium mt-auto">
+                                     {v.originalStartTime && v.originalStartTime !== v.startTime ? <span className="text-orange-600 font-bold">{v.originalStartTime} ➔ {v.startTime}</span> : <span>{v.startTime}</span>}
                                    </div>
                                  </div>
                                )
                              })}
                           </div>
-
-                          {/* 各看護師列 (ドロップ可能) */}
                           {nurses.map(nurse => {
                             const isOff = (nurse.offDays || []).includes(selectedDay);
-                            const scheduleData = allSchedules[nurse.id];
-                            const assignedVisits = scheduleData?.visits || [];
-
+                            const scheduleData = allSchedules[nurse.id], assignedVisits = scheduleData?.visits || [];
                             return (
-                              <div 
-                                key={nurse.id} 
-                                className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-12 bg-slate-50/80' : 'w-56'}`}
-                                onDragOver={(e) => { if (!isOff) e.preventDefault(); }}
-                                onDrop={(e) => { if (!isOff) handleDrop(e, nurse.id); }}
-                              >
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-12 bg-slate-50/80' : 'w-56'}`} onDragOver={(e) => { if (!isOff) e.preventDefault(); }} onDrop={(e) => { if (!isOff) handleDrop(e, nurse.id); }}>
                                 {isOff ? (
-                                  <div className="absolute inset-0 flex items-center justify-center text-slate-300 pointer-events-none">
-                                    <div className="sticky top-1/2 -translate-y-1/2 flex flex-col items-center">
-                                      <CalendarDays size={16} className="mb-3 opacity-50" />
-                                      <div className="text-sm font-bold tracking-widest opacity-60" style={{ writingMode: 'vertical-rl' }}>お休み</div>
-                                    </div>
-                                  </div>
+                                  <div className="absolute inset-0 flex items-center justify-center text-slate-300 pointer-events-none"><div className="sticky top-1/2 -translate-y-1/2 flex flex-col items-center"><CalendarDays size={16} className="mb-3 opacity-50" /><div className="text-sm font-bold tracking-widest opacity-60" style={{ writingMode: 'vertical-rl' }}>お休み</div></div></div>
                                 ) : (
                                   <>
                                     {assignedVisits.map((item, idx) => {
-                                      const actualStart = parseTime(item.actualStartTime);
-                                      const duration = item.duration;
-                                      
-                                      const top = getTop(actualStart);
-                                      const height = duration * PIXELS_PER_MINUTE;
-
-                                      let prevDeparture = 0;
-                                      if (idx === 0) {
-                                        prevDeparture = parseTime(nurse.startTime);
-                                      } else {
-                                        prevDeparture = parseTime(assignedVisits[idx-1].departureTime);
-                                      }
-                                      const arrival = parseTime(item.arrivalTime);
-                                      const travelTop = getTop(prevDeparture);
-                                      const travelHeight = (arrival - prevDeparture) * PIXELS_PER_MINUTE;
-
+                                      const top = getTop(parseTime(item.actualStartTime)), height = item.duration * PIXELS_PER_MINUTE;
+                                      let prevDep = idx === 0 ? parseTime(nurse.startTime) : parseTime(assignedVisits[idx-1].departureTime);
+                                      const arrival = parseTime(item.arrivalTime), travelHeight = (arrival - prevDep) * PIXELS_PER_MINUTE;
                                       return (
                                         <React.Fragment key={item.id}>
-                                          {/* 移動線 (手動で時間を変更できるように input を追加) */}
                                           {travelHeight > 0 && (
-                                            <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${travelTop}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
+                                            <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelHeight}px`, transform: 'translateX(-50%)' }}>
                                               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1 py-0.5 rounded-full border border-slate-200 shadow-sm z-20 flex items-center pointer-events-auto">
-                                                <input 
-                                                  type="number"
-                                                  min="0"
-                                                  value={item.customTravelTime !== undefined && item.customTravelTime !== null ? item.customTravelTime : item.travelTime}
-                                                  onChange={(e) => {
-                                                    const val = e.target.value;
-                                                    updateCustomTravelTime(item.id, val === '' ? null : parseInt(val, 10));
-                                                  }}
-                                                  className={`w-6 text-center bg-transparent outline-none ${item.customTravelTime !== undefined && item.customTravelTime !== null ? 'text-teal-600 font-bold' : ''}`}
-                                                />
-                                                <span>分</span>
+                                                <input type="number" min="0" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value, 10))} className={`w-6 text-center bg-transparent outline-none ${item.customTravelTime ? 'text-teal-600 font-bold' : ''}`}/>分
                                               </div>
                                             </div>
                                           )}
-                                          
-                                          {/* 待機時間がある場合 */}
-                                          {item.waitTime > 0 && (
-                                            <div className="absolute left-1/2 w-0 border-l-4 border-dotted border-amber-300 pointer-events-none" style={{ top: `${getTop(arrival)}px`, height: `${item.waitTime * PIXELS_PER_MINUTE}px`, transform: 'translateX(-50%)' }}></div>
-                                          )}
-
-                                          {/* 訪問ブロック (ドラッグ可能) */}
-                                          <div 
-                                               draggable={true}
-                                               onDragStart={(e) => {
-                                                 e.dataTransfer.setData('text/plain', item.id);
-                                                 const rect = e.currentTarget.getBoundingClientRect();
-                                                 e.dataTransfer.setData('offsetY', e.clientY - rect.top);
-                                               }}
-                                               className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 cursor-move ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} 
-                                               style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
-                                            <div className="flex justify-between items-start mb-0.5 pointer-events-none">
-                                              <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.userName}</div>
-                                              {item.isLate && <AlertTriangle size={12} className="text-red-500 shrink-0" />}
-                                            </div>
-                                            <div className="mt-auto flex flex-col justify-end text-[10px] text-slate-500 pointer-events-none">
-                                              {item.originalStartTime && item.originalStartTime !== item.startTime && (
-                                                <div className="text-orange-600 font-bold text-[9px] leading-tight mb-0.5">元: {item.originalStartTime}</div>
-                                              )}
-                                              <div className="flex justify-between w-full">
-                                                <span className={item.originalStartTime !== item.startTime ? 'text-orange-600 font-bold' : ''}>指: {item.startTime}</span>
-                                                <span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span>
-                                              </div>
+                                          <div draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} className={`absolute left-2 right-2 bg-white border rounded shadow-sm p-1.5 overflow-hidden flex flex-col group hover:z-30 hover:shadow-md transition-shadow border-l-4 cursor-move ${item.isLate ? 'border-l-red-500 border-red-200 bg-red-50/80' : ''}`} style={{ top: `${top}px`, height: `${Math.max(height, 24)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                            <div className="font-bold text-slate-800 text-[11px] leading-tight truncate">{item.userName}</div>
+                                            <div className="mt-auto flex flex-col justify-end text-[10px] text-slate-500">
+                                              {item.originalStartTime && item.originalStartTime !== item.startTime && <div className="text-orange-600 font-bold text-[9px] mb-0.5">元: {item.originalStartTime}</div>}
+                                              <div className="flex justify-between w-full"><span className={item.originalStartTime !== item.startTime ? 'text-orange-600 font-bold' : ''}>指: {item.startTime}</span><span className={item.isLate ? 'text-red-600 font-bold' : ''}>着: {item.arrivalTime}</span></div>
                                             </div>
                                           </div>
                                         </React.Fragment>
                                       )
                                     })}
-
-                                    {/* 帰還の移動線 */}
-                                    {assignedVisits.length > 0 && scheduleData.returnTime && (
-                                      (() => {
-                                        const lastDeparture = parseTime(assignedVisits[assignedVisits.length-1].departureTime);
-                                        const returnArr = parseTime(scheduleData.returnTime);
-                                        const rTravelTop = getTop(lastDeparture);
-                                        const rTravelHeight = (returnArr - lastDeparture) * PIXELS_PER_MINUTE;
-                                        return rTravelHeight > 0 ? (
-                                          <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-400 pointer-events-none" style={{ top: `${rTravelTop}px`, height: `${rTravelHeight}px`, transform: 'translateX(-50%)' }}>
-                                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-slate-500 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-slate-200 whitespace-nowrap shadow-sm z-10">
-                                              帰: {scheduleData.finalTravelTime}分
-                                            </div>
-                                          </div>
-                                        ) : null;
-                                      })()
-                                    )}
                                   </>
                                 )}
                               </div>
@@ -1001,26 +625,10 @@
                   )}
                 </div>
               )}
-              
-              {/* --- タブ: 個別スケジュール編成 --- */}
               {activeTab === 'schedule' && (
                 <div className="max-w-6xl mx-auto space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex flex-wrap items-center gap-4">
-                      <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の個別・ルート確認</h1>
-                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
-                        <Clock size={14} className="text-slate-400" />
-                        <span className="text-xs font-bold text-slate-600">基本移動:</span>
-                        <input 
-                          type="number" 
-                          min="0"
-                          value={baseTravelTime} 
-                          onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))}
-                          className="w-12 text-center bg-slate-50 border border-slate-200 rounded text-sm font-bold text-slate-800 outline-none focus:border-teal-500"
-                        />
-                        <span className="text-xs text-slate-500">分</span>
-                      </div>
-                    </div>
+                    <h1 className="text-2xl font-bold text-slate-800">{DAYS[selectedDay]}曜日の個別・ルート確認</h1>
                     <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm overflow-x-auto max-w-full">
                       {nurses.map(nurse => {
                         const isOff = (nurse.offDays || []).includes(selectedDay);
@@ -1030,407 +638,107 @@
                               ${selectedNurseId === nurse.id ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}
                               ${isOff ? 'opacity-50 line-through' : ''}`}
                           >
-                            {nurse.name} 
-                            {isOff && '(休)'}
-                            {nurse.isLowPriority && !isOff && <span className="text-[10px] bg-slate-200 text-slate-500 px-1 rounded">優先:低</span>}
+                            {nurse.name} {isOff && '(休)'}
                           </button>
                         );
                       })}
-                      {nurses.length === 0 && <span className="px-4 py-2 text-sm text-slate-400">看護師が登録されていません</span>}
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                       <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Users size={24} /></div>
-                      <div><p className="text-sm text-slate-500 font-medium">訪問件数</p><p className="text-2xl font-bold">{stats.count} <span className="text-base font-normal text-slate-500">件</span></p></div>
+                      <div><p className="text-sm text-slate-500 font-medium">訪問件数</p><p className="text-2xl font-bold">{stats.count} 件</p></div>
                     </div>
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                       <div className="w-12 h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={24} /></div>
-                      <div><p className="text-sm text-slate-500 font-medium">移動合計</p><p className="text-2xl font-bold">{stats.totalTravel} <span className="text-base font-normal text-slate-500">分</span></p></div>
+                      <div><p className="text-sm text-slate-500 font-medium">移動合計</p><p className="text-2xl font-bold">{stats.totalTravel} 分</p></div>
                     </div>
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                       <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600"><AlertTriangle size={24} /></div>
-                      <div><p className="text-sm text-slate-500 font-medium">時間超過・遅刻</p><p className={`text-2xl font-bold ${stats.lateCount > 0 ? 'text-red-500' : 'text-slate-800'}`}>{stats.lateCount} <span className="text-base font-normal text-slate-500">件</span></p></div>
+                      <div><p className="text-sm text-slate-500 font-medium">時間超過・遅刻</p><p className={`text-2xl font-bold ${stats.lateCount > 0 ? 'text-red-500' : 'text-slate-800'}`}>{stats.lateCount} 件</p></div>
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
                       <h2 className="text-lg font-bold flex items-center gap-2 mb-6"><Clock className="text-slate-400" /> スケジュール詳細</h2>
-                      
-                      {!selectedNurse ? (
-                         <div className="text-center py-12 text-slate-500">
-                          <Users size={48} className="mx-auto mb-3 opacity-20" />
-                          <p>担当者が選択されていません。</p>
-                          <p className="text-sm">左メニューの「看護師管理」からスプレッドシートを読み込んでください。</p>
-                        </div>
-                      ) : isSelectedNurseOff ? (
-                         <div className="text-center py-12 text-slate-500">
-                          <AlertTriangle size={48} className="mx-auto mb-3 opacity-20" />
-                          <p>この担当者は{DAYS[selectedDay]}曜日はお休みです。</p>
-                        </div>
-                      ) : schedule.length === 0 ? (
-                        <div className="text-center py-12 text-slate-500">
-                          <MapPin size={48} className="mx-auto mb-3 opacity-20" />
-                          <p>{DAYS[selectedDay]}曜日の訪問はありません。</p>
-                        </div>
-                      ) : (
-                        <div className="relative">
-                          <div className="absolute left-[21px] top-4 bottom-4 w-0.5 bg-slate-200"></div>
-                          <div className="space-y-6">
-                            
-                            <div className="relative flex items-center gap-4 z-10">
-                              <div className="w-11 h-11 rounded-full bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-600 shrink-0"><MapPin size={20} /></div>
-                              <div><p className="font-bold text-slate-800">ステーション出発</p><p className="text-sm text-slate-500">勤務開始 {selectedNurse?.startTime}</p></div>
-                            </div>
-
-                            {schedule.map((item, idx) => (
-                              <div key={item.id} className="relative z-10">
-                                <div className={`ml-16 mb-2 flex items-center gap-2 text-xs font-medium py-1 px-3 rounded-full w-max border ${item.isLate ? 'bg-red-50 text-red-600 border-red-200' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
-                                  <ArrowRight size={12} />
-                                  移動: 
-                                  <input 
-                                    type="number"
-                                    min="0"
-                                    value={item.customTravelTime !== undefined && item.customTravelTime !== null ? item.customTravelTime : item.travelTime}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      updateCustomTravelTime(item.id, val === '' ? null : parseInt(val, 10));
-                                    }}
-                                    className={`w-10 text-center bg-transparent border-b border-slate-300 focus:border-teal-500 outline-none ml-1 ${item.customTravelTime !== undefined && item.customTravelTime !== null ? 'text-teal-600 font-bold' : ''}`}
-                                  /> 分 
-                                  {item.customTravelTime !== undefined && item.customTravelTime !== null && (
-                                    <button onClick={() => updateCustomTravelTime(item.id, null)} className="text-[10px] text-slate-400 hover:text-slate-600 ml-1 underline">自動</button>
-                                  )}
-                                  {item.waitTime > 0 && <span className="ml-2">(待機: {item.waitTime}分)</span>}
-                                </div>
-                                
-                                <div className="flex gap-4 items-start">
-                                  <div className="w-11 h-11 rounded-full text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-sm" style={{ backgroundColor: selectedNurse?.color }}>{idx + 1}</div>
-                                  <div className={`bg-white border-l-4 rounded-r-lg border-y border-r p-4 flex-1 shadow-sm ${item.isLate ? 'border-l-red-500 border-y-red-200 border-r-red-200 bg-red-50/30' : 'border-l-teal-500 border-y-slate-200 border-r-slate-200'}`}>
-                                    <div className="flex justify-between items-start mb-2">
-                                      <h4 className="font-bold text-slate-800 text-lg">{item.userName}</h4>
-                                      <span className="text-sm font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded">{item.duration}分</span>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <span className="w-16 text-slate-500">指定時間:</span>
-                                        <span className="font-bold text-slate-800">{item.startTime}</span>
-                                        {item.originalStartTime && item.originalStartTime !== item.startTime && (
-                                          <span className="text-xs text-orange-600 font-bold ml-2">(元: {item.originalStartTime})</span>
-                                        )}
-                                      </div>
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <span className="w-16 text-slate-500">到着予定:</span>
-                                        <span className={item.isLate ? 'text-red-600 font-bold flex items-center gap-1' : 'text-slate-600'}>
-                                          {item.arrivalTime} {item.isLate && <AlertTriangle size={14} />}
-                                          {item.isLate && <span className="text-xs">遅刻リスクあり</span>}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-
-                            <div className="relative z-10">
-                               <div className="ml-16 mb-2 flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 py-1 px-3 rounded-full w-max border border-slate-100">
-                                  <ArrowRight size={12} />移動: 約 {allSchedules[selectedNurse?.id]?.finalTravelTime} 分
-                                </div>
-                              <div className="flex items-center gap-4">
-                                <div className="w-11 h-11 rounded-full bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-600 shrink-0"><MapPin size={20} /></div>
-                                <div><p className="font-bold text-slate-800">ステーション帰着</p><p className="text-sm text-slate-500">到着予定: {allSchedules[selectedNurse?.id]?.returnTime}</p></div>
-                              </div>
-                            </div>
+                      <div className="relative">
+                        <div className="absolute left-[21px] top-4 bottom-4 w-0.5 bg-slate-200"></div>
+                        <div className="space-y-6">
+                          <div className="relative flex items-center gap-4 z-10">
+                            <div className="w-11 h-11 rounded-full bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-600 shrink-0"><MapPin size={20} /></div>
+                            <div><p className="font-bold text-slate-800">ステーション出発</p><p className="text-sm text-slate-500">勤務開始 {selectedNurse?.startTime}</p></div>
                           </div>
+                          {schedule.map((item, idx) => (
+                            <div key={item.id} className="relative z-10">
+                              <div className={`ml-16 mb-2 flex items-center gap-2 text-xs font-medium py-1 px-3 rounded-full w-max border ${item.isLate ? 'bg-red-50 text-red-600 border-red-200' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                                <ArrowRight size={12} /> 移動: <input type="number" min="0" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value, 10))} className={`w-10 text-center bg-transparent border-b border-slate-300 outline-none ${item.customTravelTime ? 'text-teal-600 font-bold' : ''}`}/> 分 
+                                {item.customTravelTime && <button onClick={() => updateCustomTravelTime(item.id, null)} className="text-[10px] text-slate-400 ml-1 underline">自動</button>}
+                              </div>
+                              <div className="flex gap-4 items-start">
+                                <div className="w-11 h-11 rounded-full text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-sm" style={{ backgroundColor: selectedNurse?.color }}>{idx + 1}</div>
+                                <div className={`bg-white border-l-4 rounded-r-lg border-y border-r p-4 flex-1 shadow-sm ${item.isLate ? 'border-l-red-500 border-y-red-200 border-r-red-200 bg-red-50/30' : 'border-l-teal-500 border-y-slate-200 border-r-slate-200'}`}>
+                                  <div className="flex justify-between items-start mb-2"><h4 className="font-bold text-slate-800 text-lg">{item.userName}</h4><span className="text-sm font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded">{item.duration}分</span></div>
+                                  <div className="flex items-center gap-2 text-sm"><span className="w-16 text-slate-500">指定時間:</span><span className="font-bold text-slate-800">{item.startTime}</span></div>
+                                  <div className="flex items-center gap-2 text-sm"><span className="w-16 text-slate-500">到着予定:</span><span className={item.isLate ? 'text-red-600 font-bold' : 'text-slate-600'}>{item.arrivalTime}</span></div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      )}
+                      </div>
                     </div>
-
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col h-[600px] lg:h-auto">
-                       <h2 className="text-lg font-bold flex items-center gap-2 mb-4"><MapIcon className="text-slate-400" /> ルートマップ ({DAYS[selectedDay]}曜)</h2>
-                        <div className="flex-1 bg-slate-50 rounded-lg border border-slate-200 overflow-hidden relative">
-                          <svg viewBox="-10 -10 120 120" className="w-full h-full">
-                            {[0, 20, 40, 60, 80, 100].map(line => (
-                              <React.Fragment key={`grid-${line}`}>
-                                <line x1={line} y1="0" x2={line} y2="100" stroke="#e2e8f0" strokeWidth="0.5" />
-                                <line x1="0" y1={line} x2="100" y2={line} stroke="#e2e8f0" strokeWidth="0.5" />
-                              </React.Fragment>
-                            ))}
-                            
-                            {visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).map(visit => (
-                              <g key={`unassigned-${visit.id}`}>
-                                <circle cx={visit.location.x} cy={visit.location.y} r="2.5" fill="#cbd5e1" className="animate-pulse"/>
-                                <text x={visit.location.x} y={visit.location.y - 4} fontSize="3" textAnchor="middle" fill="#64748b">{visit.userName}</text>
-                                <text x={visit.location.x} y={visit.location.y + 4} fontSize="2.5" textAnchor="middle" fill="#94a3b8">{visit.startTime}</text>
-                              </g>
-                            ))}
-
-                            {visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId !== null && v.nurseId !== selectedNurseId).map(visit => (
-                              <circle key={`other-${visit.id}`} cx={visit.location.x} cy={visit.location.y} r="1.5" fill="#e2e8f0" />
-                            ))}
-
-                            {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => {
-                              const prev = i === 0 ? selectedNurse.startLocation : schedule[i-1].location;
-                              return (
-                                <line key={`line-${visit.id}`} x1={prev.x} y1={prev.y} x2={visit.location.x} y2={visit.location.y}
-                                  stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.2" strokeDasharray="2 2" className="animate-pulse" />
-                              );
-                            })}
-                            {!isSelectedNurseOff && selectedNurse && schedule.length > 0 && (
-                              <line x1={schedule[schedule.length-1].location.x} y1={schedule[schedule.length-1].location.y}
-                                x2={selectedNurse.startLocation.x} y2={selectedNurse.startLocation.y} stroke={selectedNurse.color} strokeWidth="0.8" strokeDasharray="1 2" opacity="0.5" />
-                            )}
-                            
-                            {!isSelectedNurseOff && selectedNurse && (
-                              <>
-                                <rect x={selectedNurse.startLocation.x - 3} y={selectedNurse.startLocation.y - 3} width="6" height="6" fill={selectedNurse.color} rx="1" />
-                                <text x={selectedNurse.startLocation.x} y={selectedNurse.startLocation.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">ステーション</text>
-                              </>
-                            )}
-
-                            {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => (
-                              <g key={`point-${visit.id}`} className="transition-transform hover:scale-110 cursor-pointer">
-                                <circle cx={visit.location.x} cy={visit.location.y} r="3.5" fill={visit.isLate ? '#fee2e2' : '#fff'} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.5" />
-                                <text x={visit.location.x} y={visit.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{visit.userName}</text>
-                                <text x={visit.location.x} y={visit.location.y + 1.2} fontSize="2.8" fontWeight="bold" textAnchor="middle" fill={visit.isLate ? '#ef4444' : selectedNurse.color}>{i + 1}</text>
-                              </g>
-                            ))}
-                          </svg>
-                        </div>
+                       <h2 className="text-lg font-bold flex items-center gap-2 mb-4"><MapIcon className="text-slate-400" /> ルートマップ</h2>
+                       <div className="flex-1 bg-slate-50 rounded-lg border border-slate-200 overflow-hidden relative">
+                         <svg viewBox="-10 -10 120 120" className="w-full h-full">
+                           {visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).map(visit => (
+                             <circle key={visit.id} cx={visit.location.x} cy={visit.location.y} r="2.5" fill="#cbd5e1" className="animate-pulse"/>
+                           ))}
+                           {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => {
+                             const prev = i === 0 ? selectedNurse.startLocation : schedule[i-1].location;
+                             return <line key={visit.id} x1={prev.x} y1={prev.y} x2={visit.location.x} y2={visit.location.y} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.2" strokeDasharray="2 2" />
+                           })}
+                           {!isSelectedNurseOff && selectedNurse && schedule.map((visit, i) => (
+                             <g key={visit.id}><circle cx={visit.location.x} cy={visit.location.y} r="3.5" fill={visit.isLate ? '#fee2e2' : '#fff'} stroke={visit.isLate ? '#ef4444' : selectedNurse.color} strokeWidth="1.5" /><text x={visit.location.x} y={visit.location.y - 5} fontSize="3.5" fontWeight="bold" textAnchor="middle" fill="#334155">{visit.userName}</text></g>
+                           ))}
+                         </svg>
+                       </div>
                     </div>
                   </div>
                 </div>
               )}
-
-              {/* --- タブ: 利用者スケジュール管理 --- */}
               {activeTab === 'visits' && (
                 <div className="max-w-6xl mx-auto space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <h1 className="text-2xl font-bold text-slate-800">利用者スケジュールの管理</h1>
-                  </div>
-
-                  {/* インポートセクション */}
+                  <h1 className="text-2xl font-bold text-slate-800">利用者スケジュールの管理</h1>
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
                     <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
-                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
-                        <RefreshCw size={20} className="text-blue-600"/>
-                        スプレッドシートからスケジュールを同期
-                      </h2>
-                      <button 
-                        onClick={handleFetchSheet} 
-                        disabled={isLoadingSheet || !sheetUrl}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
-                      >
-                        <RefreshCw size={16} className={isLoadingSheet ? "animate-spin" : ""} />
-                        最新データを再読み込み
-                      </button>
+                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-blue-600"/> 同期設定</h2>
+                      <button onClick={handleFetchSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">最新データを再読み込み</button>
                     </div>
-                    
-                    {/* URL設定のアコーディオン (普段は隠す) */}
                     <div className="border border-slate-200 rounded-lg overflow-hidden">
-                      <button 
-                        type="button" 
-                        onClick={() => setShowUserSheetConfig(!showUserSheetConfig)}
-                        className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Settings2 size={16} className="text-slate-500" />
-                          スプレッドシートURLの設定
-                        </div>
-                        <span className="text-xs text-slate-400">{showUserSheetConfig ? '閉じる' : '設定を変更する'}</span>
-                      </button>
-                      
-                      {showUserSheetConfig && (
-                        <div className="p-4 bg-white border-t border-slate-200">
-                          <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
-                            <LinkIcon size={16} className="text-slate-500"/>
-                            「ウェブに公開」したCSVのURL
-                          </label>
-                          <input 
-                            type="text" 
-                            placeholder="URLを貼り付け" 
-                            value={sheetUrl}
-                            onChange={handleSheetUrlChange}
-                            className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                          <p className="text-xs text-slate-500 mt-2">
-                            ※一度設定するとブラウザに保存され、次回以降は「最新データを再読み込み」ボタンのみで更新できます。
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <p className="text-xs text-red-500 mt-3 font-medium px-1">
-                      ※「再読み込み」を行うと、現在アプリ内に表示されている利用者スケジュールはスプレッドシートの内容で【完全に上書き】されます。
-                    </p>
-                  </div>
-
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center gap-2 text-sm font-bold text-slate-700">
-                       {DAYS[selectedDay]}曜日の登録リスト
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-white text-slate-500 text-sm border-b border-slate-200">
-                            <th className="p-4 font-medium">指定時間</th>
-                            <th className="p-4 font-medium">利用者名</th>
-                            <th className="p-4 font-medium">所要時間</th>
-                            <th className="p-4 font-medium">担当看護師</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {visits.filter(v => v.dayOfWeek === selectedDay).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime)).map(v => (
-                            <tr key={v.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-4 font-bold text-slate-700">
-                                {v.startTime}
-                                {v.originalStartTime && v.originalStartTime !== v.startTime && (
-                                  <div className="text-xs text-orange-600">(元: {v.originalStartTime})</div>
-                                )}
-                              </td>
-                              <td className="p-4 font-medium text-slate-800">{v.userName}</td>
-                              <td className="p-4 text-slate-600">{v.duration} 分</td>
-                              <td className="p-4">
-                                <select
-                                  value={v.nurseId || 'unassigned'}
-                                  onChange={(e) => updateVisitNurse(v.id, e.target.value)}
-                                  className={`border rounded-md p-1.5 text-sm outline-none ${v.nurseId ? 'border-slate-300 bg-white' : 'border-amber-300 bg-amber-50 text-amber-800 font-medium'}`}
-                                >
-                                  <option value="unassigned">未割り当て</option>
-                                  {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                                </select>
-                              </td>
-                            </tr>
-                          ))}
-                          {visits.filter(v => v.dayOfWeek === selectedDay).length === 0 && (
-                            <tr><td colSpan="4" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
-                          )}
-                        </tbody>
-                      </table>
+                      <button type="button" onClick={() => setShowUserSheetConfig(!showUserSheetConfig)} className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100"><span>URL設定</span><span className="text-xs text-slate-400">変更</span></button>
+                      {showUserSheetConfig && <div className="p-4 bg-white border-t border-slate-200"><input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full border border-slate-300 rounded p-2 text-sm"/></div>}
                     </div>
                   </div>
                 </div>
               )}
-
-              {/* --- タブ: 看護師管理 --- */}
               {activeTab === 'nurses' && (
-                 <div className="max-w-6xl mx-auto space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <h1 className="text-2xl font-bold text-slate-800">看護師の管理</h1>
-                  </div>
-
-                  {/* インポートセクション */}
+                <div className="max-w-6xl mx-auto space-y-6">
+                  <h1 className="text-2xl font-bold text-slate-800">看護師の管理</h1>
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
                     <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
-                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
-                        <RefreshCw size={20} className="text-blue-600"/>
-                        スプレッドシートから名簿を同期
-                      </h2>
-                      <button 
-                        onClick={handleFetchNurseSheet} 
-                        disabled={isLoadingNurseSheet || !nurseSheetUrl}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
-                      >
-                        <RefreshCw size={16} className={isLoadingNurseSheet ? "animate-spin" : ""} />
-                        最新データを再読み込み
-                      </button>
-                    </div>
-                    
-                    {/* URL設定のアコーディオン (普段は隠す) */}
-                    <div className="border border-slate-200 rounded-lg overflow-hidden">
-                      <button 
-                        type="button" 
-                        onClick={() => setShowNurseSheetConfig(!showNurseSheetConfig)}
-                        className="w-full bg-slate-50 p-3 flex justify-between items-center text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Settings2 size={16} className="text-slate-500" />
-                          スプレッドシートURLの設定
-                        </div>
-                        <span className="text-xs text-slate-400">{showNurseSheetConfig ? '閉じる' : '設定を変更する'}</span>
-                      </button>
-                      
-                      {showNurseSheetConfig && (
-                        <div className="p-4 bg-white border-t border-slate-200">
-                          <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
-                            <LinkIcon size={16} className="text-slate-500"/>
-                            「ウェブに公開」したCSVのURL
-                          </label>
-                          <input 
-                            type="text" 
-                            placeholder="URLを貼り付け" 
-                            value={nurseSheetUrl}
-                            onChange={handleNurseSheetUrlChange}
-                            className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                          <p className="text-xs text-slate-500 mt-2">
-                            スプレッドシートの入力ルール（列の順番）: 氏名, 勤務開始時間, 休みの曜日 (例: 日・土), <span className="font-bold text-slate-700">優先度 (例: 低)</span>
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <p className="text-xs text-red-500 mt-3 font-medium px-1">
-                      ※「再読み込み」を行うと、現在アプリ内に表示されている看護師リストはスプレッドシートの内容で【完全に上書き】されます。
-                    </p>
-                  </div>
-
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center gap-2 text-sm font-bold text-slate-700">
-                       現在の担当看護師リスト
-                    </div>
-                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-white text-slate-500 text-sm border-b border-slate-200">
-                            <th className="p-4 font-medium">カラー</th>
-                            <th className="p-4 font-medium">氏名</th>
-                            <th className="p-4 font-medium">勤務開始時間</th>
-                            <th className="p-4 font-medium">休みの曜日</th>
-                            <th className="p-4 font-medium">優先度</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {nurses.map(nurse => (
-                            <tr key={nurse.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-4">
-                                <div className="w-6 h-6 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
-                              </td>
-                              <td className="p-4 font-bold text-slate-700">{nurse.name}</td>
-                              <td className="p-4 text-slate-600">{nurse.startTime}</td>
-                              <td className="p-4 text-slate-600">
-                                {nurse.offDays && nurse.offDays.length > 0 ? nurse.offDays.map(d => DAYS[d]).join('・') : 'なし'}
-                              </td>
-                              <td className="p-4 text-slate-600">
-                                {nurse.isLowPriority ? <span className="bg-slate-100 text-slate-500 px-2 py-1 rounded text-xs font-bold">低</span> : '通常'}
-                              </td>
-                            </tr>
-                          ))}
-                          {nurses.length === 0 && (
-                            <tr><td colSpan="5" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
-                          )}
-                        </tbody>
-                      </table>
+                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><RefreshCw size={20} className="text-blue-600"/> 同期設定</h2>
+                      <button onClick={handleFetchNurseSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">名簿を再読み込み</button>
                     </div>
                   </div>
-                 </div>
+                </div>
               )}
             </div>
           </main>
-
-          {showToast && (
-            <div className="fixed bottom-6 right-6 bg-slate-800 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce z-50 border border-slate-700">
-              <CheckCircle2 size={20} className="text-emerald-400" />
-              <span className="font-medium">{toastMessage}</span>
-            </div>
-          )}
+          {showToast && <div className="fixed bottom-6 right-6 bg-slate-800 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce z-50 border border-slate-700"><CheckCircle2 size={20} className="text-emerald-400" /><span>{toastMessage}</span></div>}
         </div>
       );
     }
-
-    // Reactを起動して画面に表示する
     const root = createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
