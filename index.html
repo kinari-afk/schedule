@@ -56,6 +56,18 @@
       return name.replace(/[\s　]/g, '').replace(/様$/, '');
     };
 
+    // 名前から固定の座標を生成する関数 (同じ人なら必ず同じ家・座標になる)
+    const getHashLoc = (str) => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      return { 
+        x: Math.abs(hash % 80) + 10, 
+        y: Math.abs((hash >> 3) % 80) + 10 
+      };
+    };
+
     const DAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
     // 色のパレット (看護師追加時に自動割り当て)
@@ -182,7 +194,8 @@
 
           sortedVisits.forEach((visit) => {
             const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
-            const travelTime = Math.round(dist * 1.5);
+            // 距離に対して0.3を掛け、最低でも5分はかかるようにして現実的な車移動の時間に近づける
+            const travelTime = Math.max(5, Math.round(dist * 0.3));
             const targetStart = parseTime(visit.startTime);
             const arrivalTime = currentTime + travelTime;
             const isLate = arrivalTime > targetStart;
@@ -208,7 +221,7 @@
           let finalTravelTime = 0;
           if (calcVisits.length > 0) {
             const finalDist = Math.sqrt(Math.pow(currentLoc.x - nurse.startLocation.x, 2) + Math.pow(currentLoc.y - nurse.startLocation.y, 2));
-            finalTravelTime = Math.round(finalDist * 1.5);
+            finalTravelTime = Math.max(5, Math.round(finalDist * 0.3));
             returnTime = formatTime(currentTime + finalTravelTime);
           }
 
@@ -274,7 +287,7 @@
               if (nurseDef && nurseDef.isLowPriority) return; // 優先度低はスキップ
 
               const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-              const travel = Math.round(dist * 1.5);
+              const travel = Math.max(5, Math.round(dist * 0.3));
               if (ns.time + travel <= targetStart) {
                 if (travel < minTravel) {
                   minTravel = travel;
@@ -291,7 +304,7 @@
                 if (nurseDef && !nurseDef.isLowPriority) return; // 優先度低の人だけを対象にする
 
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const travel = Math.round(dist * 1.5);
+                const travel = Math.max(5, Math.round(dist * 0.3));
                 if (ns.time + travel <= targetStart) {
                   if (travel < minTravel) {
                     minTravel = travel;
@@ -311,7 +324,7 @@
                 const isLow = nurseDef ? !!nurseDef.isLowPriority : false;
 
                 const dist = Math.sqrt(Math.pow(visit.location.x - ns.loc.x, 2) + Math.pow(visit.location.y - ns.loc.y, 2));
-                const arrival = ns.time + Math.round(dist * 1.5);
+                const arrival = ns.time + Math.max(5, Math.round(dist * 0.3));
 
                 // より早く着く、または同じ時間だけど優先度が通常の人を優先する
                 if (arrival < earliest || (arrival === earliest && isBestNurseLowPriority && !isLow)) {
@@ -326,7 +339,7 @@
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
               newVisits[vIdx].nurseId = bestNurse.id;
               const dist = Math.sqrt(Math.pow(visit.location.x - bestNurse.loc.x, 2) + Math.pow(visit.location.y - bestNurse.loc.y, 2));
-              bestNurse.time = Math.max(bestNurse.time + Math.round(dist * 1.5), targetStart) + visit.duration;
+              bestNurse.time = Math.max(bestNurse.time + Math.max(5, Math.round(dist * 0.3)), targetStart) + visit.duration;
               bestNurse.loc = visit.location;
             }
           });
@@ -383,11 +396,11 @@
               const newVisit = {
                 id: Date.now() + i,
                 userName: name.includes('様') ? name : `${name} 様`,
-                location: { x: Math.floor(Math.random() * 80) + 10, y: Math.floor(Math.random() * 80) + 10 },
+                location: getHashLoc(name), // 名前から固定の座標を割り当てる
                 duration: duration,
                 dayOfWeek: dayOfWeek,
                 startTime: startTime,
-                originalStartTime: startTime, // 変更判定用に追加
+                originalStartTime: startTime,
                 nurseId: null
               };
 
@@ -473,7 +486,7 @@
               const newNurse = {
                 id: Date.now() + i,
                 name: name,
-                startLocation: { x: 50, y: 50 }, // 仮座標
+                startLocation: { x: 50, y: 50 }, // ステーションの座標
                 color: colors[imported.length % colors.length],
                 startTime: startTime,
                 offDays: offDays, // 休みの配列 [0, 6] など
