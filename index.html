@@ -58,17 +58,8 @@
     // スプレッドシート管理に限定するため、初期の看護師データは空にする
     const initialNurses = [];
 
-    // 看護師がいないため、初期の訪問予定もすべて未割り当て(nurseId: null)に変更
-    const initialVisits = [
-      { id: 101, patientName: '田中 太郎 様', location: { x: 30, y: 40 }, duration: 40, dayOfWeek: 1, startTime: '09:00', nurseId: null },
-      { id: 102, patientName: '山田 花子 様', location: { x: 70, y: 60 }, duration: 30, dayOfWeek: 1, startTime: '10:30', nurseId: null },
-      { id: 103, patientName: '伊藤 次郎 様', location: { x: 85, y: 30 }, duration: 60, dayOfWeek: 1, startTime: '13:00', nurseId: null },
-      { id: 104, patientName: '中村 健 様', location: { x: 55, y: 15 }, duration: 45, dayOfWeek: 1, startTime: '15:00', nurseId: null },
-      { id: 105, patientName: '渡辺 美咲 様', location: { x: 15, y: 20 }, duration: 60, dayOfWeek: 1, startTime: '09:30', nurseId: null },
-      { id: 106, patientName: '渡辺 美咲 様', location: { x: 15, y: 20 }, duration: 30, dayOfWeek: 1, startTime: '16:00', nurseId: null },
-      { id: 201, patientName: '小林 翔太 様', location: { x: 35, y: 10 }, duration: 30, dayOfWeek: 2, startTime: '10:00', nurseId: null },
-      { id: 202, patientName: '吉田 さくら 様', location: { x: 10, y: 60 }, duration: 40, dayOfWeek: 2, startTime: '11:00', nurseId: null },
-    ];
+    // スプレッドシート管理に限定するため、初期の訪問予定データも空にする
+    const initialVisits = [];
 
     function App() {
       const [activeTab, setActiveTab] = useState('schedule');
@@ -82,15 +73,26 @@
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       
-      const fileInputRef = useRef(null);
-
-      // 患者用スプレッドシート連携用の状態
-      const [sheetUrl, setSheetUrl] = useState("");
+      // 患者用スプレッドシート連携用の状態 (自動保存されたURLを読み込む)
+      const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem("careRoute_patientSheetUrl") || "");
       const [isLoadingSheet, setIsLoadingSheet] = useState(false);
 
-      // 看護師用スプレッドシート連携用の状態
-      const [nurseSheetUrl, setNurseSheetUrl] = useState("");
+      // 看護師用スプレッドシート連携用の状態 (自動保存されたURLを読み込む)
+      const [nurseSheetUrl, setNurseSheetUrl] = useState(() => localStorage.getItem("careRoute_nurseSheetUrl") || "");
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
+
+      // URLが変更されたらローカルストレージに自動保存する
+      const handleSheetUrlChange = (e) => {
+        const url = e.target.value;
+        setSheetUrl(url);
+        localStorage.setItem("careRoute_patientSheetUrl", url);
+      };
+
+      const handleNurseSheetUrlChange = (e) => {
+        const url = e.target.value;
+        setNurseSheetUrl(url);
+        localStorage.setItem("careRoute_nurseSheetUrl", url);
+      };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
 
@@ -222,31 +224,13 @@
         }, 800);
       };
 
-      const handleAddVisit = (e) => {
-        e.preventDefault();
-        const formData = new FormData(e.target);
-        const assignedNurseId = formData.get('nurseId') === 'unassigned' ? null : parseInt(formData.get('nurseId'));
-        const newVisit = {
-          id: Date.now(),
-          patientName: formData.get('patientName'),
-          location: { x: parseInt(formData.get('x')), y: parseInt(formData.get('y')) },
-          duration: parseInt(formData.get('duration')),
-          dayOfWeek: parseInt(formData.get('dayOfWeek')),
-          startTime: formData.get('startTime'),
-          nurseId: assignedNurseId
-        };
-        setVisits([...visits, newVisit]);
-        e.target.reset();
-      };
-
-      const handleDeleteVisit = (id) => setVisits(visits.filter(v => v.id !== id));
       const updateVisitNurse = (visitId, newNurseId) => {
         const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
         setVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
       };
 
 
-      // --- Googleスプレッドシートから患者インポート ---
+      // --- Googleスプレッドシートから患者インポート (完全上書き仕様) ---
       const handleFetchSheet = async () => {
         if (!sheetUrl) {
           setToastMessage("スプレッドシートのURLを入力してください");
@@ -264,7 +248,6 @@
           if (lines.length < 2) throw new Error('データがありません');
 
           const imported = [];
-          let skippedCount = 0;
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
 
           for (let i = 1; i < lines.length; i++) {
@@ -292,28 +275,25 @@
                 nurseId: null
               };
 
-              const isDuplicate = visits.some(v => 
-                normalizeName(v.patientName) === normalizeName(newVisit.patientName) &&
-                v.dayOfWeek === newVisit.dayOfWeek &&
-                v.startTime === newVisit.startTime
-              ) || imported.some(v => 
+              // ファイル内での重複はスキップ
+              const isDuplicate = imported.some(v => 
                 normalizeName(v.patientName) === normalizeName(newVisit.patientName) &&
                 v.dayOfWeek === newVisit.dayOfWeek &&
                 v.startTime === newVisit.startTime
               );
 
-              if (isDuplicate) {
-                skippedCount++;
-              } else {
+              if (!isDuplicate) {
                 imported.push(newVisit);
               }
             }
           }
-          setVisits(prev => [...prev, ...imported]);
-          setToastMessage(skippedCount > 0 ? `${imported.length}件追加 (重複 ${skippedCount}件スキップ)` : `${imported.length}件のスケジュールを取得しました`);
+          
+          // リストを完全に上書き
+          setVisits(imported);
+          setToastMessage(`スプレッドシートから ${imported.length}件のスケジュールを読み込み、更新しました`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 4000);
-          setSheetUrl("");
+          // 読み込み後もURLを消さないように削除
         } catch (error) {
           console.error("Sheet fetch error:", error);
           setToastMessage("読み込みに失敗しました。URLや公開設定（CSV形式）を確認してください。");
@@ -391,7 +371,7 @@
           setToastMessage(`スプレッドシートから ${imported.length}名の看護師リストを読み込み、更新しました`);
           setShowToast(true);
           setTimeout(() => setShowToast(false), 4000);
-          setNurseSheetUrl("");
+          // 読み込み後もURLを消さないように削除
         } catch (error) {
           console.error("Sheet fetch error:", error);
           setToastMessage("読み込みに失敗しました。URLや公開設定を確認してください。");
@@ -400,68 +380,6 @@
         } finally {
           setIsLoadingNurseSheet(false);
         }
-      };
-
-      // --- ローカルCSVインポート (患者用) ---
-      const handleFileUpload = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const lines = event.target.result.split(/\r\n|\n/);
-          if (lines.length < 2) return;
-
-          const imported = [];
-          let skippedCount = 0;
-          const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
-
-          for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            const parts = line.split(',');
-            
-            if (parts.length > 0 && parts[0].trim()) {
-              const name = parts[0].trim();
-              const dayStr = parts.length > 1 ? parts[1].trim() : '';
-              const dayOfWeek = dayMap[dayStr] !== undefined ? dayMap[dayStr] : 1;
-              let startTime = parts.length > 2 && parts[2].trim() ? parts[2].trim() : '09:00';
-              if (startTime.length === 4) startTime = '0' + startTime;
-              const duration = parts.length > 3 && !isNaN(parseInt(parts[3])) ? parseInt(parts[3]) : 30;
-
-              const newVisit = {
-                id: Date.now() + i,
-                patientName: name.includes('様') ? name : `${name} 様`,
-                location: { x: Math.floor(Math.random() * 80) + 10, y: Math.floor(Math.random() * 80) + 10 },
-                duration: duration,
-                dayOfWeek: dayOfWeek,
-                startTime: startTime,
-                nurseId: null
-              };
-
-              const isDuplicate = visits.some(v => 
-                normalizeName(v.patientName) === normalizeName(newVisit.patientName) &&
-                v.dayOfWeek === newVisit.dayOfWeek &&
-                v.startTime === newVisit.startTime
-              ) || imported.some(v => 
-                normalizeName(v.patientName) === normalizeName(newVisit.patientName) &&
-                v.dayOfWeek === newVisit.dayOfWeek &&
-                v.startTime === newVisit.startTime
-              );
-
-              if (isDuplicate) {
-                skippedCount++;
-              } else {
-                imported.push(newVisit);
-              }
-            }
-          }
-          setVisits(prev => [...prev, ...imported]);
-          setToastMessage(skippedCount > 0 ? `${imported.length}件追加 (重複 ${skippedCount}件スキップ)` : `${imported.length}件のスケジュールをインポートしました`);
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 4000);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-        };
-        reader.readAsText(file); 
       };
 
       const unassignedCount = visits.filter(v => v.dayOfWeek === selectedDay && v.nurseId === null).length;
@@ -700,80 +618,36 @@
 
                   {/* インポートセクション */}
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-                    <h2 className="text-base font-bold mb-3 flex items-center gap-2 text-slate-700">
-                      一括インポート (患者リスト)
-                    </h2>
-                    <div className="flex flex-col md:flex-row gap-6 items-start md:items-center">
-                      <div className="flex-1 w-full bg-slate-50 p-4 rounded-lg border border-slate-200">
-                        <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
-                          <LinkIcon size={16} className="text-blue-500"/>
-                          スプレッドシートから取得 (推奨)
-                        </label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="text" 
-                            placeholder="「ウェブに公開」したCSVのURLを貼り付け" 
-                            value={sheetUrl}
-                            onChange={(e) => setSheetUrl(e.target.value)}
-                            className="flex-1 border border-slate-300 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                          <button 
-                            onClick={handleFetchSheet} 
-                            disabled={isLoadingSheet || !sheetUrl}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
-                          >
-                            {isLoadingSheet ? <RefreshCw size={16} className="animate-spin" /> : "取得する"}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="hidden md:block w-px h-16 bg-slate-200"></div>
-
-                      <div className="flex-none">
-                        <label className="block text-sm font-medium text-slate-700 mb-2">手元のCSVファイルをアップロード</label>
-                        <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-                        <button onClick={() => fileInputRef.current?.click()} className="bg-white border border-slate-300 hover:border-teal-500 hover:text-teal-600 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm">
-                          <Upload size={16} /> PCからファイルを選択
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-                    <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus size={20} className="text-teal-600"/>個別スケジュール追加</h2>
-                    <form onSubmit={handleAddVisit} className="flex flex-wrap gap-4 items-end">
-                      <div className="flex-1 min-w-[200px]">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">患者名</label>
-                        <input required name="patientName" type="text" placeholder="例: 佐藤 健 様" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <div className="w-24">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">曜日</label>
-                        <select name="dayOfWeek" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-teal-500 bg-white">
-                          {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                        </select>
-                      </div>
-                      <div className="w-32">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">開始時間</label>
-                        <input required name="startTime" type="time" defaultValue="09:00" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <div className="w-24">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">時間(分)</label>
-                        <input required name="duration" type="number" min="10" step="5" defaultValue="30" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <input type="hidden" name="x" value={Math.floor(Math.random() * 80) + 10} />
-                      <input type="hidden" name="y" value={Math.floor(Math.random() * 80) + 10} />
-                      
-                      <div className="w-48">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">固定担当者 (任意)</label>
-                        <select name="nurseId" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-teal-500 bg-white">
-                          <option value="unassigned">未割り当て(自動編成)</option>
-                          {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                        </select>
-                      </div>
-                      <button type="submit" className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors">
-                        <Plus size={18} /> 追加
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
+                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
+                        <RefreshCw size={20} className="text-blue-600"/>
+                        スプレッドシートからスケジュールを同期
+                      </h2>
+                      <button 
+                        onClick={handleFetchSheet} 
+                        disabled={isLoadingSheet || !sheetUrl}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+                      >
+                        <RefreshCw size={16} className={isLoadingSheet ? "animate-spin" : ""} />
+                        最新データを再読み込み
                       </button>
-                    </form>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                      <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                        <LinkIcon size={16} className="text-slate-500"/>
+                        「ウェブに公開」したCSVのURL (自動保存されます)
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder="URLを貼り付け" 
+                        value={sheetUrl}
+                        onChange={handleSheetUrlChange}
+                        className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <p className="text-xs text-red-500 mt-3 font-medium">
+                        ※「再読み込み」を行うと、現在アプリ内に表示されている患者スケジュールはスプレッドシートの内容で【完全に上書き】されます。
+                      </p>
+                    </div>
                   </div>
 
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -788,7 +662,6 @@
                             <th className="p-4 font-medium">患者名</th>
                             <th className="p-4 font-medium">所要時間</th>
                             <th className="p-4 font-medium">担当看護師</th>
-                            <th className="p-4 font-medium text-right">操作</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -807,13 +680,10 @@
                                   {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
                                 </select>
                               </td>
-                              <td className="p-4 text-right">
-                                <button onClick={() => handleDeleteVisit(v.id)} className="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors"><Trash2 size={18} /></button>
-                              </td>
                             </tr>
                           ))}
                           {visits.filter(v => v.dayOfWeek === selectedDay).length === 0 && (
-                            <tr><td colSpan="5" className="p-8 text-center text-slate-500">この曜日の予定はありません。</td></tr>
+                            <tr><td colSpan="4" className="p-8 text-center text-slate-500">スプレッドシートから名簿を読み込んでください。</td></tr>
                           )}
                         </tbody>
                       </table>
@@ -831,38 +701,38 @@
 
                   {/* インポートセクション */}
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-                    <h2 className="text-base font-bold mb-3 flex items-center gap-2 text-slate-700">
-                      スプレッドシートから名簿を同期
-                    </h2>
-                    <div className="flex flex-col md:flex-row gap-6 items-start md:items-center">
-                      <div className="flex-1 w-full bg-slate-50 p-4 rounded-lg border border-slate-200">
-                        <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
-                          <LinkIcon size={16} className="text-blue-500"/>
-                          「ウェブに公開」したCSVのURL
-                        </label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="text" 
-                            placeholder="URLを貼り付け" 
-                            value={nurseSheetUrl}
-                            onChange={(e) => setNurseSheetUrl(e.target.value)}
-                            className="flex-1 border border-slate-300 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                          <button 
-                            onClick={handleFetchNurseSheet} 
-                            disabled={isLoadingNurseSheet || !nurseSheetUrl}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
-                          >
-                            {isLoadingNurseSheet ? <RefreshCw size={16} className="animate-spin" /> : "リストを更新"}
-                          </button>
-                        </div>
-                        <p className="text-xs text-red-500 mt-2 font-medium">
-                          ※この操作を行うと、現在アプリ内に表示されている看護師リストは、スプレッドシートの内容で【完全に上書き】されます。
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          フォーマット: 氏名, 勤務開始時間, (住所等)
-                        </p>
-                      </div>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
+                      <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
+                        <RefreshCw size={20} className="text-blue-600"/>
+                        スプレッドシートから名簿を同期
+                      </h2>
+                      <button 
+                        onClick={handleFetchNurseSheet} 
+                        disabled={isLoadingNurseSheet || !nurseSheetUrl}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+                      >
+                        <RefreshCw size={16} className={isLoadingNurseSheet ? "animate-spin" : ""} />
+                        最新データを再読み込み
+                      </button>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                      <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                        <LinkIcon size={16} className="text-slate-500"/>
+                        「ウェブに公開」したCSVのURL (自動保存されます)
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder="URLを貼り付け" 
+                        value={nurseSheetUrl}
+                        onChange={handleNurseSheetUrlChange}
+                        className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <p className="text-xs text-red-500 mt-3 font-medium">
+                        ※「再読み込み」を行うと、現在アプリ内に表示されている看護師リストはスプレッドシートの内容で【完全に上書き】されます。
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        フォーマット: 氏名, 勤務開始時間, (住所等)
+                      </p>
                     </div>
                   </div>
 
