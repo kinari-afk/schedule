@@ -352,18 +352,28 @@
         const schedules = {};
         nurses.forEach(nurse => {
           const isOff = isNurseOff(nurse, selectedDate);
-          if (isOff) { schedules[nurse.id] = { isOff: true, visits: [] }; return; }
+          if (isOff) { schedules[nurse.id] = { isOff: true, visits: [], calculatedStartTime: nurse.startTime }; return; }
           
           const assigned = visits.filter(v => v.nurseId === nurse.id && v.date === selectedDate);
           const sorted = [...assigned].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
           
           let currentTime = parseTime(nurse.startTime);
+          let calculatedStartTime = currentTime;
           let calcVisits = [];
           let currentLoc = nurse.startLocation;
           
-          sorted.forEach((visit) => {
+          sorted.forEach((visit, idx) => {
             const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
             const travelTime = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+            
+            if (idx === 0) {
+              const targetStart = parseTime(visit.startTime);
+              if (targetStart - travelTime > currentTime) {
+                currentTime = targetStart - travelTime;
+                calculatedStartTime = currentTime;
+              }
+            }
+
             const arrivalTime = currentTime + travelTime;
             const actualStart = Math.max(arrivalTime, parseTime(visit.startTime));
             
@@ -384,8 +394,10 @@
           if (calcVisits.length > 0) {
             finalTravelTime = baseTravelTime + Math.round(Math.sqrt(Math.pow(currentLoc.x - nurse.startLocation.x, 2) + Math.pow(currentLoc.y - nurse.startLocation.y, 2)) * 0.05);
             returnTime = formatTime(currentTime + finalTravelTime);
+          } else {
+            returnTime = nurse.startTime;
           }
-          schedules[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime };
+          schedules[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime, calculatedStartTime: formatTime(calculatedStartTime) };
         });
         return schedules;
       }, [nurses, visits, selectedDate, baseTravelTime]);
@@ -1085,7 +1097,7 @@
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-44 md:w-64'}`} onDragOver={(e) => !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
                                   const top = getTop(parseTime(item.actualStartTime)), h = item.duration * PIXELS_PER_MINUTE;
-                                  let prevDep = idx === 0 ? parseTime(nurse.startTime) : parseTime(assigned[idx-1].departureTime);
+                                  let prevDep = idx === 0 ? parseTime(sch.calculatedStartTime) : parseTime(assigned[idx-1].departureTime);
                                   const arrival = parseTime(item.arrivalTime), travelH = (arrival - prevDep) * PIXELS_PER_MINUTE;
                                   return (
                                     <React.Fragment key={item.id}>
@@ -1172,7 +1184,7 @@
                             <div className="flex flex-col items-center w-16 shrink-0 relative">
                               <div className="w-12 h-12 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg z-10"><MapPin size={20}/></div>
                               <div className="text-[10px] font-black text-slate-400 mt-2">出発</div>
-                              <div className="text-sm font-black text-slate-800">{selectedNurse.startTime}</div>
+                              <div className="text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
                             </div>
 
                             {allSchedules[selectedNurse.id]?.visits.map((item, idx) => (
