@@ -396,7 +396,66 @@
         return { totalTravel: tt, totalVisit: tv, count: sch.length, lateCount: lc };
       }, [allSchedules, selectedNurse]);
 
-      // 未割り当てのカードを自動編成から除外/含めるを切り替える
+      // --- 未割り当てのカードの重なりを計算する処理 ---
+      const unassignedVisitsWithLayout = useMemo(() => {
+        const filtered = visits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+        
+        const groups = [];
+        let currentGroup = [];
+        let groupEnd = 0;
+        
+        // 1. 時間的に重なるものを同じグループにまとめる
+        filtered.forEach(visit => {
+          const start = parseTime(visit.startTime);
+          const end = start + Math.max(visit.duration, 24); // 最小高さ48px(24分相当)を考慮
+          
+          if (currentGroup.length === 0) {
+            currentGroup.push(visit);
+            groupEnd = end;
+          } else {
+            if (start < groupEnd) {
+              currentGroup.push(visit);
+              groupEnd = Math.max(groupEnd, end);
+            } else {
+              groups.push(currentGroup);
+              currentGroup = [visit];
+              groupEnd = end;
+            }
+          }
+        });
+        if (currentGroup.length > 0) groups.push(currentGroup);
+        
+        const layouted = [];
+        // 2. グループ内で列(カラム)を割り当てる
+        groups.forEach(group => {
+          const cols = [];
+          group.forEach(visit => {
+            const start = parseTime(visit.startTime);
+            let placed = false;
+            for(let i = 0; i < cols.length; i++){
+               const lastInCol = cols[i][cols[i].length - 1];
+               const lastEnd = parseTime(lastInCol.startTime) + Math.max(lastInCol.duration, 24);
+               if (lastEnd <= start) {
+                 cols[i].push(visit);
+                 visit._col = i;
+                 placed = true;
+                 break;
+               }
+            }
+            if(!placed){
+              visit._col = cols.length;
+              cols.push([visit]);
+            }
+          });
+          
+          group.forEach(visit => {
+            layouted.push(visit);
+          });
+        });
+        
+        return layouted;
+      }, [visits, selectedDate]);
+
       const handleToggleExclude = (visitId) => {
         handleSetVisits(prev => prev.map(v => 
           v.id === visitId ? { ...v, isExcludedFromAutoAssign: !v.isExcludedFromAutoAssign } : v
@@ -410,7 +469,6 @@
         
         setTimeout(() => {
           const newVisits = [...visits];
-          // isExcludedFromAutoAssign が true のものは自動編成対象から外す
           const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
           
           const states = available.map(n => {
@@ -427,7 +485,6 @@
             const requiresFemale = visit.requiresFemaleNurse;
             const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
             
-            // 優先担当者1, 2の順に探す (出勤していれば強制割り当て)
             for (const prefName of preferredNurseNames) {
                 const prefNurseObj = available.find(n => n.name === prefName || n.name.includes(prefName) || prefName.includes(n.name));
                 if (prefNurseObj) {
@@ -439,7 +496,6 @@
                 }
             }
             
-            // 優先担当者が出勤していない場合、または未指定の場合のみ、他から最適な人を探す
             if (!best) {
               states.forEach(s => {
                 const nDef = available.find(n => n.id === s.id);
@@ -514,7 +570,7 @@
               nurseId: null,
               startTime: v.originalStartTime || v.startTime,
               customTravelTime: null,
-              isExcludedFromAutoAssign: false // リセット時は除外フラグも元に戻す
+              isExcludedFromAutoAssign: false 
             };
           }
           return v;
@@ -531,7 +587,6 @@
         
         const targetVisit = visits.find(v => v.id === visitId);
         
-        // ロックされているものはドラッグ＆ドロップでも移動できないようにする
         if (targetVisit && targetVisit.isExcludedFromAutoAssign) {
             return;
         }
@@ -593,7 +648,6 @@
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
             if (p[0]?.trim()) {
-              // 新しいCSVフォーマット: 氏名[0], 曜日/日付[1], 開始時間[2], 所要時間[3], 限定[4], 優先担当者1[5], 優先担当者2[6], 住所[7]
               const nameStr = p[0].trim();
               const dateOrDay = p[1]?.trim() || '';
               let st = p[2]?.trim() || '09:00'; if (st.length === 4) st = '0' + st;
@@ -659,7 +713,7 @@
                 nurseId: newVisits[existingIndex].nurseId, 
                 startTime: newVisits[existingIndex].startTime, 
                 customTravelTime: newVisits[existingIndex].customTravelTime,
-                isExcludedFromAutoAssign: newVisits[existingIndex].isExcludedFromAutoAssign // ロック状態を維持
+                isExcludedFromAutoAssign: newVisits[existingIndex].isExcludedFromAutoAssign 
               };
               updatedCount++;
             } else {
@@ -687,7 +741,6 @@
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
             if (p[0]?.trim()) {
-              // CSVフォーマット: 氏名[0], 勤務開始時間[1], 休み曜日[2], 優先度[3], 性別[4], 特定休日[5], 出発地[6]
               const nameStr = p[0].trim();
               let st = p[1]?.trim() || '08:30'; if (st.length === 4) st = '0' + st;
               
@@ -926,8 +979,12 @@
                             ))}
                           </div>
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
-                             {visits.filter(v => v.date === selectedDate && v.nurseId === null).map(v => {
+                             {unassignedVisitsWithLayout.map(v => {
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
+                               const leftOffset = v._col * 20; 
+                               const leftStyle = `calc(8px + ${leftOffset}px)`;
+                               const widthStyle = `calc(100% - ${16 + leftOffset}px)`;
+                               
                                return (
                                  <div key={v.id} draggable={!v.isExcludedFromAutoAssign} onDragStart={(e) => { 
                                      if(v.isExcludedFromAutoAssign) { e.preventDefault(); return; }
@@ -935,8 +992,8 @@
                                      const rect = e.currentTarget.getBoundingClientRect(); 
                                      e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
                                    }} 
-                                   className={`absolute left-2 right-2 border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse || (v.preferredNurseNames && v.preferredNurseNames.length > 0)) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'}`} 
-                                   style={{ top: `${top}px`, height: `${Math.max(height, 48)}px` }}>
+                                   className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col hover:z-50 ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'}`} 
+                                   style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
                                         <button 
@@ -1071,7 +1128,6 @@
                                       <h4 className="font-black text-slate-800 text-xl md:text-2xl flex flex-wrap items-center gap-2">
                                         {item.userName}
                                         {item.requiresFemaleNurse && <span className="text-[10px] bg-pink-100 text-pink-600 px-2 py-0.5 rounded-md border border-pink-200 whitespace-nowrap">女性限定</span>}
-                                        {item.preferredNurseNames && item.preferredNurseNames.length > 0 && <span className="text-[10px] bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-md border border-indigo-200 whitespace-nowrap">優先: {item.preferredNurseNames.join(', ')}</span>}
                                       </h4>
                                       <span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase whitespace-nowrap">{item.duration}分 滞在</span>
                                     </div>
