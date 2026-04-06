@@ -152,6 +152,7 @@
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
       const [activeTab, setActiveTab] = useState('overview');
+      const [isSidebarOpen, setIsSidebarOpen] = useState(true);
       
       const [startDate, setStartDate] = useState(getMondayStr(getTodayStr()));
       const [selectedDate, setSelectedDate] = useState(getTodayStr());
@@ -397,7 +398,6 @@
         return { totalTravel: tt, totalVisit: tv, count: sch.length, lateCount: lc };
       }, [allSchedules, selectedNurse]);
 
-      // --- 未割り当てのカードの重なりを計算する処理 ---
       const unassignedVisitsWithLayout = useMemo(() => {
         const filtered = visits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
         
@@ -405,10 +405,9 @@
         let currentGroup = [];
         let groupEnd = 0;
         
-        // 1. 時間的に重なるものを同じグループにまとめる
         filtered.forEach(visit => {
           const start = parseTime(visit.startTime);
-          const end = start + Math.max(visit.duration, 24); // 最小高さ48px(24分相当)を考慮
+          const end = start + Math.max(visit.duration, 24); 
           
           if (currentGroup.length === 0) {
             currentGroup.push(visit);
@@ -427,7 +426,6 @@
         if (currentGroup.length > 0) groups.push(currentGroup);
         
         const layouted = [];
-        // 2. グループ内で列(カラム)を割り当てる
         groups.forEach(group => {
           const cols = [];
           group.forEach(visit => {
@@ -470,7 +468,6 @@
         
         setTimeout(() => {
           const newVisits = [...visits];
-          // isExcludedFromAutoAssign が true のものは自動編成対象から外す
           const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
           
           const states = available.map(n => {
@@ -480,7 +477,7 @@
                 id: n.id, 
                 time: last ? parseTime(last.departureTime) : parseTime(n.startTime), 
                 loc: last ? last.location : n.startLocation,
-                visitCount: mine.length + (last ? 1 : 0) // 現在の訪問件数を保持
+                visitCount: mine.length + (last ? 1 : 0) 
             };
           });
           
@@ -492,7 +489,6 @@
             const requiresFemale = visit.requiresFemaleNurse;
             const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
             
-            // 0. 優先担当者1, 2の順に探す (出勤していれば強制割り当て)
             for (const prefName of preferredNurseNames) {
                 const prefNurseObj = available.find(n => n.name === prefName || n.name.includes(prefName) || prefName.includes(n.name));
                 if (prefNurseObj) {
@@ -508,7 +504,6 @@
                 }
             }
             
-            // 1. 優先度通常（高）の看護師から探す（訪問件数の均等化）
             if (!best) {
               let minTravel = Infinity;
               let minVisits = Infinity;
@@ -520,7 +515,6 @@
                 const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
                 if (s.time + travel <= parseTime(visit.startTime)) {
-                    // 件数が少ない人を優先。件数が同じなら移動時間が短い人を優先
                     if (s.visitCount < minVisits || (s.visitCount === minVisits && travel < minTravel)) {
                         minVisits = s.visitCount;
                         minTravel = travel;
@@ -530,7 +524,6 @@
               });
             }
             
-            // 2. いなければ優先度低の看護師から探す
             if (!best) {
               let minTravel = Infinity;
               states.forEach(s => {
@@ -547,7 +540,6 @@
               });
             }
             
-            // 3. 誰も間に合わない場合（遅延してでも割り当てる）
             if (!best) {
                let earliest = Infinity;
                let isBestLow = true;
@@ -561,7 +553,6 @@
                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
                  const arrival = s.time + travel;
                  
-                 // より早く着く、または（到着時間と優先度が同じで件数が少ない場合）
                  if (arrival < earliest || 
                     (arrival === earliest && isBestLow && !isLow) ||
                     (arrival === earliest && isBestLow === isLow && s.visitCount < minVisits)) { 
@@ -573,14 +564,13 @@
                });
             }
             
-            // 割り当て決定後の更新
             if (best) {
               const vIdx = newVisits.findIndex(v => v.id === visit.id);
               newVisits[vIdx].nurseId = best.id;
               const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(Math.sqrt(Math.pow(visit.location.x - best.loc.x, 2) + Math.pow(visit.location.y - best.loc.y, 2)) * 0.05));
               best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + visit.duration;
               best.loc = visit.location;
-              best.visitCount++; // 件数をカウントアップ
+              best.visitCount++; 
               assignedCount++;
             }
           });
@@ -851,53 +841,81 @@
 
       return (
         <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden">
-          <aside className="w-72 bg-slate-900 text-slate-300 hidden md:flex flex-col shrink-0 border-r border-slate-800">
-            <div className="p-8">
-              <div className="flex items-center gap-3 text-white font-black text-2xl mb-2">
-                <div className="bg-teal-500 p-2 rounded-xl shadow-lg shadow-teal-500/20">
-                  <Activity className="text-white" size={24} />
+          <aside className={`bg-slate-900 text-slate-300 hidden md:flex flex-col shrink-0 border-r border-slate-800 transition-all duration-300 relative ${isSidebarOpen ? 'w-72' : 'w-20'}`}>
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="absolute -right-3 top-8 bg-slate-800 text-slate-300 p-1.5 rounded-full border border-slate-700 hover:text-white hover:bg-slate-700 z-50 transition-colors"
+            >
+              {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+            </button>
+            <div className={`p-6 ${isSidebarOpen ? '' : 'flex flex-col items-center px-2'}`}>
+              <div className={`flex items-center gap-3 text-white font-black mb-2 ${isSidebarOpen ? 'text-2xl' : 'text-xl justify-center'}`}>
+                <div className="bg-teal-500 p-2 rounded-xl shadow-lg shadow-teal-500/20 shrink-0">
+                  <Activity className="text-white" size={isSidebarOpen ? 24 : 20} />
                 </div>
-                <span>CareRoute</span>
+                {isSidebarOpen && <span>CareRoute</span>}
               </div>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1">Route Optimization v2.5</p>
+              {isSidebarOpen && <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1 whitespace-nowrap overflow-hidden">Route Optimization v2.5</p>}
             </div>
-            <nav className="flex-1 px-4 space-y-1.5 mt-2">
-              <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all group ${activeTab === 'overview' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`}>
-                <div className="flex items-center gap-4"><Columns size={22} /><span className="font-bold">全体スケジュール</span></div>
-                <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'overview' ? 'opacity-100' : ''}`} />
+            <nav className={`flex-1 space-y-1.5 mt-2 ${isSidebarOpen ? 'px-4' : 'px-2'}`}>
+              <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center ${isSidebarOpen ? 'justify-between px-5' : 'justify-center px-0'} py-4 rounded-2xl transition-all group ${activeTab === 'overview' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`} title={!isSidebarOpen ? "全体スケジュール" : ""}>
+                <div className={`flex items-center ${isSidebarOpen ? 'gap-4' : ''}`}>
+                  <Columns size={22} className="shrink-0" />
+                  {isSidebarOpen && <span className="font-bold whitespace-nowrap">全体スケジュール</span>}
+                </div>
+                {isSidebarOpen && <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'overview' ? 'opacity-100' : ''}`} />}
               </button>
-              <button onClick={() => setActiveTab('schedule')} className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all group ${activeTab === 'schedule' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`}>
-                <div className="flex items-center gap-4"><Calendar size={22} /><span className="font-bold">個別ルート確認</span></div>
-                <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'schedule' ? 'opacity-100' : ''}`} />
+              <button onClick={() => setActiveTab('schedule')} className={`w-full flex items-center ${isSidebarOpen ? 'justify-between px-5' : 'justify-center px-0'} py-4 rounded-2xl transition-all group ${activeTab === 'schedule' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`} title={!isSidebarOpen ? "個別ルート確認" : ""}>
+                <div className={`flex items-center ${isSidebarOpen ? 'gap-4' : ''}`}>
+                  <Calendar size={22} className="shrink-0" />
+                  {isSidebarOpen && <span className="font-bold whitespace-nowrap">個別ルート確認</span>}
+                </div>
+                {isSidebarOpen && <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'schedule' ? 'opacity-100' : ''}`} />}
               </button>
-              <button onClick={() => setActiveTab('visits')} className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all group ${activeTab === 'visits' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`}>
-                <div className="flex items-center gap-4"><Users size={22} /><span className="font-bold">利用者管理</span></div>
-                <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'visits' ? 'opacity-100' : ''}`} />
+              <button onClick={() => setActiveTab('visits')} className={`w-full flex items-center ${isSidebarOpen ? 'justify-between px-5' : 'justify-center px-0'} py-4 rounded-2xl transition-all group ${activeTab === 'visits' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`} title={!isSidebarOpen ? "利用者管理" : ""}>
+                <div className={`flex items-center ${isSidebarOpen ? 'gap-4' : ''}`}>
+                  <Users size={22} className="shrink-0" />
+                  {isSidebarOpen && <span className="font-bold whitespace-nowrap">利用者管理</span>}
+                </div>
+                {isSidebarOpen && <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'visits' ? 'opacity-100' : ''}`} />}
               </button>
-              <button onClick={() => setActiveTab('nurses')} className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all group ${activeTab === 'nurses' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`}>
-                <div className="flex items-center gap-4"><UserCog size={22} /><span className="font-bold">看護師管理</span></div>
-                <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'nurses' ? 'opacity-100' : ''}`} />
+              <button onClick={() => setActiveTab('nurses')} className={`w-full flex items-center ${isSidebarOpen ? 'justify-between px-5' : 'justify-center px-0'} py-4 rounded-2xl transition-all group ${activeTab === 'nurses' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`} title={!isSidebarOpen ? "看護師管理" : ""}>
+                <div className={`flex items-center ${isSidebarOpen ? 'gap-4' : ''}`}>
+                  <UserCog size={22} className="shrink-0" />
+                  {isSidebarOpen && <span className="font-bold whitespace-nowrap">看護師管理</span>}
+                </div>
+                {isSidebarOpen && <ChevronRight size={16} className={`opacity-0 group-hover:opacity-100 transition-opacity ${activeTab === 'nurses' ? 'opacity-100' : ''}`} />}
               </button>
             </nav>
-            <div className="p-6 bg-slate-800/40 m-4 rounded-3xl border border-slate-700/50">
-              <div className="flex items-center gap-3 text-xs text-emerald-400 font-black mb-1">
+            {isSidebarOpen ? (
+              <div className="p-6 bg-slate-800/40 m-4 rounded-3xl border border-slate-700/50 overflow-hidden">
+                <div className="flex items-center gap-3 text-xs text-emerald-400 font-black mb-1">
+                  {db && user ? (
+                    <>
+                      <div className="relative">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+                        <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></div>
+                      </div>
+                      <span>SYNC ACTIVE</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-2.5 h-2.5 rounded-full bg-slate-500"></div>
+                      <span>CONNECTING...</span>
+                    </>
+                  )}
+                </div>
+                <p className="text-[9px] text-slate-500 font-bold leading-tight whitespace-nowrap">チーム全員にリアルタイム反映中</p>
+              </div>
+            ) : (
+              <div className="py-4 bg-slate-800/40 m-3 rounded-2xl border border-slate-700/50 flex justify-center items-center" title="同期状態">
                 {db && user ? (
-                  <>
-                    <div className="relative">
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
-                      <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></div>
-                    </div>
-                    <span>SYNC ACTIVE</span>
-                  </>
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse"></div>
                 ) : (
-                  <>
-                    <div className="w-2.5 h-2.5 rounded-full bg-slate-500"></div>
-                    <span>CONNECTING...</span>
-                  </>
+                  <div className="w-2.5 h-2.5 rounded-full bg-slate-500"></div>
                 )}
               </div>
-              <p className="text-[9px] text-slate-500 font-bold leading-tight">チーム全員にリアルタイム反映中</p>
-            </div>
+            )}
           </aside>
 
           <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
@@ -1030,7 +1048,7 @@
                                    onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
-                                   className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
