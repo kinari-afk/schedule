@@ -1124,7 +1124,7 @@
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
                                         className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card hover:-translate-y-0.5 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                         <div className="flex justify-between items-start gap-1">
                                            <div className="font-black text-slate-800 text-[10px] md:text-xs truncate flex-1 leading-tight">
                                               {item.userName}
