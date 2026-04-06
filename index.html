@@ -171,6 +171,7 @@
       const [isLoadingNurseSheet, setIsLoadingNurseSheet] = useState(false);
       
       const [showResetConfirm, setShowResetConfirm] = useState(false);
+      const [activeCardId, setActiveCardId] = useState(null);
 
       useEffect(() => {
         if (showToast) {
@@ -1000,7 +1001,7 @@
                             )
                           })}
                         </div>
-                        <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }}>
+                        <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }} onPointerDown={() => setActiveCardId(null)}>
                           <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20 text-[10px]">
                             {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
                               <div key={i} className="absolute w-full text-right pr-3 text-[11px] font-black text-slate-300" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{(START_HOUR + i).toString().padStart(2, '0')}:00</div>
@@ -1024,8 +1025,12 @@
                                      e.dataTransfer.setData('text/plain', v.id); 
                                      const rect = e.currentTarget.getBoundingClientRect(); 
                                      e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
+                                     setActiveCardId(null);
                                    }} 
-                                   className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col hover:z-50 ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'}`} 
+                                   onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
+                                   onPointerEnter={() => setActiveCardId(v.id)}
+                                   onPointerLeave={() => setActiveCardId(null)}
+                                   className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
@@ -1075,9 +1080,12 @@
                                           </div>
                                         </div>
                                       )}
-                                      <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 hover:-translate-y-0.5 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                      <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); setActiveCardId(null); }} 
+                                        onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
+                                        onPointerEnter={() => setActiveCardId(item.id)}
+                                        onPointerLeave={() => setActiveCardId(null)}
+                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card hover:-translate-y-0.5 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                         <div className="flex justify-between items-start gap-1">
                                            <div className="font-black text-slate-800 text-[10px] md:text-xs truncate flex-1 leading-tight">
                                               {item.userName}
