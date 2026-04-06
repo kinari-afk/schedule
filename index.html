@@ -427,28 +427,19 @@
             const requiresFemale = visit.requiresFemaleNurse;
             const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
             
-            let preferredNurseId = null;
-            // 優先担当者1, 2の順に探す
+            // 優先担当者1, 2の順に探す (出勤していれば強制割り当て)
             for (const prefName of preferredNurseNames) {
                 const prefNurseObj = available.find(n => n.name === prefName || n.name.includes(prefName) || prefName.includes(n.name));
                 if (prefNurseObj) {
-                    preferredNurseId = prefNurseObj.id;
-                    break;
-                }
-            }
-
-            if (preferredNurseId) {
-                const s = states.find(st => st.id === preferredNurseId);
-                if (s) {
-                    const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
-                    const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                    if (s.time + travel <= parseTime(visit.startTime)) {
+                    const s = states.find(st => st.id === prefNurseObj.id);
+                    if (s) {
                         best = s;
-                        min = travel;
+                        break;
                     }
                 }
             }
             
+            // 優先担当者が出勤していない場合、または未指定の場合のみ、他から最適な人を探す
             if (!best) {
               states.forEach(s => {
                 const nDef = available.find(n => n.id === s.id);
@@ -475,30 +466,23 @@
             }
             
             if (!best) {
-               if (preferredNurseId) {
-                   const s = states.find(st => st.id === preferredNurseId);
-                   if (s) best = s;
-               }
-               
-               if (!best) {
-                   let earliest = Infinity;
-                   let isBestLow = true;
-                   states.forEach(s => {
-                     const nDef = available.find(n => n.id === s.id);
-                     if (requiresFemale && nDef && !nDef.isFemale) return; 
-                     const isLow = nDef ? !!nDef.isLowPriority : false;
-                     
-                     const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
-                     const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                     const arrival = s.time + travel;
-                     
-                     if (arrival < earliest || (arrival === earliest && isBestLow && !isLow)) { 
-                         earliest = arrival; 
-                         best = s; 
-                         isBestLow = isLow;
-                     }
-                   });
-               }
+               let earliest = Infinity;
+               let isBestLow = true;
+               states.forEach(s => {
+                 const nDef = available.find(n => n.id === s.id);
+                 if (requiresFemale && nDef && !nDef.isFemale) return; 
+                 const isLow = nDef ? !!nDef.isLowPriority : false;
+                 
+                 const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
+                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                 const arrival = s.time + travel;
+                 
+                 if (arrival < earliest || (arrival === earliest && isBestLow && !isLow)) { 
+                     earliest = arrival; 
+                     best = s; 
+                     isBestLow = isLow;
+                 }
+               });
             }
             
             if (best) {
