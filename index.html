@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -396,6 +396,13 @@
         return { totalTravel: tt, totalVisit: tv, count: sch.length, lateCount: lc };
       }, [allSchedules, selectedNurse]);
 
+      // 未割り当てのカードを自動編成から除外/含めるを切り替える
+      const handleToggleExclude = (visitId) => {
+        handleSetVisits(prev => prev.map(v => 
+          v.id === visitId ? { ...v, isExcludedFromAutoAssign: !v.isExcludedFromAutoAssign } : v
+        ));
+      };
+
       const handleAutoAssign = () => {
         const available = nurses.filter(n => !isNurseOff(n, selectedDate));
         if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
@@ -403,7 +410,8 @@
         
         setTimeout(() => {
           const newVisits = [...visits];
-          const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+          // isExcludedFromAutoAssign が true のものは自動編成対象から外す
+          const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
           
           const states = available.map(n => {
             const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
@@ -411,6 +419,8 @@
             return { id: n.id, time: last ? parseTime(last.departureTime) : parseTime(n.startTime), loc: last ? last.location : n.startLocation };
           });
           
+          let assignedCount = 0;
+
           todayUnassigned.forEach(visit => {
             let best = null, min = Infinity;
             
@@ -493,12 +503,17 @@
               const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(Math.sqrt(Math.pow(visit.location.x - best.loc.x, 2) + Math.pow(visit.location.y - best.loc.y, 2)) * 0.05));
               best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + visit.duration;
               best.loc = visit.location;
+              assignedCount++;
             }
           });
           
           handleSetVisits(newVisits); 
           setIsOptimizing(false); 
-          setToastMessage("自動編成完了"); 
+          if(assignedCount === 0) {
+            setToastMessage("自動編成できる対象がありませんでした");
+          } else {
+            setToastMessage("自動編成完了"); 
+          }
           setShowToast(true);
         }, 800);
       };
@@ -510,7 +525,8 @@
               ...v,
               nurseId: null,
               startTime: v.originalStartTime || v.startTime,
-              customTravelTime: null
+              customTravelTime: null,
+              isExcludedFromAutoAssign: false // リセット時は除外フラグも元に戻す
             };
           }
           return v;
@@ -526,6 +542,12 @@
         if (isNaN(visitId)) return;
         
         const targetVisit = visits.find(v => v.id === visitId);
+        
+        // ロックされているものはドラッグ＆ドロップでも移動できないようにする
+        if (targetVisit && targetVisit.isExcludedFromAutoAssign) {
+            return;
+        }
+
         if (targetNurseId && targetVisit && targetVisit.requiresFemaleNurse) {
             const targetNurse = nurses.find(n => n.id === targetNurseId);
             if (targetNurse && !targetNurse.isFemale) {
@@ -621,7 +643,8 @@
                 nurseId: null,
                 requiresFemaleNurse: requiresFemale,
                 preferredNurseName: prefNurse,
-                address: address
+                address: address,
+                isExcludedFromAutoAssign: false
               });
             }
           }
@@ -643,7 +666,8 @@
                 id: newVisits[existingIndex].id, 
                 nurseId: newVisits[existingIndex].nurseId, 
                 startTime: newVisits[existingIndex].startTime, 
-                customTravelTime: newVisits[existingIndex].customTravelTime 
+                customTravelTime: newVisits[existingIndex].customTravelTime,
+                isExcludedFromAutoAssign: newVisits[existingIndex].isExcludedFromAutoAssign // ロック状態を維持
               };
               updatedCount++;
             } else {
@@ -913,22 +937,39 @@
                              {visits.filter(v => v.date === selectedDate && v.nurseId === null).map(v => {
                                const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
                                return (
-                                 <div key={v.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                   className={`absolute left-2 right-2 bg-white border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing hover:shadow-lg transition-all group visit-card ${v.requiresFemaleNurse || v.preferredNurseName ? 'ring-1 ring-slate-200' : ''}`} 
+                                 <div key={v.id} draggable={!v.isExcludedFromAutoAssign} onDragStart={(e) => { 
+                                     if(v.isExcludedFromAutoAssign) { e.preventDefault(); return; }
+                                     e.dataTransfer.setData('text/plain', v.id); 
+                                     const rect = e.currentTarget.getBoundingClientRect(); 
+                                     e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
+                                   }} 
+                                   className={`absolute left-2 right-2 border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${v.requiresFemaleNurse || v.preferredNurseName ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 48)}px` }}>
                                    <div className="flex justify-between items-start gap-1">
-                                     <div className="font-black text-slate-800 text-[10px] md:text-xs truncate group-hover:text-teal-600 flex-1 leading-tight">
-                                       {v.userName}
+                                     <div className="flex items-center gap-1 overflow-hidden flex-1">
+                                        <button 
+                                          type="button"
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(v.id); }}
+                                          className={`shrink-0 p-1 rounded-lg transition-colors shadow-sm border ${v.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
+                                          title={v.isExcludedFromAutoAssign ? "自動編成対象に戻す" : "自動編成から除外する"}
+                                        >
+                                          {v.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
+                                        </button>
+                                        <div className={`font-black text-[10px] md:text-xs truncate leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : 'text-slate-800 group-hover:text-teal-600'}`}>
+                                          {v.userName}
+                                        </div>
                                      </div>
-                                     <div className="text-[9px] font-bold shrink-0 text-right leading-none">
+                                     <div className="text-[9px] font-bold shrink-0 text-right leading-none pt-0.5">
                                        {v.originalStartTime && v.originalStartTime !== v.startTime ? (
                                          <span className="text-orange-600 block">{v.originalStartTime}➔<br/>{v.startTime}</span>
                                        ) : ( <span className="text-slate-400">{v.startTime}</span> )}
                                      </div>
                                    </div>
-                                   <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                   <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[26px]">
                                      {v.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                      {v.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{v.preferredNurseName}</span>}
+                                     {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">自動編成対象外</span>}
                                    </div>
                                  </div>
                                )
@@ -954,7 +995,7 @@
                                         </div>
                                       )}
                                       <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); const rect = e.currentTarget.getBoundingClientRect(); e.dataTransfer.setData('offsetY', e.clientY - rect.top); }} 
-                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
+                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col cursor-grab active:cursor-grabbing border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 hover:-translate-y-0.5 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                         <div className="flex justify-between items-start gap-1">
                                            <div className="font-black text-slate-800 text-[10px] md:text-xs truncate flex-1 leading-tight">
