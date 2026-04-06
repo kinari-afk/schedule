@@ -479,122 +479,131 @@
         setIsOptimizing(true);
         
         setTimeout(() => {
-          const newVisits = [...visits];
-          const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
-          
-          const states = available.map(n => {
-            const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
-            const last = mine.pop();
-            return { 
-                id: n.id, 
-                time: last ? parseTime(last.departureTime) : parseTime(n.startTime), 
-                loc: last ? last.location : n.startLocation,
-                visitCount: mine.length + (last ? 1 : 0) 
-            };
-          });
-          
-          let assignedCount = 0;
+          try {
+            const newVisits = [...visits];
+            const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+            
+            const states = available.map(n => {
+              const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
+              const last = mine.length > 0 ? mine[mine.length - 1] : null;
+              return { 
+                  id: n.id, 
+                  time: last ? parseTime(last.startTime) + (last.duration || 30) : parseTime(n.startTime), 
+                  loc: last && last.location ? last.location : (n.startLocation || {x: 50, y: 50}),
+                  visitCount: mine.length
+              };
+            });
+            
+            let assignedCount = 0;
 
-          todayUnassigned.forEach(visit => {
-            let best = null;
-            
-            const requiresFemale = visit.requiresFemaleNurse;
-            const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
-            
-            for (const prefName of preferredNurseNames) {
-                const prefNurseObj = available.find(n => n.name === prefName || n.name.includes(prefName) || prefName.includes(n.name));
-                if (prefNurseObj) {
-                    const s = states.find(st => st.id === prefNurseObj.id);
-                    if (s) {
-                        const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
-                        const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                        if (s.time + travel <= parseTime(visit.startTime)) {
-                            best = s;
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            if (!best) {
-              let minTravel = Infinity;
-              let minVisits = Infinity;
-              states.forEach(s => {
-                const nDef = available.find(n => n.id === s.id);
-                if (nDef && nDef.isLowPriority) return; 
-                if (requiresFemale && nDef && !nDef.isFemale) return; 
-                
-                const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
+            todayUnassigned.forEach(visit => {
+              let best = null;
+              
+              const requiresFemale = visit.requiresFemaleNurse;
+              const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
+              
+              // 0. 優先担当者1, 2の順に探す (出勤していれば強制割り当て)
+              for (const prefName of preferredNurseNames) {
+                  if (!prefName) continue;
+                  const prefNurseObj = available.find(n => n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name));
+                  if (prefNurseObj) {
+                      const s = states.find(st => st.id === prefNurseObj.id);
+                      if (s) {
+                          best = s;
+                          break;
+                      }
+                  }
+              }
+              
+              // 1. 優先度通常（高）の看護師から探す（訪問件数の均等化）
+              if (!best) {
+                let minTravel = Infinity;
+                let minVisits = Infinity;
+                states.forEach(s => {
+                  const nDef = available.find(n => n.id === s.id);
+                  if (nDef && nDef.isLowPriority) return; 
+                  if (requiresFemale && nDef && !nDef.isFemale) return; 
+                  
+                  const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
+                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                  if (s.time + travel <= parseTime(visit.startTime)) {
+                      if (s.visitCount < minVisits || (s.visitCount === minVisits && travel < minTravel)) {
+                          minVisits = s.visitCount;
+                          minTravel = travel;
+                          best = s;
+                      }
+                  }
+                });
+              }
+              
+              // 2. 間に合う人がいなければ、優先度低の看護師で間に合う人を探す
+              if (!best) {
+                let minTravel = Infinity;
+                states.forEach(s => {
+                  const nDef = available.find(n => n.id === s.id);
+                  if (nDef && !nDef.isLowPriority) return; 
+                  if (requiresFemale && nDef && !nDef.isFemale) return; 
+                  
+                  const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
+                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                  if (s.time + travel <= parseTime(visit.startTime) && travel < minTravel) { 
+                      minTravel = travel; 
+                      best = s; 
+                  }
+                });
+              }
+              
+              // 3. 誰も間に合わない場合（遅延してでも割り当てる。件数均等化を考慮）
+              if (!best) {
+                 let earliest = Infinity;
+                 let isBestLow = true;
+                 let minVisits = Infinity;
+                 states.forEach(s => {
+                   const nDef = available.find(n => n.id === s.id);
+                   if (requiresFemale && nDef && !nDef.isFemale) return; 
+                   const isLow = nDef ? !!nDef.isLowPriority : false;
+                   
+                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
+                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                   const arrival = s.time + travel;
+                   
+                   if (arrival < earliest || 
+                      (arrival === earliest && isBestLow && !isLow) ||
+                      (arrival === earliest && isBestLow === isLow && s.visitCount < minVisits)) { 
+                       earliest = arrival; 
+                       best = s; 
+                       isBestLow = isLow;
+                       minVisits = s.visitCount;
+                   }
+                 });
+              }
+              
+              if (best) {
+                const vIdx = newVisits.findIndex(v => v.id === visit.id);
+                newVisits[vIdx].nurseId = best.id;
+                const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - best.loc.x, 2) + Math.pow((visit.location?.y || 50) - best.loc.y, 2));
                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                if (s.time + travel <= parseTime(visit.startTime)) {
-                    if (s.visitCount < minVisits || (s.visitCount === minVisits && travel < minTravel)) {
-                        minVisits = s.visitCount;
-                        minTravel = travel;
-                        best = s;
-                    }
-                }
-              });
-            }
+                best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + (visit.duration || 30);
+                best.loc = visit.location || {x: 50, y: 50};
+                best.visitCount++; 
+                assignedCount++;
+              }
+            });
             
-            if (!best) {
-              let minTravel = Infinity;
-              states.forEach(s => {
-                const nDef = available.find(n => n.id === s.id);
-                if (nDef && !nDef.isLowPriority) return; 
-                if (requiresFemale && nDef && !nDef.isFemale) return; 
-                
-                const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
-                const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                if (s.time + travel <= parseTime(visit.startTime) && travel < minTravel) { 
-                    minTravel = travel; 
-                    best = s; 
-                }
-              });
+            handleSetVisits(newVisits); 
+            setIsOptimizing(false); 
+            if(assignedCount === 0) {
+              setToastMessage("自動編成できる対象がありませんでした");
+            } else {
+              setToastMessage("自動編成完了"); 
             }
-            
-            if (!best) {
-               let earliest = Infinity;
-               let isBestLow = true;
-               let minVisits = Infinity;
-               states.forEach(s => {
-                 const nDef = available.find(n => n.id === s.id);
-                 if (requiresFemale && nDef && !nDef.isFemale) return; 
-                 const isLow = nDef ? !!nDef.isLowPriority : false;
-                 
-                 const dist = Math.sqrt(Math.pow(visit.location.x - s.loc.x, 2) + Math.pow(visit.location.y - s.loc.y, 2));
-                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                 const arrival = s.time + travel;
-                 
-                 if (arrival < earliest || 
-                    (arrival === earliest && isBestLow && !isLow) ||
-                    (arrival === earliest && isBestLow === isLow && s.visitCount < minVisits)) { 
-                     earliest = arrival; 
-                     best = s; 
-                     isBestLow = isLow;
-                     minVisits = s.visitCount;
-                 }
-               });
-            }
-            
-            if (best) {
-              const vIdx = newVisits.findIndex(v => v.id === visit.id);
-              newVisits[vIdx].nurseId = best.id;
-              const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(Math.sqrt(Math.pow(visit.location.x - best.loc.x, 2) + Math.pow(visit.location.y - best.loc.y, 2)) * 0.05));
-              best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + visit.duration;
-              best.loc = visit.location;
-              best.visitCount++; 
-              assignedCount++;
-            }
-          });
-          
-          handleSetVisits(newVisits); 
-          setIsOptimizing(false); 
-          if(assignedCount === 0) {
-            setToastMessage("自動編成できる対象がありませんでした");
-          } else {
-            setToastMessage("自動編成完了"); 
+            setShowToast(true);
+          } catch (error) {
+            console.error("AutoAssign Error:", error);
+            setIsOptimizing(false);
+            setToastMessage("自動編成中にエラーが発生しました。");
+            setShowToast(true);
           }
-          setShowToast(true);
         }, 800);
       };
 
