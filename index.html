@@ -425,12 +425,16 @@
             let best = null, min = Infinity;
             
             const requiresFemale = visit.requiresFemaleNurse;
-            const preferredNurseName = visit.preferredNurseName;
+            const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
             
             let preferredNurseId = null;
-            if (preferredNurseName) {
-                const prefNurseObj = available.find(n => n.name === preferredNurseName || n.name.includes(preferredNurseName) || preferredNurseName.includes(n.name));
-                if (prefNurseObj) preferredNurseId = prefNurseObj.id;
+            // 優先担当者1, 2の順に探す
+            for (const prefName of preferredNurseNames) {
+                const prefNurseObj = available.find(n => n.name === prefName || n.name.includes(prefName) || prefName.includes(n.name));
+                if (prefNurseObj) {
+                    preferredNurseId = prefNurseObj.id;
+                    break;
+                }
             }
 
             if (preferredNurseId) {
@@ -605,14 +609,18 @@
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
             if (p[0]?.trim()) {
-              // CSVフォーマット: 氏名[0], 曜日/日付[1], 開始時間[2], 所要時間[3], 限定[4], 優先担当者[5], 住所[6]
+              // 新しいCSVフォーマット: 氏名[0], 曜日/日付[1], 開始時間[2], 所要時間[3], 限定[4], 優先担当者1[5], 優先担当者2[6], 住所[7]
               const nameStr = p[0].trim();
               const dateOrDay = p[1]?.trim() || '';
               let st = p[2]?.trim() || '09:00'; if (st.length === 4) st = '0' + st;
               const dur = parseInt(p[3]) || 30;
               const requiresFemale = p[4] ? p[4].includes('女性') : false;
-              const prefNurse = p[5]?.trim() || null;
-              const address = p[6]?.trim() || '';
+              
+              const prefNurse1 = p[5]?.trim() || null;
+              const prefNurse2 = p[6]?.trim() || null;
+              const preferredNames = [prefNurse1, prefNurse2].filter(Boolean);
+              
+              const address = p[7]?.trim() || '';
 
               let visitDate = '';
               if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
@@ -642,7 +650,7 @@
                 originalStartTime: st, 
                 nurseId: null,
                 requiresFemaleNurse: requiresFemale,
-                preferredNurseName: prefNurse,
+                preferredNurseNames: preferredNames,
                 address: address,
                 isExcludedFromAutoAssign: false
               });
@@ -943,7 +951,7 @@
                                      const rect = e.currentTarget.getBoundingClientRect(); 
                                      e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
                                    }} 
-                                   className={`absolute left-2 right-2 border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${v.requiresFemaleNurse || v.preferredNurseName ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'}`} 
+                                   className={`absolute left-2 right-2 border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse || (v.preferredNurseNames && v.preferredNurseNames.length > 0)) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(height, 48)}px` }}>
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
@@ -968,7 +976,7 @@
                                    </div>
                                    <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[26px]">
                                      {v.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                     {v.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{v.preferredNurseName}</span>}
+                                     {v.preferredNurseNames && v.preferredNurseNames.length > 0 && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{v.preferredNurseNames.join(', ')}</span>}
                                      {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">自動編成対象外</span>}
                                    </div>
                                  </div>
@@ -1010,7 +1018,7 @@
                                         </div>
                                         <div className="flex flex-wrap gap-0.5 mt-0.5">
                                            {item.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                           {item.preferredNurseName && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{item.preferredNurseName}</span>}
+                                           {item.preferredNurseNames && item.preferredNurseNames.length > 0 && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded-sm whitespace-nowrap">優先:{item.preferredNurseNames.join(', ')}</span>}
                                         </div>
                                         <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
                                            <div className="flex items-center gap-0.5">
@@ -1081,7 +1089,7 @@
                                       <h4 className="font-black text-slate-800 text-xl md:text-2xl flex flex-wrap items-center gap-2">
                                         {item.userName}
                                         {item.requiresFemaleNurse && <span className="text-[10px] bg-pink-100 text-pink-600 px-2 py-0.5 rounded-md border border-pink-200 whitespace-nowrap">女性限定</span>}
-                                        {item.preferredNurseName && <span className="text-[10px] bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-md border border-indigo-200 whitespace-nowrap">優先: {item.preferredNurseName}</span>}
+                                        {item.preferredNurseNames && item.preferredNurseNames.length > 0 && <span className="text-[10px] bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-md border border-indigo-200 whitespace-nowrap">優先: {item.preferredNurseNames.join(', ')}</span>}
                                       </h4>
                                       <span className="text-xs font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl uppercase whitespace-nowrap">{item.duration}分 滞在</span>
                                     </div>
@@ -1133,7 +1141,7 @@
                           <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" placeholder="CSVのURLを入力"/>
                           <div className="mt-4 pt-4 border-t border-slate-100">
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                            <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者, 住所</p>
+                            <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 住所</p>
                           </div>
                        </div>
                     </div>
@@ -1161,7 +1169,7 @@
                                     {v.userName}
                                     <div className="flex flex-wrap gap-1 mt-1.5">
                                       {v.requiresFemaleNurse && <span className="text-[10px] text-pink-600 bg-pink-50 px-2 py-0.5 rounded-md border border-pink-100 whitespace-nowrap">女性限定</span>}
-                                      {v.preferredNurseName && <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 whitespace-nowrap">優先: {v.preferredNurseName}</span>}
+                                      {v.preferredNurseNames && v.preferredNurseNames.length > 0 && <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 whitespace-nowrap">優先: {v.preferredNurseNames.join(', ')}</span>}
                                     </div>
                                   </td>
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
