@@ -157,6 +157,8 @@
       
       const [nurses, setNurses] = useState([]);
       const [visits, setVisits] = useState([]);
+      const [nurseStatuses, setNurseStatuses] = useState([]); // 看護師の出退勤の手動上書き状態
+      
       const [baseTravelTime, setBaseTravelTime] = useState(10);
       const [selectedNurseId, setSelectedNurseId] = useState(null);
       const [isOptimizing, setIsOptimizing] = useState(false);
@@ -202,11 +204,12 @@
             const data = docSnap.data();
             if (data.nurses) setNurses(JSON.parse(data.nurses));
             if (data.visits) setVisits(JSON.parse(data.visits));
+            if (data.nurseStatuses) setNurseStatuses(JSON.parse(data.nurseStatuses));
             if (data.sheetUrl) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
           } else {
-            setDoc(docRef, { nurses: "[]", visits: "[]", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 10 });
+            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 10 });
           }
           setIsSyncing(false);
         }, (err) => { console.error(err); setIsSyncing(false); });
@@ -232,6 +235,14 @@
         setNurses(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ nurses: JSON.stringify(next) });
+          return next;
+        });
+      };
+
+      const handleSetNurseStatuses = (newVal) => {
+        setNurseStatuses(prev => {
+          const next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          updateCloudData({ nurseStatuses: JSON.stringify(next) });
           return next;
         });
       };
@@ -330,8 +341,18 @@
         return formatDateLabel(selectedDate);
       }, [selectedDate]);
 
+      // 共通の看護師休み判定関数（手動設定を優先）
+      const getIsNurseOff = (nurse, dateStr, statuses) => {
+        if (!nurse) return false;
+        const override = statuses.find(s => s.date === dateStr && s.nurseId === nurse.id);
+        if (override && override.status) {
+          return override.status === 'off';
+        }
+        return isNurseOff(nurse, dateStr);
+      };
+
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
-      const isSelectedNurseOff = selectedNurse ? isNurseOff(selectedNurse, selectedDate) : false;
+      const isSelectedNurseOff = selectedNurse ? getIsNurseOff(selectedNurse, selectedDate, nurseStatuses) : false;
 
       const unassignedCount = visits.filter(v => v.date === selectedDate && v.nurseId === null).length;
       
@@ -349,7 +370,7 @@
       const allSchedules = useMemo(() => {
         const schedules = {};
         nurses.forEach(nurse => {
-          const isOff = isNurseOff(nurse, selectedDate);
+          const isOff = getIsNurseOff(nurse, selectedDate, nurseStatuses);
           if (isOff) { schedules[nurse.id] = { isOff: true, visits: [], calculatedStartTime: nurse.startTime }; return; }
           
           const assigned = visits.filter(v => v.nurseId === nurse.id && v.date === selectedDate);
@@ -398,7 +419,7 @@
           schedules[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime, calculatedStartTime: formatTime(calculatedStartTime) };
         });
         return schedules;
-      }, [nurses, visits, selectedDate, baseTravelTime]);
+      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses]);
 
       const stats = useMemo(() => {
         const sch = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
@@ -465,17 +486,75 @@
         return layouted;
       }, [visits, selectedDate]);
 
+      // --- 手動での固定／ステータス切り替え処理 ---
       const handleToggleExclude = (visitId) => {
         handleSetVisits(prev => prev.map(v => 
           v.id === visitId ? { ...v, isExcludedFromAutoAssign: !v.isExcludedFromAutoAssign } : v
         ));
       };
 
+      const toggleNurseStatus = (nurseId, dateStr, isOff) => {
+        handleSetNurseStatuses(prev => {
+          const next = [...prev];
+          const idx = next.findIndex(s => s.date === dateStr && s.nurseId === nurseId);
+          if (idx !== -1) {
+            if (next[idx].isLocked) return next; 
+            next[idx] = { ...next[idx], status: isOff ? 'off' : 'work' };
+          } else {
+            next.push({ date: dateStr, nurseId, status: isOff ? 'off' : 'work', isLocked: false });
+          }
+          return next;
+        });
+
+        // 休みに変更された場合、その看護師に割り当てられている非ロック予定を未割り当てに戻す
+        if (isOff) {
+          handleSetVisits(prev => prev.map(v => 
+            (v.date === dateStr && v.nurseId === nurseId && !v.isExcludedFromAutoAssign)
+              ? { ...v, nurseId: null, startTime: v.originalStartTime || v.startTime, customTravelTime: null }
+              : v
+          ));
+        }
+      };
+
+      const toggleNurseLock = (nurseId, dateStr) => {
+        handleSetNurseStatuses(prev => {
+          const next = [...prev];
+          const idx = next.findIndex(s => s.date === dateStr && s.nurseId === nurseId);
+          if (idx !== -1) {
+            next[idx] = { ...next[idx], isLocked: !next[idx].isLocked };
+          } else {
+            const nurse = nurses.find(n => n.id === nurseId);
+            const isOff = isNurseOff(nurse, dateStr);
+            next.push({ date: dateStr, nurseId, status: isOff ? 'off' : 'work', isLocked: true });
+          }
+          return next;
+        });
+      };
+
       const handleLockAllToday = () => {
         handleSetVisits(prev => prev.map(v => 
           v.date === selectedDate ? { ...v, isExcludedFromAutoAssign: true } : v
         ));
-        setToastMessage("表示中の予定をすべて固定しました");
+
+        const currentStatuses = nurses.map(n => {
+          const isOff = getIsNurseOff(n, selectedDate, nurseStatuses);
+          return { date: selectedDate, nurseId: n.id, status: isOff ? 'off' : 'work', isLocked: true };
+        });
+        
+        handleSetNurseStatuses(prev => {
+          let next = [...prev];
+          currentStatuses.forEach(cs => {
+            const idx = next.findIndex(s => s.date === cs.date && s.nurseId === cs.nurseId);
+            if (idx !== -1) {
+              next[idx] = { ...next[idx], ...cs };
+            } else {
+              next.push(cs);
+            }
+          });
+          return next;
+        });
+
+        setToastMessage("表示中の予定と出勤状況をすべて固定しました");
         setShowToast(true);
       };
 
@@ -483,12 +562,17 @@
         handleSetVisits(prev => prev.map(v => 
           v.date === selectedDate ? { ...v, isExcludedFromAutoAssign: false } : v
         ));
+        
+        handleSetNurseStatuses(prev => prev.map(s => 
+          s.date === selectedDate ? { ...s, isLocked: false } : s
+        ));
+
         setToastMessage("表示中の固定をすべて解除しました");
         setShowToast(true);
       };
 
       const handleAutoAssign = () => {
-        const available = nurses.filter(n => !isNurseOff(n, selectedDate));
+        const available = nurses.filter(n => !getIsNurseOff(n, selectedDate, nurseStatuses));
         if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         setIsOptimizing(true);
         
@@ -675,7 +759,6 @@
               nurseId: null,
               startTime: v.originalStartTime || v.startTime,
               customTravelTime: null
-              // isExcludedFromAutoAssign は手動でロックした状態を維持するため変更しない
             };
           }
           return v;
@@ -1067,7 +1150,7 @@
                       <button 
                         onClick={handleLockAllToday}
                         className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-                        title="この日の予定を一括固定"
+                        title="この日の予定と出勤状況を一括固定"
                       >
                         <Lock size={16} />
                         一括固定
@@ -1106,11 +1189,39 @@
                              <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[11px] font-black px-3 py-1 rounded-full`}>{unassignedCount}件</div>
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = isNurseOff(nurse, selectedDate), assigned = allSchedules[nurse.id]?.visits || [];
+                            const isOff = getIsNurseOff(nurse, selectedDate, nurseStatuses);
+                            const statusObj = nurseStatuses.find(s => s.date === selectedDate && s.nurseId === nurse.id);
+                            const isLocked = statusObj ? statusObj.isLocked : false;
+                            const assigned = allSchedules[nurse.id]?.visits || [];
+                            
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-4 ${isOff ? 'w-14 bg-slate-100/50' : 'w-44 md:w-64 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
-                                {isOff ? <div className="text-[10px] font-black text-red-400 tracking-tighter uppercase" style={{writingMode: 'vertical-rl'}}>お休み</div> : (
-                                  <><div className="font-black text-slate-800 text-sm flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div><div className="text-[10px] font-black text-slate-400 mt-1 uppercase">{assigned.length} 訪問</div></>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-14 bg-slate-100/50' : 'w-44 md:w-64 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
+                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-3 mb-1'} `}>
+                                   <button 
+                                     type="button"
+                                     onClick={() => toggleNurseLock(nurse.id, selectedDate)}
+                                     className={`p-1 rounded transition-colors shadow-sm border ${isLocked ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
+                                   >
+                                     {isLocked ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
+                                   </button>
+                                   
+                                   <button 
+                                     type="button"
+                                     onClick={() => toggleNurseStatus(nurse.id, selectedDate, !isOff)}
+                                     disabled={isLocked}
+                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-colors shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${isOff ? 'bg-slate-200 text-slate-500 border-slate-300' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
+                                     title={isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
+                                   >
+                                     {isOff ? "休" : "出勤"}
+                                   </button>
+                                </div>
+                                {isOff ? (
+                                  <div className="text-[10px] font-black text-red-400 tracking-tighter uppercase" style={{writingMode: 'vertical-rl'}}>お休み</div>
+                                ) : (
+                                  <div className="flex flex-col items-center">
+                                    <div className="font-black text-slate-800 text-sm flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div>
+                                    <div className="text-[10px] font-black text-slate-400 mt-1 uppercase">{assigned.length} 訪問</div>
+                                  </div>
                                 )}
                               </div>
                             )
@@ -1180,7 +1291,7 @@
                              })}
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = isNurseOff(nurse, selectedDate), sch = allSchedules[nurse.id], assigned = sch?.visits || [];
+                            const isOff = getIsNurseOff(nurse, selectedDate, nurseStatuses), sch = allSchedules[nurse.id], assigned = sch?.visits || [];
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-44 md:w-64'}`} onDragOver={(e) => !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
@@ -1216,7 +1327,7 @@
                                                 type="button"
                                                 onPointerDown={(e) => e.stopPropagation()}
                                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(item.id); }}
-                                                className={`shrink-0 p-1 rounded-lg transition-colors shadow-sm border ${item.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
+                                                className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${item.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
                                                 title={item.isExcludedFromAutoAssign ? "固定を解除" : "割り当てを固定する"}
                                               >
                                                 {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
@@ -1232,8 +1343,9 @@
                                               <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指:{item.startTime}</span>
                                            </div>
                                         </div>
-                                        <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[26px]">
                                            {item.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                           {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                         </div>
                                         <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
                                            <div className="flex items-center gap-0.5">
