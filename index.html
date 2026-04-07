@@ -513,9 +513,15 @@
         
         const dailyStats = [];
         let monthlyTotal = 0;
+        let monthlyTotalDuration = 0;
         const monthlyNurseTotals = {};
-        nurses.forEach(n => monthlyNurseTotals[n.id] = 0);
+        const monthlyNurseDurations = {};
+        nurses.forEach(n => {
+           monthlyNurseTotals[n.id] = 0;
+           monthlyNurseDurations[n.id] = 0;
+        });
         let monthlyUnassigned = 0;
+        let monthlyUnassignedDuration = 0;
 
         for (let d = 1; d <= daysInMonth; d++) {
           const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -525,19 +531,34 @@
           const realVisits = dayVisits.filter(v => v.type !== 'other');
           
           const dailyTotal = realVisits.length;
+          let dailyTotalDuration = 0;
           monthlyTotal += dailyTotal;
 
           const nurseCounts = {};
-          nurses.forEach(n => nurseCounts[n.id] = 0);
+          const nurseDurations = {};
+          nurses.forEach(n => {
+              nurseCounts[n.id] = 0;
+              nurseDurations[n.id] = 0;
+          });
           let unassigned = 0;
+          let unassignedDuration = 0;
 
           realVisits.forEach(v => {
+            const dur = v.duration || 0;
+            dailyTotalDuration += dur;
+            monthlyTotalDuration += dur;
+
             if (v.nurseId) {
               nurseCounts[v.nurseId] = (nurseCounts[v.nurseId] || 0) + 1;
               monthlyNurseTotals[v.nurseId] = (monthlyNurseTotals[v.nurseId] || 0) + 1;
+              
+              nurseDurations[v.nurseId] += dur;
+              monthlyNurseDurations[v.nurseId] += dur;
             } else {
               unassigned++;
               monthlyUnassigned++;
+              unassignedDuration += dur;
+              monthlyUnassignedDuration += dur;
             }
           });
 
@@ -548,16 +569,22 @@
             day: d,
             jsDay,
             total: dailyTotal,
+            totalDuration: dailyTotalDuration,
             unassigned,
-            nurseCounts
+            unassignedDuration,
+            nurseCounts,
+            nurseDurations
           });
         }
 
         return {
           dailyStats,
           monthlyTotal,
+          monthlyTotalDuration,
           monthlyNurseTotals,
-          monthlyUnassigned
+          monthlyNurseDurations,
+          monthlyUnassigned,
+          monthlyUnassignedDuration
         };
       }, [reportMonth, visits, nurses]);
 
@@ -1957,11 +1984,30 @@
                                     <span className="text-[10px] text-slate-400">{JS_DAYS[stat.jsDay]}</span>
                                   </div>
                                 </td>
-                                <td className="p-3 border-r border-slate-100 font-black text-teal-600 text-lg">{stat.total}</td>
-                                <td className="p-3 border-r border-slate-100 font-black text-red-400">{stat.unassigned > 0 ? stat.unassigned : '-'}</td>
+                                <td className="p-3 border-r border-slate-100">
+                                  {stat.total > 0 ? (
+                                    <div className="flex flex-col items-center justify-center">
+                                      <div className="font-black text-teal-600 text-lg leading-tight">{stat.total}</div>
+                                      <div className="text-[10px] font-bold text-slate-400 mt-0.5">{Math.floor(stat.totalDuration / 60)}h {stat.totalDuration % 60}m</div>
+                                    </div>
+                                  ) : <span className="text-slate-300">-</span>}
+                                </td>
+                                <td className="p-3 border-r border-slate-100">
+                                  {stat.unassigned > 0 ? (
+                                    <div className="flex flex-col items-center justify-center">
+                                      <div className="font-black text-red-400 text-lg leading-tight">{stat.unassigned}</div>
+                                      <div className="text-[10px] font-bold text-slate-400 mt-0.5">{Math.floor(stat.unassignedDuration / 60)}h {stat.unassignedDuration % 60}m</div>
+                                    </div>
+                                  ) : <span className="text-slate-300">-</span>}
+                                </td>
                                 {nurses.map(n => (
-                                  <td key={n.id} className="p-3 border-r border-slate-100 font-bold text-slate-600">
-                                    {stat.nurseCounts[n.id] > 0 ? stat.nurseCounts[n.id] : <span className="text-slate-300">-</span>}
+                                  <td key={n.id} className="p-3 border-r border-slate-100">
+                                    {stat.nurseCounts[n.id] > 0 ? (
+                                      <div className="flex flex-col items-center justify-center">
+                                        <div className="font-bold text-slate-600 text-base leading-tight">{stat.nurseCounts[n.id]}</div>
+                                        <div className="text-[10px] text-slate-400 mt-0.5">{Math.floor(stat.nurseDurations[n.id] / 60)}h {stat.nurseDurations[n.id] % 60}m</div>
+                                      </div>
+                                    ) : <span className="text-slate-300">-</span>}
                                   </td>
                                 ))}
                               </tr>
@@ -1969,11 +2015,18 @@
                           })}
                           <tr className="bg-slate-100 border-t-2 border-slate-200">
                             <td className="p-4 font-black text-slate-700">合計</td>
-                            <td className="p-4 font-black text-teal-600 text-xl">{reportData.monthlyTotal}</td>
-                            <td className="p-4 font-black text-red-500 text-xl">{reportData.monthlyUnassigned}</td>
+                            <td className="p-4">
+                               <div className="font-black text-teal-600 text-xl leading-none">{reportData.monthlyTotal}<span className="text-xs font-normal text-slate-500 ml-1">件</span></div>
+                               <div className="text-xs font-bold text-slate-500 mt-1">{Math.floor(reportData.monthlyTotalDuration / 60)}h {reportData.monthlyTotalDuration % 60}m</div>
+                            </td>
+                            <td className="p-4">
+                               <div className="font-black text-red-500 text-xl leading-none">{reportData.monthlyUnassigned}<span className="text-xs font-normal text-slate-500 ml-1">件</span></div>
+                               <div className="text-xs font-bold text-slate-500 mt-1">{Math.floor(reportData.monthlyUnassignedDuration / 60)}h {reportData.monthlyUnassignedDuration % 60}m</div>
+                            </td>
                             {nurses.map(n => (
-                              <td key={n.id} className="p-4 font-black text-slate-800 text-lg">
-                                {reportData.monthlyNurseTotals[n.id]}
+                              <td key={n.id} className="p-4">
+                                <div className="font-black text-slate-800 text-xl leading-none">{reportData.monthlyNurseTotals[n.id]}<span className="text-xs font-normal text-slate-500 ml-1">件</span></div>
+                                <div className="text-xs font-bold text-slate-500 mt-1">{Math.floor(reportData.monthlyNurseDurations[n.id] / 60)}h {reportData.monthlyNurseDurations[n.id] % 60}m</div>
                               </td>
                             ))}
                           </tr>
