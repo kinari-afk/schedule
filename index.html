@@ -1085,7 +1085,7 @@
                           </div>
                           <div className="w-44 md:w-64 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {unassignedVisitsWithLayout.map(v => {
-                               const top = getTop(parseTime(v.startTime)), height = v.duration * PIXELS_PER_MINUTE;
+                               const top = getTop(parseTime(v.startTime)), h = v.duration * PIXELS_PER_MINUTE;
                                const leftOffset = v._col * 20; 
                                const leftStyle = `calc(8px + ${leftOffset}px)`;
                                const widthStyle = `calc(100% - ${16 + leftOffset}px)`;
@@ -1102,7 +1102,7 @@
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
                                    className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${v.requiresFemaleNurse ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
-                                   style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, left: leftStyle, width: widthStyle }}>
+                                   style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
                                         <button 
@@ -1161,8 +1161,8 @@
                                         onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
-                                        className={`absolute left-2 right-2 border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''} ${item.isExcludedFromAutoAssign ? 'bg-slate-50 opacity-90' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(height, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''} ${item.isExcludedFromAutoAssign ? 'bg-slate-50 opacity-90' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
                                         <div className="flex justify-between items-start gap-1">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               <button 
