@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -173,6 +173,9 @@
       
       const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [activeCardId, setActiveCardId] = useState(null);
+
+      const [showAddEventModal, setShowAddEventModal] = useState(false);
+      const [deleteConfirmId, setDeleteConfirmId] = useState(null);
 
       useEffect(() => {
         if (showToast) {
@@ -341,7 +344,6 @@
         return formatDateLabel(selectedDate);
       }, [selectedDate]);
 
-      // 共通の看護師休み判定関数（手動設定を優先）
       const getIsNurseOff = (nurse, dateStr, statuses) => {
         if (!nurse) return false;
         const override = statuses.find(s => s.date === dateStr && s.nurseId === nurse.id);
@@ -379,7 +381,7 @@
           let currentTime = parseTime(nurse.startTime);
           let calculatedStartTime = currentTime;
           let calcVisits = [];
-          let currentLoc = nurse.startLocation;
+          let currentLoc = nurse.startLocation || {x:50, y:50};
           
           sorted.forEach((visit, idx) => {
             const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - currentLoc.x, 2) + Math.pow((visit.location?.y || 50) - currentLoc.y, 2));
@@ -486,7 +488,6 @@
         return layouted;
       }, [visits, selectedDate]);
 
-      // --- 手動での固定／ステータス切り替え処理 ---
       const handleToggleExclude = (visitId) => {
         handleSetVisits(prev => prev.map(v => 
           v.id === visitId ? { ...v, isExcludedFromAutoAssign: !v.isExcludedFromAutoAssign } : v
@@ -506,7 +507,6 @@
           return next;
         });
 
-        // 休みに変更された場合、その看護師に割り当てられている非ロック予定を未割り当てに戻す
         if (isOff) {
           handleSetVisits(prev => prev.map(v => 
             (v.date === dateStr && v.nurseId === nurseId && !v.isExcludedFromAutoAssign)
@@ -618,7 +618,6 @@
               const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
               const isAM = parseTime(visit.startTime) < 12 * 60;
               
-              // 0. 優先担当者1, 2の順に探す (出勤していれば強制割り当て)
               for (const prefName of preferredNurseNames) {
                   if (!prefName) continue;
                   const prefNurseObj = available.find(n => n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name));
@@ -631,7 +630,6 @@
                   }
               }
               
-              // 1. 優先度通常（高）の看護師から探す（訪問時間の均等化 ＋ AM/PMバランス考慮）
               if (!best) {
                 let minTravel = Infinity;
                 let minTotalDur = Infinity;
@@ -658,7 +656,6 @@
                 });
               }
               
-              // 2. 間に合う人がいなければ、優先度低の看護師で間に合う人を探す
               if (!best) {
                 let minTravel = Infinity;
                 let minTotalDur = Infinity;
@@ -685,7 +682,6 @@
                 });
               }
               
-              // 3. 誰も間に合わない場合（遅延してでも割り当てる。時間均等化を考慮）
               if (!best) {
                  let earliest = Infinity;
                  let isBestLow = true;
@@ -822,6 +818,57 @@
 
       const updateCustomTravelTime = (visitId, newTime) => {
         handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, customTravelTime: newTime } : v));
+      };
+
+      const handleAddEvent = (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const title = formData.get('title');
+        const startTime = formData.get('startTime');
+        const duration = parseInt(formData.get('duration'), 10);
+        const nurseIdStr = formData.get('nurseId');
+        const isLocked = formData.get('isLocked') === 'on';
+        
+        const baseEvent = {
+          userName: title,
+          type: 'other',
+          date: selectedDate,
+          dayOfWeek: new Date(selectedDate).getDay(),
+          startTime: startTime,
+          originalStartTime: startTime,
+          duration: duration,
+          requiresFemaleNurse: false,
+          preferredNurseNames: [],
+          isExcludedFromAutoAssign: isLocked,
+          location: { x: 50, y: 50 } 
+        };
+
+        const newEvents = [];
+        if (nurseIdStr === 'all') {
+          const availableNurses = nurses.filter(n => !getIsNurseOff(n, selectedDate, nurseStatuses));
+          availableNurses.forEach((n, idx) => {
+            newEvents.push({
+              ...baseEvent,
+              id: Date.now() + idx,
+              nurseId: n.id,
+              location: n.startLocation || { x: 50, y: 50 }
+            });
+          });
+        } else {
+          const nId = nurseIdStr === 'unassigned' ? null : parseInt(nurseIdStr, 10);
+          const targetNurse = nurses.find(n => n.id === nId);
+          newEvents.push({
+            ...baseEvent,
+            id: Date.now(),
+            nurseId: nId,
+            location: targetNurse?.startLocation || { x: 50, y: 50 }
+          });
+        }
+        
+        handleSetVisits([...visits, ...newEvents]);
+        setShowAddEventModal(false);
+        setToastMessage("予定を追加しました");
+        setShowToast(true);
       };
 
       const handleFetchSheet = async () => {
@@ -1148,6 +1195,14 @@
                     </div>
                     <div className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pb-2 md:pb-0">
                       <button 
+                        onClick={() => setShowAddEventModal(true)}
+                        className="bg-white border border-slate-200 hover:bg-indigo-50 text-indigo-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                        title="会議や研修などの予定を追加"
+                      >
+                        <Briefcase size={16} />
+                        予定を追加
+                      </button>
+                      <button 
                         onClick={handleLockAllToday}
                         className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
                         title="この日の予定と出勤状況を一括固定"
@@ -1220,7 +1275,7 @@
                                 ) : (
                                   <div className="flex flex-col items-center">
                                     <div className="font-black text-slate-800 text-sm flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div>
-                                    <div className="text-[10px] font-black text-slate-400 mt-1 uppercase">{assigned.length} 訪問</div>
+                                    <div className="text-[10px] font-black text-slate-400 mt-1 uppercase">{assigned.length} 予定</div>
                                   </div>
                                 )}
                               </div>
@@ -1244,6 +1299,7 @@
                                const leftOffset = v._col * 20; 
                                const leftStyle = `calc(8px + ${leftOffset}px)`;
                                const widthStyle = `calc(100% - ${16 + leftOffset}px)`;
+                               const isOther = v.type === 'other';
                                
                                return (
                                  <div key={v.id} draggable={!v.isExcludedFromAutoAssign} onDragStart={(e) => { 
@@ -1256,7 +1312,7 @@
                                    onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
-                                   className={`absolute border border-slate-200 border-l-[6px] border-l-slate-400 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${v.requiresFemaleNurse ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? 'bg-slate-100 opacity-60 grayscale-[0.5]' : 'bg-white'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
@@ -1269,23 +1325,30 @@
                                         >
                                           {v.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
                                         </button>
-                                        <h4 className="font-black text-sm md:text-base text-slate-800 truncate">{v.userName}</h4>
+                                        <button 
+                                          type="button"
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(v.id); }}
+                                          className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                          title="削除"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                        <div className={`font-black text-[10px] md:text-xs truncate leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                          {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
+                                          {v.userName}
+                                        </div>
                                      </div>
-                                  </div>
-                                  
-                                  <div className="flex justify-between items-end mb-2">
-                                    <div className="flex flex-col gap-0.5">
-                                      <span className="text-[9px] text-slate-400 font-bold">指定: {v.startTime}</span>
-                                    </div>
-                                    <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{v.duration}分</span>
-                                  </div>
-
-                                  {(v.requiresFemaleNurse || v.isExcludedFromAutoAssign) && (
-                                    <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
-                                      {v.requiresFemaleNurse && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                      {v.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
-                                    </div>
-                                  )}
+                                     <div className="text-[9px] font-bold shrink-0 text-right leading-none pt-0.5">
+                                       {v.originalStartTime && v.originalStartTime !== v.startTime ? (
+                                         <span className="text-orange-600 block">{v.originalStartTime}➔<br/>{v.startTime}</span>
+                                       ) : ( <span className={isOther ? 'text-indigo-400' : 'text-slate-400'}>{v.startTime}</span> )}
+                                     </div>
+                                   </div>
+                                   <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[56px]">
+                                     {v.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                     {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
+                                   </div>
                                  </div>
                                )
                              })}
@@ -1298,6 +1361,8 @@
                                   const top = getTop(parseTime(item.actualStartTime)), h = item.duration * PIXELS_PER_MINUTE;
                                   let prevDep = idx === 0 ? parseTime(sch.calculatedStartTime) : parseTime(assigned[idx-1].departureTime);
                                   const arrival = parseTime(item.arrivalTime), travelH = (arrival - prevDep) * PIXELS_PER_MINUTE;
+                                  const isOther = item.type === 'other';
+                                  
                                   return (
                                     <React.Fragment key={item.id}>
                                       {travelH > 10 && (
@@ -1319,8 +1384,8 @@
                                         onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
-                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : ''} ${item.isExcludedFromAutoAssign ? 'bg-slate-50 opacity-90' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : nurse.color }}>
+                                        className={`absolute left-2 right-2 border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
                                         <div className="flex justify-between items-start gap-1">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               <button 
@@ -1332,7 +1397,17 @@
                                               >
                                                 {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
                                               </button>
-                                              <div className={`font-black text-[10px] md:text-xs truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : 'text-slate-800 group-hover:text-teal-600'}`}>
+                                              <button 
+                                                type="button"
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(item.id); }}
+                                                className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                                title="削除"
+                                              >
+                                                <Trash2 size={12} />
+                                              </button>
+                                              <div className={`font-black text-[10px] md:text-xs truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                                 {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
                                                  {item.userName}
                                               </div>
                                            </div>
@@ -1340,11 +1415,11 @@
                                               {item.originalStartTime && item.originalStartTime !== item.startTime && (
                                                 <span className="text-orange-600 block mb-0.5">元:{item.originalStartTime}</span>
                                               )}
-                                              <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指:{item.startTime}</span>
+                                              <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : (isOther ? "text-indigo-400" : "text-slate-500")}>指:{item.startTime}</span>
                                            </div>
                                         </div>
-                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[26px]">
-                                           {item.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
+                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[56px]">
+                                           {item.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                            {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                         </div>
                                         <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
@@ -1352,7 +1427,7 @@
                                              {item.isLate && <AlertTriangle size={8} className="text-red-500" />}
                                              {item.isLate && <span className="text-red-600 text-[7px]">遅延</span>}
                                            </div>
-                                           <span className="text-slate-300 uppercase">{item.duration}分</span>
+                                           <span className={isOther ? 'text-indigo-400 uppercase' : 'text-slate-300 uppercase'}>{item.duration}分</span>
                                         </div>
                                       </div>
                                     </React.Fragment>
@@ -1404,53 +1479,66 @@
                               <div className="text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
                             </div>
 
-                            {allSchedules[selectedNurse.id]?.visits.map((item, idx) => (
-                              <React.Fragment key={item.id}>
-                                <div className="flex flex-col items-center justify-center h-12 w-12 md:w-16 shrink-0 group">
-                                  <ArrowRight size={16} className="text-slate-300 mb-1 group-hover:text-teal-400 transition-colors" />
-                                  <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 pl-1 pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
-                                    <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
-                                    <span>分</span>
-                                  </div>
-                                </div>
-
-                                <div className={`relative flex flex-col p-3 md:p-4 rounded-2xl border-l-[6px] shadow-md w-44 md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 ${item.isExcludedFromAutoAssign ? 'bg-slate-50 opacity-90' : 'bg-white'} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20'}`}>
-                                  <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
-                                  
-                                  <div className="flex justify-between items-start gap-1 mb-2">
-                                     <div className="flex items-center gap-1 overflow-hidden flex-1">
-                                        <button 
-                                          type="button"
-                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(item.id); }}
-                                          className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${item.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
-                                          title={item.isExcludedFromAutoAssign ? "固定を解除" : "割り当てを固定する"}
-                                        >
-                                          {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
-                                        </button>
-                                        <h4 className="font-black text-sm md:text-base text-slate-800 truncate">{item.userName}</h4>
-                                     </div>
-                                  </div>
-                                  
-                                  <div className="flex justify-between items-end mb-2">
-                                    <div className="flex flex-col gap-0.5">
-                                      <span className="text-[9px] text-slate-400 font-bold">指定: {item.startTime}</span>
-                                      <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                            {allSchedules[selectedNurse.id]?.visits.map((item, idx) => {
+                              const isOther = item.type === 'other';
+                              return (
+                                <React.Fragment key={item.id}>
+                                  <div className="flex flex-col items-center justify-center h-12 w-12 md:w-16 shrink-0 group">
+                                    <ArrowRight size={16} className="text-slate-300 mb-1 group-hover:text-teal-400 transition-colors" />
+                                    <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 pl-1 pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
+                                      <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
+                                      <span>分</span>
                                     </div>
-                                    <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                   </div>
 
-                                  {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign) && (
-                                    <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
-                                      {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
-                                      {item.requiresFemaleNurse && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                      {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
-                                      {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
-                                      {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                  <div className={`relative flex flex-col p-3 md:p-4 rounded-2xl border-l-[6px] shadow-md w-44 md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}>
+                                    <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                    
+                                    <div className="flex justify-between items-start gap-1 mb-2">
+                                       <div className="flex items-center gap-1 overflow-hidden flex-1">
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(item.id); }}
+                                            className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${item.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
+                                            title={item.isExcludedFromAutoAssign ? "固定を解除" : "割り当てを固定する"}
+                                          >
+                                            {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
+                                          </button>
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(item.id); }}
+                                            className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                            title="削除"
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
+                                          <h4 className={`font-black text-sm md:text-base truncate ${isOther ? 'text-indigo-800' : 'text-slate-800'}`}>
+                                            {isOther && <Briefcase size={16} className="inline mr-1 text-indigo-500" />}
+                                            {item.userName}
+                                          </h4>
+                                       </div>
                                     </div>
-                                  )}
-                                </div>
-                              </React.Fragment>
-                            ))}
+                                    
+                                    <div className="flex justify-between items-end mb-2">
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[9px] text-slate-400 font-bold">指定: {item.startTime}</span>
+                                        <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                      </div>
+                                      <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
+                                    </div>
+
+                                    {(item.requiresFemaleNurse || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign) && (
+                                      <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
+                                        {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
+                                        {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                        {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
+                                        {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                </React.Fragment>
+                              );
+                            })}
 
                             <div className="flex flex-col items-center justify-center h-12 w-12 md:w-16 shrink-0">
                                <ArrowRight size={16} className="text-slate-300 mb-1" />
@@ -1510,16 +1598,17 @@
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                         <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
                           <span>{formatDateLabel(selectedDate)} リスト</span>
-                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}名</span>
+                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}件</span>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse min-w-[700px]">
                             <thead>
                               <tr className="bg-white text-slate-400 text-[11px] uppercase tracking-widest border-b border-slate-100">
                                 <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
-                                <th className="p-6">氏名</th>
+                                <th className="p-6">名称/氏名</th>
                                 <th className="p-6">所要時間</th>
                                 <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                <th className="p-6 text-right">操作</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -1527,14 +1616,17 @@
                                 <tr key={v.id} className="hover:bg-slate-50/80 transition-colors group">
                                   <td className="p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
                                   <td className="p-6 font-bold text-slate-700">
+                                    {v.type === 'other' && <Briefcase size={14} className="inline mr-1 text-indigo-500" />}
                                     {v.userName}
                                     <div className="flex flex-wrap gap-1 mt-1.5">
                                       {v.requiresFemaleNurse && <span className="text-[10px] text-pink-600 bg-pink-50 px-2 py-0.5 rounded-md border border-pink-100 whitespace-nowrap">女性限定</span>}
-                                      {v.preferredNurseNames && v.preferredNurseNames.length > 0 && <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 whitespace-nowrap">優先: {v.preferredNurseNames.join(', ')}</span>}
                                     </div>
                                   </td>
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
                                   <td className="p-6"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5"><option value="unassigned">-- 未指定 --</option>{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
+                                  <td className="p-6 text-right">
+                                    <button onClick={() => setDeleteConfirmId(v.id)} className="text-slate-300 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-colors"><Trash2 size={18} /></button>
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1591,6 +1683,72 @@
               )}
             </div>
           </main>
+
+          {showAddEventModal && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-2xl font-black text-slate-800">予定を追加</h3>
+                  <button onClick={() => setShowAddEventModal(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full"><X size={20} /></button>
+                </div>
+                <form onSubmit={handleAddEvent} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">タイトル (会議・研修など)</label>
+                    <input required type="text" name="title" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">開始時間</label>
+                      <input required type="time" name="startTime" defaultValue="12:00" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                    </div>
+                    <div className="w-28">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">時間(分)</label>
+                      <input required type="number" name="duration" defaultValue="60" step="5" min="5" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">担当者</label>
+                    <select name="nurseId" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold">
+                      <option value="unassigned">未割り当て</option>
+                      <option value="all">全員 (出勤中の全員に追加)</option>
+                      {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 mt-4 bg-red-50 p-3 rounded-xl border border-red-100">
+                     <input type="checkbox" id="lockEvent" name="isLocked" defaultChecked className="w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500" />
+                     <label htmlFor="lockEvent" className="text-sm font-bold text-red-600">自動編成から除外（時間を固定する）</label>
+                  </div>
+                  <button type="submit" className="w-full mt-6 py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30">
+                    追加する
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {deleteConfirmId && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl">
+                <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-6 mx-auto">
+                  <Trash2 size={32} />
+                </div>
+                <h3 className="text-2xl font-black text-slate-800 text-center mb-2">予定の削除</h3>
+                <p className="text-sm font-bold text-slate-500 text-center mb-8 leading-relaxed">
+                  この予定を削除しますか？<br/>
+                  <span className="text-xs text-red-500">※スプレッドシートの訪問予定の場合は、再度同期すると復活します。</span>
+                </p>
+                <div className="flex gap-4">
+                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-4 rounded-2xl font-black text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">キャンセル</button>
+                  <button onClick={() => {
+                     handleSetVisits(prev => prev.filter(v => v.id !== deleteConfirmId));
+                     setDeleteConfirmId(null);
+                     setToastMessage("予定を削除しました");
+                     setShowToast(true);
+                  }} className="flex-1 py-4 rounded-2xl font-black text-white bg-red-500 hover:bg-red-600 transition-colors shadow-lg shadow-red-500/30">削除する</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showResetConfirm && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
