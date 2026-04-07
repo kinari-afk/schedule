@@ -1088,35 +1088,54 @@
             }
           }
           
-          const newVisits = [...visits];
+          const nextVisits = [];
           let addedCount = 0;
           let updatedCount = 0;
+          let deletedCount = 0;
+
+          visits.forEach(v => {
+            if (v.type === 'other') {
+              nextVisits.push(v);
+              return;
+            }
+
+            const sheetData = result.find(nv => 
+              normalizeName(v.userName) === normalizeName(nv.userName) && 
+              v.date === nv.date && 
+              v.originalStartTime === nv.originalStartTime
+            );
+
+            if (sheetData) {
+              nextVisits.push({ 
+                ...sheetData, 
+                id: v.id, 
+                nurseId: v.nurseId, 
+                startTime: v.startTime, 
+                customTravelTime: v.customTravelTime,
+                isExcludedFromAutoAssign: v.isExcludedFromAutoAssign 
+              });
+              updatedCount++;
+            } else {
+              deletedCount++;
+            }
+          });
 
           result.forEach(nv => {
-            const existingIndex = newVisits.findIndex(v => 
+            const isExisting = visits.some(v => 
+              v.type !== 'other' &&
               normalizeName(v.userName) === normalizeName(nv.userName) && 
               v.date === nv.date && 
               v.originalStartTime === nv.originalStartTime
             );
             
-            if (existingIndex !== -1) {
-              newVisits[existingIndex] = { 
-                ...nv, 
-                id: newVisits[existingIndex].id, 
-                nurseId: newVisits[existingIndex].nurseId, 
-                startTime: newVisits[existingIndex].startTime, 
-                customTravelTime: newVisits[existingIndex].customTravelTime,
-                isExcludedFromAutoAssign: newVisits[existingIndex].isExcludedFromAutoAssign 
-              };
-              updatedCount++;
-            } else {
-              newVisits.push(nv);
+            if (!isExisting) {
+              nextVisits.push(nv);
               addedCount++;
             }
           });
           
-          handleSetVisits(newVisits); 
-          setToastMessage(`同期完了: 新規追加 ${addedCount}件 / 更新 ${updatedCount}件`); 
+          handleSetVisits(nextVisits); 
+          setToastMessage(`同期完了: 新規追加 ${addedCount}件 / 更新 ${updatedCount}件 / 削除 ${deletedCount}件`); 
           setShowToast(true);
         } catch (e) { setToastMessage("データの同期に失敗"); setShowToast(true); } 
         finally { setIsLoadingSheet(false); }
