@@ -106,8 +106,6 @@
     };
 
     const DISPLAY_DAYS = ['月', '火', '水', '木', '金', '土', '日'];
-    const JS_DAY_TO_DISPLAY_INDEX = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 0: 6 };
-    const DISPLAY_INDEX_TO_JS_DAY = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 0 };
     const JS_DAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
     const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
@@ -363,7 +361,7 @@
           let currentLoc = nurse.startLocation;
           
           sorted.forEach((visit, idx) => {
-            const dist = Math.sqrt(Math.pow(visit.location.x - currentLoc.x, 2) + Math.pow(visit.location.y - currentLoc.y, 2));
+            const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - currentLoc.x, 2) + Math.pow((visit.location?.y || 50) - currentLoc.y, 2));
             const travelTime = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
             
             if (idx === 0) {
@@ -387,12 +385,12 @@
               departureTime: formatTime(actualStart + visit.duration) 
             });
             currentTime = actualStart + visit.duration; 
-            currentLoc = visit.location;
+            currentLoc = visit.location || {x: 50, y: 50};
           });
           
           let finalTravelTime = 0, returnTime = null;
           if (calcVisits.length > 0) {
-            finalTravelTime = baseTravelTime + Math.round(Math.sqrt(Math.pow(currentLoc.x - nurse.startLocation.x, 2) + Math.pow(currentLoc.y - nurse.startLocation.y, 2)) * 0.05);
+            finalTravelTime = baseTravelTime + Math.round(Math.sqrt(Math.pow(currentLoc.x - (nurse.startLocation?.x || 50), 2) + Math.pow(currentLoc.y - (nurse.startLocation?.y || 50), 2)) * 0.05);
             returnTime = formatTime(currentTime + finalTravelTime);
           } else {
             returnTime = nurse.startTime;
@@ -502,10 +500,27 @@
             const states = available.map(n => {
               const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
               const last = mine.length > 0 ? mine[mine.length - 1] : null;
+              
+              let totalDuration = 0;
+              let amDuration = 0;
+              let pmDuration = 0;
+              mine.forEach(v => {
+                  const dur = v.duration || 30;
+                  totalDuration += dur;
+                  if (parseTime(v.startTime) < 12 * 60) {
+                      amDuration += dur;
+                  } else {
+                      pmDuration += dur;
+                  }
+              });
+
               return { 
                   id: n.id, 
                   time: last ? parseTime(last.startTime) + (last.duration || 30) : parseTime(n.startTime), 
                   loc: last && last.location ? last.location : (n.startLocation || {x: 50, y: 50}),
+                  totalDuration,
+                  amDuration,
+                  pmDuration,
                   visitCount: mine.length
               };
             });
@@ -517,6 +532,7 @@
               
               const requiresFemale = visit.requiresFemaleNurse;
               const preferredNurseNames = visit.preferredNurseNames || (visit.preferredNurseName ? [visit.preferredNurseName] : []);
+              const isAM = parseTime(visit.startTime) < 12 * 60;
               
               // 0. 優先担当者1, 2の順に探す (出勤していれば強制割り当て)
               for (const prefName of preferredNurseNames) {
@@ -531,10 +547,11 @@
                   }
               }
               
-              // 1. 優先度通常（高）の看護師から探す（訪問件数の均等化）
+              // 1. 優先度通常（高）の看護師から探す（訪問時間の均等化 ＋ AM/PMバランス考慮）
               if (!best) {
                 let minTravel = Infinity;
-                let minVisits = Infinity;
+                let minTotalDur = Infinity;
+                let minBalance = Infinity;
                 states.forEach(s => {
                   const nDef = available.find(n => n.id === s.id);
                   if (nDef && nDef.isLowPriority) return; 
@@ -542,9 +559,14 @@
                   
                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+                  
                   if (s.time + travel <= parseTime(visit.startTime)) {
-                      if (s.visitCount < minVisits || (s.visitCount === minVisits && travel < minTravel)) {
-                          minVisits = s.visitCount;
+                      const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
+                      if (s.totalDuration < minTotalDur || 
+                         (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
+                         (s.totalDuration === minTotalDur && balanceScore === minBalance && travel < minTravel)) {
+                          minTotalDur = s.totalDuration;
+                          minBalance = balanceScore;
                           minTravel = travel;
                           best = s;
                       }
@@ -555,6 +577,8 @@
               // 2. 間に合う人がいなければ、優先度低の看護師で間に合う人を探す
               if (!best) {
                 let minTravel = Infinity;
+                let minTotalDur = Infinity;
+                let minBalance = Infinity;
                 states.forEach(s => {
                   const nDef = available.find(n => n.id === s.id);
                   if (nDef && !nDef.isLowPriority) return; 
@@ -562,18 +586,27 @@
                   
                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  if (s.time + travel <= parseTime(visit.startTime) && travel < minTravel) { 
-                      minTravel = travel; 
-                      best = s; 
+                  
+                  if (s.time + travel <= parseTime(visit.startTime)) {
+                      const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
+                      if (s.totalDuration < minTotalDur || 
+                         (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
+                         (s.totalDuration === minTotalDur && balanceScore === minBalance && travel < minTravel)) {
+                          minTotalDur = s.totalDuration;
+                          minBalance = balanceScore;
+                          minTravel = travel;
+                          best = s;
+                      }
                   }
                 });
               }
               
-              // 3. 誰も間に合わない場合（遅延してでも割り当てる。件数均等化を考慮）
+              // 3. 誰も間に合わない場合（遅延してでも割り当てる。時間均等化を考慮）
               if (!best) {
                  let earliest = Infinity;
                  let isBestLow = true;
-                 let minVisits = Infinity;
+                 let minTotalDur = Infinity;
+                 let minBalance = Infinity;
                  states.forEach(s => {
                    const nDef = available.find(n => n.id === s.id);
                    if (requiresFemale && nDef && !nDef.isFemale) return; 
@@ -582,14 +615,17 @@
                    const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
                    const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
                    const arrival = s.time + travel;
+                   const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
                    
                    if (arrival < earliest || 
                       (arrival === earliest && isBestLow && !isLow) ||
-                      (arrival === earliest && isBestLow === isLow && s.visitCount < minVisits)) { 
+                      (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
+                      (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
                        earliest = arrival; 
                        best = s; 
                        isBestLow = isLow;
-                       minVisits = s.visitCount;
+                       minTotalDur = s.totalDuration;
+                       minBalance = balanceScore;
                    }
                  });
               }
@@ -599,9 +635,17 @@
                 newVisits[vIdx].nurseId = best.id;
                 const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - best.loc.x, 2) + Math.pow((visit.location?.y || 50) - best.loc.y, 2));
                 const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + (visit.duration || 30);
+                const dur = visit.duration || 30;
+                
+                best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + dur;
                 best.loc = visit.location || {x: 50, y: 50};
-                best.visitCount++; 
+                best.totalDuration += dur;
+                if (isAM) {
+                    best.amDuration += dur;
+                } else {
+                    best.pmDuration += dur;
+                }
+                best.visitCount++;
                 assignedCount++;
               }
             });
@@ -1109,25 +1153,28 @@
                                           type="button"
                                           onPointerDown={(e) => e.stopPropagation()}
                                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(v.id); }}
-                                          className={`shrink-0 p-1 rounded-lg transition-colors shadow-sm border ${v.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
+                                          className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${v.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
                                           title={v.isExcludedFromAutoAssign ? "自動編成対象に戻す" : "自動編成から除外する"}
                                         >
                                           {v.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
                                         </button>
-                                        <div className={`font-black text-[10px] md:text-xs truncate leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : 'text-slate-800 group-hover:text-teal-600'}`}>
-                                          {v.userName}
-                                        </div>
+                                        <h4 className="font-black text-sm md:text-base text-slate-800 truncate">{v.userName}</h4>
                                      </div>
-                                     <div className="text-[9px] font-bold shrink-0 text-right leading-none pt-0.5">
-                                       {v.originalStartTime && v.originalStartTime !== v.startTime ? (
-                                         <span className="text-orange-600 block">{v.originalStartTime}➔<br/>{v.startTime}</span>
-                                       ) : ( <span className="text-slate-400">{v.startTime}</span> )}
-                                     </div>
-                                   </div>
-                                   <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[26px]">
-                                     {v.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                     {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">自動編成対象外</span>}
-                                   </div>
+                                  </div>
+                                  
+                                  <div className="flex justify-between items-end mb-2">
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="text-[9px] text-slate-400 font-bold">指定: {v.startTime}</span>
+                                    </div>
+                                    <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{v.duration}分</span>
+                                  </div>
+
+                                  {(v.requiresFemaleNurse || v.isExcludedFromAutoAssign) && (
+                                    <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
+                                      {v.requiresFemaleNurse && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                      {v.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                    </div>
+                                  )}
                                  </div>
                                )
                              })}
@@ -1185,9 +1232,8 @@
                                               <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : "text-slate-500"}>指:{item.startTime}</span>
                                            </div>
                                         </div>
-                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[26px]">
+                                        <div className="flex flex-wrap gap-0.5 mt-0.5">
                                            {item.requiresFemaleNurse && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                           {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                         </div>
                                         <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
                                            <div className="flex items-center gap-0.5">
