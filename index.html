@@ -913,6 +913,18 @@
             }
         }
 
+        if (targetNurseId && targetVisit && targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
+            const targetNurse = nurses.find(n => n.id === targetNurseId);
+            if (targetNurse) {
+                const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
+                if (isExcluded) {
+                    setToastMessage("除外スタッフに設定されているため、割り当てできません");
+                    setShowToast(true);
+                    return;
+                }
+            }
+        }
+
         const offsetY = parseFloat(e.dataTransfer.getData('offsetY') || 0);
         const rect = e.currentTarget.getBoundingClientRect();
         const y = (e.clientY - rect.top) - offsetY;
@@ -942,6 +954,18 @@
             }
         }
         
+        if (parsedNurseId && targetVisit && targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
+            const targetNurse = nurses.find(n => n.id === parsedNurseId);
+            if (targetNurse) {
+                const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
+                if (isExcluded) {
+                    setToastMessage("除外スタッフに設定されているため、割り当てできません");
+                    setShowToast(true);
+                    return;
+                }
+            }
+        }
+
         handleSetVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
       };
 
@@ -1493,7 +1517,6 @@
                                    </div>
                                    <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[56px]">
                                      {v.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                     {v.excludedNurseNames && v.excludedNurseNames.length > 0 && !isOther && <span className="text-[8px] bg-slate-200 text-slate-600 px-1 py-0.5 rounded-sm whitespace-nowrap">除外:{v.excludedNurseNames.join(',')}</span>}
                                      {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                    </div>
                                  </div>
@@ -1567,7 +1590,6 @@
                                         </div>
                                         <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[56px]">
                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                           {item.excludedNurseNames && item.excludedNurseNames.length > 0 && !isOther && <span className="text-[8px] bg-slate-200 text-slate-600 px-1 py-0.5 rounded-sm whitespace-nowrap">除外:{item.excludedNurseNames.join(',')}</span>}
                                            {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                         </div>
                                         <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
@@ -1675,12 +1697,11 @@
                                       <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                     </div>
 
-                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign) && (
+                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign) && (
                                       <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
                                         {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
                                         {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                         {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
-                                        {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
                                         {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
                                         {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
                                       </div>
