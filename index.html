@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -598,10 +598,11 @@
         const newName = formData.get('userName');
         const newStartTime = formData.get('startTime');
         const newDuration = parseInt(formData.get('duration'), 10);
+        const newComment = formData.get('comment');
         
         handleSetVisits(prev => prev.map(v => 
           v.id === editingVisit.id 
-            ? { ...v, userName: newName, startTime: newStartTime, duration: newDuration }
+            ? { ...v, userName: newName, startTime: newStartTime, duration: newDuration, comment: newComment }
             : v
         ));
         
@@ -750,7 +751,6 @@
                   return excludedNurseNames.some(ex => nurseName.includes(ex) || ex.includes(nurseName));
               };
               
-              // 0. 優先担当者1, 2の順に探す (出勤していれば強制割り当て。ただし除外以外)
               for (const prefName of preferredNurseNames) {
                   if (!prefName) continue;
                   const prefNurseObj = available.find(n => (n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name)) && !isExcluded(n.name));
@@ -763,7 +763,6 @@
                   }
               }
               
-              // 1. 優先度通常（高）の看護師から探す（訪問時間の均等化 ＋ AM/PMバランス考慮 ＋ 勤務時間内）
               if (!best) {
                 let minTravel = Infinity;
                 let minTotalDur = Infinity;
@@ -793,7 +792,6 @@
                 });
               }
               
-              // 2. 間に合う人がいなければ、優先度低の看護師で間に合う人を探す (勤務時間内)
               if (!best) {
                 let minTravel = Infinity;
                 let minTotalDur = Infinity;
@@ -823,7 +821,6 @@
                 });
               }
               
-              // 3. 誰も間に合わない場合（遅延してでも割り当てる。時間均等化を考慮。ただし勤務時間内には終わる人）
               if (!best) {
                  let earliest = Infinity;
                  let isBestLow = true;
@@ -857,7 +854,6 @@
                  });
               }
               
-              // 4. それでもダメなら、勤務時間を無視して（残業）一番早く着く・あるいは件数が少ない人に割り当て
               if (!best) {
                  let earliest = Infinity;
                  let isBestLow = true;
@@ -1552,6 +1548,15 @@
                                    onContextMenu={(e) => handleRightClick(e, v)}
                                    className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
+                                   
+                                   {v.comment && (
+                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-2.5 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
+                                       <div className="font-bold text-slate-300 mb-0.5 flex items-center gap-1"><MessageSquare size={10}/>コメント</div>
+                                       <div className="whitespace-pre-wrap leading-relaxed">{v.comment}</div>
+                                       <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
+                                     </div>
+                                   )}
+
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
                                         <button 
@@ -1581,7 +1586,7 @@
                                         >
                                           <Trash2 size={12} />
                                         </button>
-                                        <div className={`font-black text-[10px] md:text-xs truncate leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                        <div className={`font-black text-[10px] md:text-xs truncate flex-1 leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
                                           {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
                                           {v.userName}
                                         </div>
@@ -1595,6 +1600,7 @@
                                    <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[86px]">
                                      {v.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                      {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
+                                     {v.comment && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8}/> メモ</span>}
                                    </div>
                                  </div>
                                )
@@ -1632,8 +1638,17 @@
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
                                         onContextMenu={(e) => handleRightClick(e, item)}
-                                        className={`absolute left-2 right-2 bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        className={`absolute left-2 right-2 group bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
+                                        
+                                        {item.comment && (
+                                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-2.5 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
+                                            <div className="font-bold text-slate-300 mb-0.5 flex items-center gap-1"><MessageSquare size={10}/>コメント</div>
+                                            <div className="whitespace-pre-wrap leading-relaxed">{item.comment}</div>
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
+                                          </div>
+                                        )}
+
                                         <div className="flex justify-between items-start gap-1">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               <button 
@@ -1678,6 +1693,7 @@
                                         <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[86px]">
                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                            {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
+                                           {item.comment && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8}/> メモ</span>}
                                         </div>
                                         <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
                                            <div className="flex items-center gap-0.5">
@@ -1748,8 +1764,17 @@
                                     </div>
                                   </div>
 
-                                  <div className={`relative flex flex-col p-3 md:p-4 rounded-2xl border-l-[6px] shadow-md w-44 md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                  <div className={`relative flex flex-col p-3 md:p-4 rounded-2xl border-l-[6px] shadow-md w-44 md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
                                     onContextMenu={(e) => handleRightClick(e, item)}>
+                                    
+                                    {item.comment && (
+                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-3 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
+                                        <div className="font-bold text-slate-300 mb-1 flex items-center gap-1"><MessageSquare size={12}/>コメント</div>
+                                        <div className="whitespace-pre-wrap leading-relaxed">{item.comment}</div>
+                                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-slate-800 rotate-45"></div>
+                                      </div>
+                                    )}
+
                                     <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                     
                                     <div className="flex justify-between items-start gap-1 mb-2">
@@ -1793,7 +1818,7 @@
                                       <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                     </div>
 
-                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign) && (
+                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment) && (
                                       <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
                                         {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
                                         {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
@@ -1801,6 +1826,7 @@
                                         {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
                                         {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
                                         {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                        {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
                                       </div>
                                     )}
                                   </div>
@@ -1880,7 +1906,7 @@
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                         <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
                           <span>{formatDateLabel(selectedDate)} リスト</span>
-                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}名</span>
+                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}件</span>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse min-w-[700px]">
@@ -2112,6 +2138,10 @@
                       <label className="block text-xs font-bold text-slate-500 mb-1">時間(分)</label>
                       <input required type="number" name="duration" defaultValue={editingVisit.duration} step="5" min="5" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">コメント・連絡事項</label>
+                    <textarea name="comment" defaultValue={editingVisit.comment || ''} rows="2" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold resize-none" placeholder="引き継ぎ事項やメモなどを入力"></textarea>
                   </div>
                   <button type="submit" className="w-full mt-6 py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30">
                     保存する
