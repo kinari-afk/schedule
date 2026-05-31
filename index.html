@@ -182,7 +182,6 @@
       const [showAddEventModal, setShowAddEventModal] = useState(false);
       const [deleteConfirmId, setDeleteConfirmId] = useState(null);
       
-      // 編集用モーダルの状態
       const [editingVisit, setEditingVisit] = useState(null);
 
       useEffect(() => {
@@ -333,11 +332,6 @@
         setSelectedDate(newDate);
       };
 
-      const scheduleEndDate = useMemo(() => {
-        if (displayDates.length === 0) return "";
-        return displayDates[displayDates.length - 1];
-      }, [displayDates]);
-
       useEffect(() => {
         if (displayDates.length > 0 && !displayDates.includes(selectedDate)) {
           setSelectedDate(displayDates[0]);
@@ -348,17 +342,35 @@
         setSelectedDate(dateStr);
       };
 
-      const getIsNurseOff = (nurse, dateStr, statuses) => {
-        if (!nurse) return false;
+      const getIsNurseOffType = (nurse, dateStr, statuses) => {
+        if (!nurse) return 'work';
         const override = statuses.find(s => s.date === dateStr && s.nurseId === nurse.id);
         if (override && override.status) {
-          return override.status === 'off';
+            if (override.status === 'off') return 'full';
+            if (override.status === 'am_off') return 'AM';
+            if (override.status === 'pm_off') return 'PM';
+            if (override.status === 'work') return 'work';
         }
-        return isNurseOff(nurse, dateStr);
+        
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return 'work';
+        const jsDayOfWeek = d.getDay();
+        
+        if (nurse.specificOffDays) {
+            const spec = nurse.specificOffDays.find(s => typeof s === 'string' ? s === dateStr : s.date === dateStr);
+            if (spec) return typeof spec === 'string' ? 'full' : spec.type;
+        }
+        
+        if (nurse.offDays) {
+            const off = nurse.offDays.find(o => typeof o === 'number' ? o === jsDayOfWeek : o.day === jsDayOfWeek);
+            if (off) return typeof off === 'number' ? 'full' : off.type;
+        }
+        
+        return 'work';
       };
 
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
-      const isSelectedNurseOff = selectedNurse ? getIsNurseOff(selectedNurse, selectedDate, nurseStatuses) : false;
+      const selectedNurseOffType = selectedNurse ? getIsNurseOffType(selectedNurse, selectedDate, nurseStatuses) : 'work';
 
       const unassignedCount = visits.filter(v => v.date === selectedDate && v.nurseId === null).length;
       
@@ -376,13 +388,24 @@
       const allSchedules = useMemo(() => {
         const schedules = {};
         nurses.forEach(nurse => {
-          const isOff = getIsNurseOff(nurse, selectedDate, nurseStatuses);
-          if (isOff) { schedules[nurse.id] = { isOff: true, visits: [], calculatedStartTime: nurse.startTime }; return; }
+          const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
+          if (offType === 'full') { schedules[nurse.id] = { isOff: true, offType: 'full', visits: [], calculatedStartTime: nurse.startTime }; return; }
           
           const assigned = visits.filter(v => v.nurseId === nurse.id && v.date === selectedDate);
           const sorted = [...assigned].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
           
-          let currentTime = parseTime(nurse.startTime);
+          let workStartTimeMin = parseTime(nurse.startTime);
+          let workEndTimeMin = parseTime(nurse.endTime || '17:30');
+          
+          if (offType === 'AM') {
+              workStartTimeMin = parseTime('13:30');
+              workEndTimeMin = parseTime('17:30');
+          } else if (offType === 'PM') {
+              workStartTimeMin = parseTime('08:00');
+              workEndTimeMin = parseTime('12:30');
+          }
+
+          let currentTime = workStartTimeMin;
           let calculatedStartTime = currentTime;
           let calcVisits = [];
           let currentLoc = nurse.startLocation || {x:50, y:50};
@@ -420,9 +443,18 @@
             finalTravelTime = baseTravelTime + Math.round(Math.sqrt(Math.pow(currentLoc.x - (nurse.startLocation?.x || 50), 2) + Math.pow(currentLoc.y - (nurse.startLocation?.y || 50), 2)) * 0.05);
             returnTime = formatTime(currentTime + finalTravelTime);
           } else {
-            returnTime = nurse.startTime;
+            returnTime = formatTime(workStartTimeMin);
           }
-          schedules[nurse.id] = { isOff: false, visits: calcVisits, returnTime, finalTravelTime, calculatedStartTime: formatTime(calculatedStartTime) };
+          schedules[nurse.id] = { 
+            isOff: false, 
+            offType, 
+            visits: calcVisits, 
+            returnTime, 
+            finalTravelTime, 
+            calculatedStartTime: formatTime(calculatedStartTime),
+            workStartTimeStr: formatTime(workStartTimeMin),
+            workEndTimeMin: workEndTimeMin
+          };
         });
         return schedules;
       }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses]);
@@ -431,9 +463,9 @@
         const sch = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
         let tt = 0, tv = 0, lc = 0;
         sch.forEach(s => { tt += s.travelTime; tv += s.duration; if (s.isLate) lc++; });
-        if (sch.length > 0 && selectedNurse && !isSelectedNurseOff) { tt += allSchedules[selectedNurse.id]?.finalTravelTime || 0; }
+        if (sch.length > 0 && selectedNurse && selectedNurseOffType !== 'full') { tt += allSchedules[selectedNurse.id]?.finalTravelTime || 0; }
         return { totalTravel: tt, totalVisit: tv, count: sch.length, lateCount: lc };
-      }, [allSchedules, selectedNurse, isSelectedNurseOff]);
+      }, [allSchedules, selectedNurse, selectedNurseOffType]);
 
       const unassignedVisitsWithLayout = useMemo(() => {
         const filtered = visits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
@@ -617,25 +649,37 @@
         ));
       };
 
-      const toggleNurseStatus = (nurseId, dateStr, isOff) => {
+      const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
+        let nextStatus = 'work';
+        if (currentOffType === 'work') nextStatus = 'off';
+        else if (currentOffType === 'full') nextStatus = 'am_off';
+        else if (currentOffType === 'AM') nextStatus = 'pm_off';
+        else if (currentOffType === 'PM') nextStatus = 'work';
+
         handleSetNurseStatuses(prev => {
           const next = [...prev];
           const idx = next.findIndex(s => s.date === dateStr && s.nurseId === nurseId);
           if (idx !== -1) {
             if (next[idx].isLocked) return next; 
-            next[idx] = { ...next[idx], status: isOff ? 'off' : 'work' };
+            next[idx] = { ...next[idx], status: nextStatus };
           } else {
-            next.push({ date: dateStr, nurseId, status: isOff ? 'off' : 'work', isLocked: false });
+            next.push({ date: dateStr, nurseId, status: nextStatus, isLocked: false });
           }
           return next;
         });
 
-        if (isOff) {
-          handleSetVisits(prev => prev.map(v => 
-            (v.date === dateStr && v.nurseId === nurseId && !v.isExcludedFromAutoAssign)
-              ? { ...v, nurseId: null, startTime: v.originalStartTime || v.startTime, customTravelTime: null }
-              : v
-          ));
+        if (nextStatus !== 'work') {
+          handleSetVisits(prev => prev.map(v => {
+            if (v.date === dateStr && v.nurseId === nurseId && !v.isExcludedFromAutoAssign) {
+                const targetStart = parseTime(v.startTime);
+                if (nextStatus === 'off' || 
+                   (nextStatus === 'am_off' && targetStart < parseTime('13:30')) ||
+                   (nextStatus === 'pm_off' && targetStart >= parseTime('12:30'))) {
+                    return { ...v, nurseId: null, startTime: v.originalStartTime || v.startTime, customTravelTime: null };
+                }
+            }
+            return v;
+          }));
         }
       };
 
@@ -647,8 +691,12 @@
             next[idx] = { ...next[idx], isLocked: !next[idx].isLocked };
           } else {
             const nurse = nurses.find(n => n.id === nurseId);
-            const isOff = isNurseOff(nurse, dateStr);
-            next.push({ date: dateStr, nurseId, status: isOff ? 'off' : 'work', isLocked: true });
+            const offType = getIsNurseOffType(nurse, dateStr, []);
+            let st = 'work';
+            if(offType==='full') st='off';
+            else if(offType==='AM') st='am_off';
+            else if(offType==='PM') st='pm_off';
+            next.push({ date: dateStr, nurseId, status: st, isLocked: true });
           }
           return next;
         });
@@ -660,8 +708,12 @@
         ));
 
         const currentStatuses = nurses.map(n => {
-          const isOff = getIsNurseOff(n, selectedDate, nurseStatuses);
-          return { date: selectedDate, nurseId: n.id, status: isOff ? 'off' : 'work', isLocked: true };
+          const offType = getIsNurseOffType(n, selectedDate, nurseStatuses);
+          let st = 'work';
+          if(offType==='full') st='off';
+          else if(offType==='AM') st='am_off';
+          else if(offType==='PM') st='pm_off';
+          return { date: selectedDate, nurseId: n.id, status: st, isLocked: true };
         });
         
         handleSetNurseStatuses(prev => {
@@ -695,8 +747,15 @@
       };
 
       const handleAutoAssign = () => {
-        const available = nurses.filter(n => !getIsNurseOff(n, selectedDate, nurseStatuses));
-        if (available.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
+        const availableStates = [];
+        nurses.forEach(n => {
+            const offType = getIsNurseOffType(n, selectedDate, nurseStatuses);
+            if (offType !== 'full') {
+                availableStates.push({ nurse: n, offType });
+            }
+        });
+
+        if (availableStates.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         setIsOptimizing(true);
         
         setTimeout(() => {
@@ -704,7 +763,7 @@
             const newVisits = [...visits];
             const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
             
-            const states = available.map(n => {
+            const states = availableStates.map(({nurse: n, offType}) => {
               const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
               const last = mine.length > 0 ? mine[mine.length - 1] : null;
               
@@ -721,17 +780,30 @@
                   }
               });
               
-              const endTimeMin = parseTime(n.endTime || '17:30');
+              let startTimeMin = parseTime(n.startTime);
+              let endTimeMin = parseTime(n.endTime || '17:30');
+
+              if (offType === 'AM') {
+                  startTimeMin = parseTime('13:30');
+                  endTimeMin = parseTime('17:30');
+              } else if (offType === 'PM') {
+                  startTimeMin = parseTime('08:00');
+                  endTimeMin = parseTime('12:30');
+              }
+
+              let time = last ? parseTime(last.startTime) + (last.duration || 30) : startTimeMin;
 
               return { 
                   id: n.id, 
-                  time: last ? parseTime(last.startTime) + (last.duration || 30) : parseTime(n.startTime), 
+                  offType,
+                  time, 
                   loc: last && last.location ? last.location : (n.startLocation || {x: 50, y: 50}),
                   totalDuration,
                   amDuration,
                   pmDuration,
                   visitCount: mine.length,
-                  endTimeMin: endTimeMin
+                  startTimeMin,
+                  endTimeMin
               };
             });
             
@@ -743,7 +815,8 @@
               const requiresFemale = visit.requiresFemaleNurse;
               const preferredNurseNames = visit.preferredNurseNames || [];
               const excludedNurseNames = visit.excludedNurseNames || [];
-              const isAM = parseTime(visit.startTime) < 12 * 60;
+              const targetStart = parseTime(visit.startTime);
+              const isAM = targetStart < 12 * 60;
               const dur = visit.duration || 30;
 
               const isExcluded = (nurseName) => {
@@ -753,10 +826,10 @@
               
               for (const prefName of preferredNurseNames) {
                   if (!prefName) continue;
-                  const prefNurseObj = available.find(n => (n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name)) && !isExcluded(n.name));
+                  const prefNurseObj = availableStates.find(({nurse: n}) => (n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name)) && !isExcluded(n.name));
                   if (prefNurseObj) {
-                      const s = states.find(st => st.id === prefNurseObj.id);
-                      if (s) {
+                      const s = states.find(st => st.id === prefNurseObj.nurse.id);
+                      if (s && targetStart >= s.startTimeMin && (targetStart + dur) <= s.endTimeMin) {
                           best = s;
                           break;
                       }
@@ -768,7 +841,7 @@
                 let minTotalDur = Infinity;
                 let minBalance = Infinity;
                 states.forEach(s => {
-                  const nDef = available.find(n => n.id === s.id);
+                  const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
                   if (!nDef) return;
                   if (isExcluded(nDef.name)) return;
                   if (nDef.isLowPriority) return; 
@@ -776,9 +849,9 @@
                   
                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  const expectedEnd = s.time + travel + dur;
+                  const expectedEnd = Math.max(s.time + travel, targetStart) + dur;
                   
-                  if (s.time + travel <= parseTime(visit.startTime) && expectedEnd <= s.endTimeMin) {
+                  if (targetStart >= s.startTimeMin && s.time + travel <= targetStart && expectedEnd <= s.endTimeMin) {
                       const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
                       if (s.totalDuration < minTotalDur || 
                          (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
@@ -797,7 +870,7 @@
                 let minTotalDur = Infinity;
                 let minBalance = Infinity;
                 states.forEach(s => {
-                  const nDef = available.find(n => n.id === s.id);
+                  const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
                   if (!nDef) return;
                   if (isExcluded(nDef.name)) return;
                   if (!nDef.isLowPriority) return; 
@@ -805,9 +878,9 @@
                   
                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  const expectedEnd = s.time + travel + dur;
+                  const expectedEnd = Math.max(s.time + travel, targetStart) + dur;
                   
-                  if (s.time + travel <= parseTime(visit.startTime) && expectedEnd <= s.endTimeMin) {
+                  if (targetStart >= s.startTimeMin && s.time + travel <= targetStart && expectedEnd <= s.endTimeMin) {
                       const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
                       if (s.totalDuration < minTotalDur || 
                          (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
@@ -827,7 +900,7 @@
                  let minTotalDur = Infinity;
                  let minBalance = Infinity;
                  states.forEach(s => {
-                   const nDef = available.find(n => n.id === s.id);
+                   const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
                    if (!nDef) return;
                    if (isExcluded(nDef.name)) return;
                    if (requiresFemale && !nDef.isFemale) return; 
@@ -836,10 +909,10 @@
                    const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
                    const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
                    const arrival = s.time + travel;
-                   const expectedEnd = Math.max(arrival, parseTime(visit.startTime)) + dur;
+                   const expectedEnd = Math.max(arrival, targetStart) + dur;
                    const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
                    
-                   if (expectedEnd <= s.endTimeMin) {
+                   if (targetStart >= s.startTimeMin && expectedEnd <= s.endTimeMin) {
                        if (arrival < earliest || 
                           (arrival === earliest && isBestLow && !isLow) ||
                           (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
@@ -860,7 +933,7 @@
                  let minTotalDur = Infinity;
                  let minBalance = Infinity;
                  states.forEach(s => {
-                   const nDef = available.find(n => n.id === s.id);
+                   const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
                    if (!nDef) return;
                    if (isExcluded(nDef.name)) return;
                    if (requiresFemale && !nDef.isFemale) return; 
@@ -871,15 +944,17 @@
                    const arrival = s.time + travel;
                    const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
                    
-                   if (arrival < earliest || 
-                      (arrival === earliest && isBestLow && !isLow) ||
-                      (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
-                      (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
-                       earliest = arrival; 
-                       best = s; 
-                       isBestLow = isLow;
-                       minTotalDur = s.totalDuration;
-                       minBalance = balanceScore;
+                   if (targetStart >= s.startTimeMin) {
+                       if (arrival < earliest || 
+                          (arrival === earliest && isBestLow && !isLow) ||
+                          (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
+                          (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
+                           earliest = arrival; 
+                           best = s; 
+                           isBestLow = isLow;
+                           minTotalDur = s.totalDuration;
+                           minBalance = balanceScore;
+                       }
                    }
                  });
               }
@@ -948,18 +1023,27 @@
             return;
         }
 
-        if (targetNurseId && targetVisit && targetVisit.requiresFemaleNurse) {
+        let newStartTimeStr = targetVisit.startTime;
+        const targetStartMin = parseTime(targetVisit.startTime);
+
+        const offsetY = parseFloat(e.dataTransfer.getData('offsetY') || 0);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const y = (e.clientY - rect.top) - offsetY;
+        const minutes = y / PIXELS_PER_MINUTE + START_HOUR * 60;
+        const snappedMinutes = Math.round(minutes / 15) * 15; 
+        newStartTimeStr = formatTime(Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 15, snappedMinutes)));
+        const newStartMin = parseTime(newStartTimeStr);
+
+        if (targetNurseId) {
             const targetNurse = nurses.find(n => n.id === targetNurseId);
-            if (targetNurse && !targetNurse.isFemale) {
+            
+            if (targetVisit.requiresFemaleNurse && !targetNurse.isFemale) {
                 setToastMessage("この利用者は女性看護師限定です");
                 setShowToast(true);
                 return;
             }
-        }
 
-        if (targetNurseId && targetVisit && targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
-            const targetNurse = nurses.find(n => n.id === targetNurseId);
-            if (targetNurse) {
+            if (targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
                 const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
                 if (isExcluded) {
                     setToastMessage("除外スタッフに設定されているため、割り当てできません");
@@ -967,19 +1051,29 @@
                     return;
                 }
             }
-        }
 
-        const offsetY = parseFloat(e.dataTransfer.getData('offsetY') || 0);
-        const rect = e.currentTarget.getBoundingClientRect();
-        const y = (e.clientY - rect.top) - offsetY;
-        const minutes = y / PIXELS_PER_MINUTE + START_HOUR * 60;
-        const snappedMinutes = Math.round(minutes / 15) * 15; 
-        const newStartTime = formatTime(Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 15, snappedMinutes)));
+            const offType = getIsNurseOffType(targetNurse, selectedDate, nurseStatuses);
+            if (offType === 'full') {
+                setToastMessage(`${targetNurse.name} は本日お休みです`);
+                setShowToast(true);
+                return;
+            }
+            if (offType === 'AM' && newStartMin < parseTime('13:30')) {
+                setToastMessage(`${targetNurse.name} は午前休（13:30以降出勤）です`);
+                setShowToast(true);
+                return;
+            }
+            if (offType === 'PM' && newStartMin >= parseTime('12:30')) {
+                setToastMessage(`${targetNurse.name} は午後休（12:30退勤）です`);
+                setShowToast(true);
+                return;
+            }
+        }
         
         handleSetVisits(prev => prev.map(v => {
           if (v.id === visitId) {
              const original = v.originalStartTime || v.startTime;
-             return { ...v, nurseId: targetNurseId, startTime: newStartTime, originalStartTime: original, date: selectedDate };
+             return { ...v, nurseId: targetNurseId, startTime: newStartTimeStr, originalStartTime: original, date: selectedDate };
           }
           return v;
         }));
@@ -988,25 +1082,41 @@
       const updateVisitNurse = (visitId, newNurseId) => {
         const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
         const targetVisit = visits.find(v => v.id === visitId);
+        const targetStart = parseTime(targetVisit.startTime);
         
-        if (parsedNurseId && targetVisit && targetVisit.requiresFemaleNurse) {
+        if (parsedNurseId) {
             const targetNurse = nurses.find(n => n.id === parsedNurseId);
-            if (targetNurse && !targetNurse.isFemale) {
+            
+            if (targetVisit.requiresFemaleNurse && !targetNurse.isFemale) {
                 setToastMessage("この利用者は女性看護師限定です");
                 setShowToast(true);
                 return;
             }
-        }
-        
-        if (parsedNurseId && targetVisit && targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
-            const targetNurse = nurses.find(n => n.id === parsedNurseId);
-            if (targetNurse) {
+            
+            if (targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
                 const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
                 if (isExcluded) {
                     setToastMessage("除外スタッフに設定されているため、割り当てできません");
                     setShowToast(true);
                     return;
                 }
+            }
+
+            const offType = getIsNurseOffType(targetNurse, selectedDate, nurseStatuses);
+            if (offType === 'full') {
+                setToastMessage(`${targetNurse.name} は本日お休みです`);
+                setShowToast(true);
+                return;
+            }
+            if (offType === 'AM' && targetStart < parseTime('13:30')) {
+                setToastMessage(`${targetNurse.name} は午前休（13:30以降出勤）です`);
+                setShowToast(true);
+                return;
+            }
+            if (offType === 'PM' && targetStart >= parseTime('12:30')) {
+                setToastMessage(`${targetNurse.name} は午後休（12:30退勤）です`);
+                setShowToast(true);
+                return;
             }
         }
 
@@ -1043,7 +1153,7 @@
 
         const newEvents = [];
         if (nurseIdStr === 'all') {
-          const availableNurses = nurses.filter(n => !getIsNurseOff(n, selectedDate, nurseStatuses));
+          const availableNurses = nurses.filter(n => getIsNurseOffType(n, selectedDate, nurseStatuses) !== 'full');
           availableNurses.forEach((n, idx) => {
             newEvents.push({
               ...baseEvent,
@@ -1203,7 +1313,17 @@
               
               let off = []; 
               if (p[3]) {
-                  Object.keys(dayMap).forEach(d => { if (p[3].includes(d)) off.push(dayMap[d]); });
+                  const rawOffs = p[3].split(/[・,、]/).map(d => d.trim()).filter(Boolean);
+                  rawOffs.forEach(rawOff => {
+                     let type = 'full';
+                     let dayStr = rawOff;
+                     if (rawOff.includes('(午前)') || rawOff.includes('(AM)')) { type = 'AM'; dayStr = rawOff.replace(/\(午前\)/g, '').replace(/\(AM\)/g, ''); }
+                     else if (rawOff.includes('(午後)') || rawOff.includes('(PM)')) { type = 'PM'; dayStr = rawOff.replace(/\(午後\)/g, '').replace(/\(PM\)/g, ''); }
+                     
+                     if (dayMap[dayStr] !== undefined) {
+                         off.push({ day: dayMap[dayStr], type });
+                     }
+                  });
               }
               
               const isLow = p[4] ? p[4].includes('低') : false;
@@ -1211,8 +1331,17 @@
               
               let specificOffDays = [];
               if (p[6]) {
-                 const dates = p[6].split('・').map(d => d.trim().replace(/\//g, '-'));
-                 specificOffDays = specificOffDays.concat(dates.filter(d => d.length > 0));
+                 const rawSpecs = p[6].split(/[・,、]/).map(d => d.trim()).filter(Boolean);
+                 rawSpecs.forEach(rawSpec => {
+                     let type = 'full';
+                     let dateStr = rawSpec;
+                     if (rawSpec.includes('(午前)') || rawSpec.includes('(AM)')) { type = 'AM'; dateStr = rawSpec.replace(/\(午前\)/g, '').replace(/\(AM\)/g, ''); }
+                     else if (rawSpec.includes('(午後)') || rawSpec.includes('(PM)')) { type = 'PM'; dateStr = rawSpec.replace(/\(午後\)/g, '').replace(/\(PM\)/g, ''); }
+                     dateStr = dateStr.replace(/\//g, '-'); 
+                     if (dateStr) {
+                         specificOffDays.push({ date: dateStr, type });
+                     }
+                 });
               }
 
               const address = p[7]?.trim() || '';
@@ -1477,7 +1606,8 @@
                              <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[11px] font-black px-3 py-1 rounded-full`}>{unassignedCount}件</div>
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = getIsNurseOff(nurse, selectedDate, nurseStatuses);
+                            const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
+                            const isOff = offType === 'full';
                             const statusObj = nurseStatuses.find(s => s.date === selectedDate && s.nurseId === nurse.id);
                             const isLocked = statusObj ? statusObj.isLocked : false;
                             const assigned = allSchedules[nurse.id]?.visits || [];
@@ -1495,20 +1625,27 @@
                                    
                                    <button 
                                      type="button"
-                                     onClick={() => toggleNurseStatus(nurse.id, selectedDate, !isOff)}
+                                     onClick={() => toggleNurseStatus(nurse.id, selectedDate, offType)}
                                      disabled={isLocked}
-                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-colors shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${isOff ? 'bg-slate-200 text-slate-500 border-slate-300' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
+                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-colors shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
                                      title={isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
                                    >
-                                     {isOff ? "休" : "出勤"}
+                                     {offType === 'full' ? "全休" : offType === 'AM' ? "午前休" : offType === 'PM' ? "午後休" : "出勤"}
                                    </button>
                                 </div>
                                 {isOff ? (
                                   <div className="text-[10px] font-black text-red-400 tracking-tighter uppercase" style={{writingMode: 'vertical-rl'}}>お休み</div>
                                 ) : (
                                   <div className="flex flex-col items-center">
-                                    <div className="font-black text-slate-800 text-sm flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>{nurse.name}</div>
-                                    <div className="text-[10px] font-black text-slate-400 mt-1 uppercase">{assigned.length} 予定</div>
+                                    <div className="font-black text-slate-800 text-sm flex items-center gap-2">
+                                        <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
+                                        {nurse.name}
+                                    </div>
+                                    <div className="flex items-center gap-1 mt-1">
+                                        {offType === 'AM' && <span className="text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1.5 rounded-full">午前休</span>}
+                                        {offType === 'PM' && <span className="text-[9px] font-black text-orange-500 bg-orange-50 border border-orange-200 px-1.5 rounded-full">午後休</span>}
+                                        <span className="text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1607,7 +1744,11 @@
                              })}
                           </div>
                           {nurses.map(nurse => {
-                            const isOff = getIsNurseOff(nurse, selectedDate, nurseStatuses), sch = allSchedules[nurse.id], assigned = sch?.visits || [];
+                            const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
+                            const isOff = offType === 'full';
+                            const sch = allSchedules[nurse.id];
+                            const assigned = sch?.visits || [];
+                            
                             return (
                               <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-44 md:w-64'}`} onDragOver={(e) => !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
@@ -1642,14 +1783,16 @@
                                         style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
                                         
                                         {item.comment && (
-                                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-2.5 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
-                                            <div className="font-bold text-slate-300 mb-0.5 flex items-center gap-1"><MessageSquare size={10}/>コメント</div>
+                                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-3 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
+                                            <div className="font-bold text-slate-300 mb-1 flex items-center gap-1"><MessageSquare size={12}/>コメント</div>
                                             <div className="whitespace-pre-wrap leading-relaxed">{item.comment}</div>
-                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-slate-800 rotate-45"></div>
                                           </div>
                                         )}
 
-                                        <div className="flex justify-between items-start gap-1">
+                                        <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                        
+                                        <div className="flex justify-between items-start gap-1 mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               <button 
                                                 type="button"
@@ -1906,7 +2049,7 @@
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                         <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
                           <span>{formatDateLabel(selectedDate)} リスト</span>
-                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}件</span>
+                          <span className="text-slate-400 uppercase font-black">{sortedVisits.length}名</span>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse min-w-[700px]">
@@ -1982,9 +2125,17 @@
                           </div>
                           <div className="w-full pt-4 border-t border-slate-50">
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">固定休 (曜日)</p>
-                             <p className="text-xs font-black text-slate-600 mb-4">{n.offDays?.length > 0 ? n.offDays.map(d => JS_DAYS[d]).join('・') : 'なし'}</p>
+                             <p className="text-xs font-black text-slate-600 mb-4">
+                               {n.offDays?.length > 0 
+                                 ? n.offDays.map(d => typeof d === 'number' ? JS_DAYS[d] : `${JS_DAYS[d.day]}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') 
+                                 : 'なし'}
+                             </p>
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">特定休 (日付)</p>
-                             <p className="text-xs font-black text-slate-600 mb-4">{n.specificOffDays?.length > 0 ? n.specificOffDays.map(d => d.replace(/-/g, '/')).join('・') : 'なし'}</p>
+                             <p className="text-xs font-black text-slate-600 mb-4">
+                               {n.specificOffDays?.length > 0 
+                                 ? n.specificOffDays.map(d => typeof d === 'string' ? d.replace(/-/g, '/') : `${d.date.replace(/-/g, '/')}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') 
+                                 : 'なし'}
+                             </p>
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">割り当て優先度</p>
                              <p className="text-xs font-black text-slate-600">{n.isLowPriority ? '低' : '通常'}</p>
                           </div>
