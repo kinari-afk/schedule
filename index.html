@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -639,6 +639,21 @@
         
         setEditingVisit(null);
         setToastMessage("予定を更新しました");
+        setShowToast(true);
+      };
+
+      const handleDuplicateVisit = (visit, e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        const newVisit = {
+          ...visit,
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          isExcludedFromAutoAssign: false, 
+        };
+        handleSetVisits(prev => [...prev, newVisit]);
+        setToastMessage(`${visit.userName} の予定を複製しました`);
         setShowToast(true);
       };
 
@@ -1762,6 +1777,15 @@
                                         <button 
                                           type="button"
                                           onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={(e) => handleDuplicateVisit(v, e)}
+                                          className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
+                                          title="複製"
+                                        >
+                                          <Copy size={12} />
+                                        </button>
+                                        <button 
+                                          type="button"
+                                          onPointerDown={(e) => e.stopPropagation()}
                                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingVisit(v); }}
                                           className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
                                           title="編集"
@@ -1788,7 +1812,7 @@
                                        ) : ( <span className={isOther ? 'text-indigo-400' : 'text-slate-400'}>{v.startTime}</span> )}
                                      </div>
                                    </div>
-                                   <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[86px]">
+                                   <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[116px]">
                                      {v.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                      {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                      {v.comment && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8}/> メモ</span>}
@@ -1860,6 +1884,15 @@
                                               <button 
                                                 type="button"
                                                 onPointerDown={(e) => e.stopPropagation()}
+                                                onClick={(e) => handleDuplicateVisit(item, e)}
+                                                className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
+                                                title="複製"
+                                              >
+                                                <Copy size={12} />
+                                              </button>
+                                              <button 
+                                                type="button"
+                                                onPointerDown={(e) => e.stopPropagation()}
                                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingVisit(item); }}
                                                 className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
                                                 title="編集"
@@ -1887,7 +1920,7 @@
                                               <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : (isOther ? "text-indigo-400" : "text-slate-500")}>指:{item.startTime}</span>
                                            </div>
                                         </div>
-                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[86px]">
+                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[116px]">
                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                            {item.excludedNurseNames && item.excludedNurseNames.length > 0 && !isOther && <span className="text-[8px] bg-slate-100 text-slate-600 px-1 py-0.5 rounded-sm whitespace-nowrap">除外:{item.excludedNurseNames.join(',')}</span>}
                                            {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
@@ -1984,6 +2017,14 @@
                                             title={item.isExcludedFromAutoAssign ? "固定を解除" : "割り当てを固定する"}
                                           >
                                             {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
+                                          </button>
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDuplicateVisit(item, e); }}
+                                            className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
+                                            title="複製"
+                                          >
+                                            <Copy size={12} />
                                           </button>
                                           <button 
                                             type="button"
@@ -2133,8 +2174,9 @@
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
                                   <td className="p-6"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5"><option value="unassigned">-- 未指定 --</option>{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                                   <td className="p-6 text-right">
-                                    <button onClick={() => setEditingVisit(v)} className="text-slate-300 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors"><Pencil size={18} /></button>
-                                    <button onClick={() => setDeleteConfirmId(v.id)} className="text-slate-300 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-colors"><Trash2 size={18} /></button>
+                                    <button onClick={() => handleDuplicateVisit(v)} className="text-slate-300 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
+                                    <button onClick={() => setEditingVisit(v)} className="text-slate-300 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="編集"><Pencil size={18} /></button>
+                                    <button onClick={() => setDeleteConfirmId(v.id)} className="text-slate-300 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-colors" title="削除"><Trash2 size={18} /></button>
                                   </td>
                                 </tr>
                               ))}
@@ -2180,9 +2222,17 @@
                           </div>
                           <div className="w-full pt-4 border-t border-slate-50">
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">固定休 (曜日)</p>
-                             <p className="text-xs font-black text-slate-600 mb-4">{n.offDays?.length > 0 ? n.offDays.map(d => typeof d === 'number' ? JS_DAYS[d] : `${JS_DAYS[d.day]}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') : 'なし'}</p>
+                             <p className="text-xs font-black text-slate-600 mb-4">
+                               {n.offDays?.length > 0 
+                                 ? n.offDays.map(d => typeof d === 'number' ? JS_DAYS[d] : `${JS_DAYS[d.day]}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') 
+                                 : 'なし'}
+                             </p>
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">特定休 (日付)</p>
-                             <p className="text-xs font-black text-slate-600 mb-4">{n.specificOffDays?.length > 0 ? n.specificOffDays.map(d => typeof d === 'string' ? d.replace(/-/g, '/') : `${d.date.replace(/-/g, '/')}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') : 'なし'}</p>
+                             <p className="text-xs font-black text-slate-600 mb-4">
+                               {n.specificOffDays?.length > 0 
+                                 ? n.specificOffDays.map(d => typeof d === 'string' ? d.replace(/-/g, '/') : `${d.date.replace(/-/g, '/')}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') 
+                                 : 'なし'}
+                             </p>
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">割り当て優先度</p>
                              <p className="text-xs font-black text-slate-600">{n.isLowPriority ? '低' : '通常'}</p>
                           </div>
@@ -2415,7 +2465,7 @@
                     </div>
                     <div className="w-28">
                       <label className="block text-xs font-bold text-slate-500 mb-1">時間(分)</label>
-                      <input required type="number" name="duration" defaultValue="60" step="5" min="5" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                      <input required type="number" name="duration" defaultValue="30" step="5" min="5" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
                     </div>
                   </div>
                   <div>
