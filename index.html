@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -152,6 +152,7 @@
       const [visits, setVisits] = useState([]);
       const [nurseStatuses, setNurseStatuses] = useState([]); 
       const [savedPatterns, setSavedPatterns] = useState({});
+      const [history, setHistory] = useState([]);
       
       const [baseTravelTime, setBaseTravelTime] = useState(10);
       const [selectedNurseId, setSelectedNurseId] = useState(null);
@@ -253,6 +254,30 @@
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ savedPatterns: JSON.stringify(next) });
           return next;
+        });
+      };
+
+      const saveHistory = () => {
+        setHistory(prev => {
+          const newHistory = [...prev, { visits: JSON.parse(JSON.stringify(visits)), nurseStatuses: JSON.parse(JSON.stringify(nurseStatuses)) }];
+          if (newHistory.length > 20) newHistory.shift();
+          return newHistory;
+        });
+      };
+
+      const handleUndo = () => {
+        setHistory(prev => {
+          if (prev.length === 0) return prev;
+          const nextHistory = [...prev];
+          const previousState = nextHistory.pop();
+          
+          handleSetVisits(previousState.visits);
+          handleSetNurseStatuses(previousState.nurseStatuses);
+          
+          setToastMessage("直前の操作を取り消しました");
+          setShowToast(true);
+          
+          return nextHistory;
         });
       };
 
@@ -523,7 +548,6 @@
         return layouted;
       }, [visits, selectedDate]);
 
-      // --- レポート用のデータ集計 ---
       const handlePrevReportMonth = () => {
         const [y, m] = reportMonth.split('-').map(Number);
         const d = new Date(y, m - 2, 1);
@@ -616,7 +640,6 @@
         };
       }, [reportMonth, visits, nurses]);
 
-      // --- 右クリックで予定を編集 ---
       const handleRightClick = (e, visit) => {
         e.preventDefault();
         e.stopPropagation();
@@ -631,6 +654,7 @@
         const newDuration = parseInt(formData.get('duration'), 10);
         const newComment = formData.get('comment');
         
+        saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.id === editingVisit.id 
             ? { ...v, userName: newName, startTime: newStartTime, duration: newDuration, comment: newComment }
@@ -652,12 +676,12 @@
           id: Date.now() + Math.floor(Math.random() * 1000),
           isExcludedFromAutoAssign: false, 
         };
+        saveHistory();
         handleSetVisits(prev => [...prev, newVisit]);
         setToastMessage(`${visit.userName} の予定を複製しました`);
         setShowToast(true);
       };
 
-      // --- メモ（パターン保存）機能 ---
       const savePattern = (slot) => {
         const todayVisits = JSON.parse(JSON.stringify(visits.filter(v => v.date === selectedDate)));
         handleSetSavedPatterns(prev => {
@@ -674,6 +698,7 @@
         const patternVisits = JSON.parse(JSON.stringify(savedPatterns[selectedDate]?.[slot]));
         if (!patternVisits) return;
         
+        saveHistory();
         handleSetVisits(prev => {
            const otherDays = prev.filter(v => v.date !== selectedDate);
            return [...otherDays, ...patternVisits];
@@ -695,6 +720,7 @@
       };
 
       const handleToggleExclude = (visitId) => {
+        saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.id === visitId ? { ...v, isExcludedFromAutoAssign: !v.isExcludedFromAutoAssign } : v
         ));
@@ -707,6 +733,7 @@
         else if (currentOffType === 'AM') nextStatus = 'pm_off';
         else if (currentOffType === 'PM') nextStatus = 'work';
 
+        saveHistory();
         handleSetNurseStatuses(prev => {
           const next = [...prev];
           const idx = next.findIndex(s => s.date === dateStr && s.nurseId === nurseId);
@@ -735,6 +762,7 @@
       };
 
       const toggleNurseLock = (nurseId, dateStr) => {
+        saveHistory();
         handleSetNurseStatuses(prev => {
           const next = [...prev];
           const idx = next.findIndex(s => s.date === dateStr && s.nurseId === nurseId);
@@ -754,6 +782,7 @@
       };
 
       const handleLockAllToday = () => {
+        saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.date === selectedDate ? { ...v, isExcludedFromAutoAssign: true } : v
         ));
@@ -785,6 +814,7 @@
       };
 
       const handleUnlockAllToday = () => {
+        saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.date === selectedDate ? { ...v, isExcludedFromAutoAssign: false } : v
         ));
@@ -807,6 +837,8 @@
         });
 
         if (availableStates.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
+        
+        saveHistory();
         setIsOptimizing(true);
         
         setTimeout(() => {
@@ -1047,6 +1079,7 @@
       };
 
       const executeResetAssignments = () => {
+        saveHistory();
         handleSetVisits(prev => prev.map(v => {
           if (v.date === selectedDate && !v.isExcludedFromAutoAssign) {
             return {
@@ -1121,6 +1154,7 @@
             }
         }
         
+        saveHistory();
         handleSetVisits(prev => prev.map(v => {
           if (v.id === visitId) {
              const original = v.originalStartTime || v.startTime;
@@ -1171,6 +1205,7 @@
             }
         }
 
+        saveHistory();
         handleSetVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
       };
 
@@ -1224,6 +1259,7 @@
           });
         }
         
+        saveHistory();
         handleSetVisits([...visits, ...newEvents]);
         setShowAddEventModal(false);
         setToastMessage("予定を追加しました");
@@ -1608,6 +1644,16 @@
                     </div>
                     <div className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pb-2 md:pb-0">
                       
+                      <button 
+                        onClick={handleUndo}
+                        disabled={history.length === 0}
+                        className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                        title="直前の操作を取り消す"
+                      >
+                        <Undo size={16} />
+                        元に戻す
+                      </button>
+
                       <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm shrink-0">
                         <span className="text-[10px] font-black text-slate-400 px-2 uppercase">メモ</span>
                         {[1, 2, 3].map(slot => {
@@ -1654,7 +1700,7 @@
                         disabled={!hasAssignedVisits}
                         className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
                       >
-                        <Undo size={16} />
+                        <RotateCcw size={16} />
                         リセット
                       </button>
                       <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
@@ -1973,6 +2019,18 @@
                           <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={20} className="md:w-6 md:h-6" /></div>
                           <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">移動合計</p><p className="text-xl md:text-2xl font-black text-slate-800">{stats.totalTravel}<span className="text-xs ml-1 text-slate-400 font-bold">分</span></p></div>
                         </div>
+                        
+                        <div className="ml-auto flex items-center gap-2">
+                           <button 
+                              onClick={handleUndo}
+                              disabled={history.length === 0}
+                              className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                              title="直前の操作を取り消す"
+                            >
+                              <Undo size={16} />
+                              元に戻す
+                            </button>
+                        </div>
                       </div>
 
                       <div className="flex-1 overflow-y-auto hide-scrollbar">
@@ -2020,7 +2078,7 @@
                                           </button>
                                           <button 
                                             type="button"
-                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDuplicateVisit(item, e); }}
+                                            onClick={(e) => handleDuplicateVisit(item, e)}
                                             className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
                                             title="複製"
                                           >
@@ -2222,17 +2280,9 @@
                           </div>
                           <div className="w-full pt-4 border-t border-slate-50">
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">固定休 (曜日)</p>
-                             <p className="text-xs font-black text-slate-600 mb-4">
-                               {n.offDays?.length > 0 
-                                 ? n.offDays.map(d => typeof d === 'number' ? JS_DAYS[d] : `${JS_DAYS[d.day]}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') 
-                                 : 'なし'}
-                             </p>
+                             <p className="text-xs font-black text-slate-600 mb-4">{n.offDays?.length > 0 ? n.offDays.map(d => typeof d === 'number' ? JS_DAYS[d] : `${JS_DAYS[d.day]}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') : 'なし'}</p>
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">特定休 (日付)</p>
-                             <p className="text-xs font-black text-slate-600 mb-4">
-                               {n.specificOffDays?.length > 0 
-                                 ? n.specificOffDays.map(d => typeof d === 'string' ? d.replace(/-/g, '/') : `${d.date.replace(/-/g, '/')}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') 
-                                 : 'なし'}
-                             </p>
+                             <p className="text-xs font-black text-slate-600 mb-4">{n.specificOffDays?.length > 0 ? n.specificOffDays.map(d => typeof d === 'string' ? d.replace(/-/g, '/') : `${d.date.replace(/-/g, '/')}${d.type === 'full' ? '' : d.type === 'AM' ? '(午前)' : '(午後)'}`).join('・') : 'なし'}</p>
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">割り当て優先度</p>
                              <p className="text-xs font-black text-slate-600">{n.isLowPriority ? '低' : '通常'}</p>
                           </div>
@@ -2502,6 +2552,7 @@
                 <div className="flex gap-4">
                   <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-4 rounded-2xl font-black text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">キャンセル</button>
                   <button onClick={() => {
+                     saveHistory();
                      handleSetVisits(prev => prev.filter(v => v.id !== deleteConfirmId));
                      setDeleteConfirmId(null);
                      setToastMessage("予定を削除しました");
