@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -120,6 +120,18 @@
       return `${d.getMonth() + 1}/${d.getDate()}(${JS_DAYS[d.getDay()]})`;
     };
 
+    const isNurseOff = (nurse, dateStr) => {
+      if (!nurse || !dateStr) return false;
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return false;
+      const jsDayOfWeek = d.getDay();
+      
+      if (nurse.offDays && nurse.offDays.includes(jsDayOfWeek)) return true;
+      if (nurse.specificOffDays && nurse.specificOffDays.includes(dateStr)) return true;
+      
+      return false;
+    };
+
     const getTodayStr = () => {
       const d = new Date();
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -174,6 +186,7 @@
       const [activePatternSlot, setActivePatternSlot] = useState(null);
       
       const [editingVisit, setEditingVisit] = useState(null);
+      const [contextMenu, setContextMenu] = useState(null);
 
       useEffect(() => {
         if (showToast) {
@@ -640,10 +653,21 @@
         };
       }, [reportMonth, visits, nurses]);
 
-      const handleRightClick = (e, visit) => {
+      // --- 右クリック（コンテキストメニュー） ---
+      const handleContextMenu = (e, visit) => {
         e.preventDefault();
         e.stopPropagation();
-        setEditingVisit(visit);
+        
+        let x = e.clientX;
+        let y = e.clientY;
+
+        const menuWidth = 160;
+        const menuHeight = 200;
+        if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
+        if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
+
+        setContextMenu({ mouseX: x, mouseY: y, visit });
+        setActiveCardId(null);
       };
 
       const handleSaveEdit = (e) => {
@@ -690,7 +714,7 @@
           next[selectedDate][slot] = todayVisits;
           return next;
         });
-        setToastMessage(`メモ${slot} に現在の割り当てを保存しました`);
+        setToastMessage(`メモリ${slot} に現在の割り当てを保存しました`);
         setShowToast(true);
       };
 
@@ -703,7 +727,7 @@
            const otherDays = prev.filter(v => v.date !== selectedDate);
            return [...otherDays, ...patternVisits];
         });
-        setToastMessage(`メモ${slot} の状態を復元しました`);
+        setToastMessage(`メモリ${slot} の状態を復元しました`);
         setShowToast(true);
       };
 
@@ -715,7 +739,7 @@
           }
           return next;
         });
-        setToastMessage(`メモ${slot} を削除しました`);
+        setToastMessage(`メモリ${slot} を削除しました`);
         setShowToast(true);
       };
 
@@ -1490,7 +1514,7 @@
       }, [visits, selectedDate, visitSortConfig, nurses]);
 
       return (
-        <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden">
+        <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden" onClick={() => setContextMenu(null)} onContextMenu={() => setContextMenu(null)}>
           <aside className={`bg-slate-900 text-slate-300 hidden md:flex flex-col shrink-0 border-r border-slate-800 transition-all duration-300 relative ${isSidebarOpen ? 'w-72' : 'w-20'}`}>
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -1655,7 +1679,7 @@
                       </button>
 
                       <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm shrink-0">
-                        <span className="text-[10px] font-black text-slate-400 px-2 uppercase">メモ</span>
+                        <span className="text-[10px] font-black text-slate-400 px-2 uppercase">メモリ</span>
                         {[1, 2, 3].map(slot => {
                           const hasData = savedPatterns[selectedDate]?.[slot];
                           return (
@@ -1663,7 +1687,7 @@
                               key={slot}
                               onClick={() => setActivePatternSlot(slot)}
                               className={`w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-xl font-black text-xs mx-0.5 transition-colors ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-transparent text-slate-400 hover:bg-slate-100'}`}
-                              title={`メモ${slot}`}
+                              title={`メモリ${slot}`}
                             >
                               {slot}
                             </button>
@@ -1797,7 +1821,7 @@
                                    onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
-                                   onContextMenu={(e) => handleRightClick(e, v)}
+                                   onContextMenu={(e) => handleContextMenu(e, v)}
                                    className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    
@@ -1811,54 +1835,32 @@
 
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
-                                        <button 
-                                          type="button"
-                                          onPointerDown={(e) => e.stopPropagation()}
-                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(v.id); }}
-                                          className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${v.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
-                                          title={v.isExcludedFromAutoAssign ? "自動編成対象に戻す" : "自動編成から除外する"}
-                                        >
-                                          {v.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
-                                        </button>
-                                        <button 
-                                          type="button"
-                                          onPointerDown={(e) => e.stopPropagation()}
-                                          onClick={(e) => handleDuplicateVisit(v, e)}
-                                          className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
-                                          title="複製"
-                                        >
-                                          <Copy size={12} />
-                                        </button>
-                                        <button 
-                                          type="button"
-                                          onPointerDown={(e) => e.stopPropagation()}
-                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingVisit(v); }}
-                                          className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
-                                          title="編集"
-                                        >
-                                          <Pencil size={12} />
-                                        </button>
-                                        <button 
-                                          type="button"
-                                          onPointerDown={(e) => e.stopPropagation()}
-                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(v.id); }}
-                                          className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                                          title="削除"
-                                        >
-                                          <Trash2 size={12} />
-                                        </button>
-                                        <div className={`font-black text-[10px] md:text-xs truncate flex-1 leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                        {v.isExcludedFromAutoAssign && (
+                                          <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                        )}
+                                        <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
                                           {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
                                           {v.userName}
-                                        </div>
+                                        </h4>
                                      </div>
-                                     <div className="text-[9px] font-bold shrink-0 text-right leading-none pt-0.5">
-                                       {v.originalStartTime && v.originalStartTime !== v.startTime ? (
-                                         <span className="text-orange-600 block">{v.originalStartTime}➔<br/>{v.startTime}</span>
-                                       ) : ( <span className={isOther ? 'text-indigo-400' : 'text-slate-400'}>{v.startTime}</span> )}
-                                     </div>
+                                     <button 
+                                       type="button" 
+                                       onPointerDown={(e) => e.stopPropagation()} 
+                                       onClick={(e) => handleContextMenu(e, v)}
+                                       className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                     >
+                                       <MoreVertical size={14} />
+                                     </button>
                                    </div>
-                                   <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[116px]">
+                                   
+                                   <div className="flex justify-between items-end mb-1 mt-auto">
+                                     <div className="flex flex-col gap-0.5">
+                                       <span className="text-[9px] text-slate-400 font-bold">指定: {v.startTime}</span>
+                                     </div>
+                                     <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{v.duration}分</span>
+                                   </div>
+
+                                   <div className="flex flex-wrap gap-0.5 mt-0.5">
                                      {v.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
                                      {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
                                      {v.comment && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8}/> メモ</span>}
@@ -1902,7 +1904,7 @@
                                         onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
-                                        onContextMenu={(e) => handleRightClick(e, item)}
+                                        onContextMenu={(e) => handleContextMenu(e, item)}
                                         className={`absolute left-2 right-2 group bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
                                         
@@ -1918,67 +1920,43 @@
                                         
                                         <div className="flex justify-between items-start gap-1 mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
-                                              <button 
-                                                type="button"
-                                                onPointerDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(item.id); }}
-                                                className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${item.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
-                                                title={item.isExcludedFromAutoAssign ? "固定を解除" : "割り当てを固定する"}
-                                              >
-                                                {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
-                                              </button>
-                                              <button 
-                                                type="button"
-                                                onPointerDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => handleDuplicateVisit(item, e)}
-                                                className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
-                                                title="複製"
-                                              >
-                                                <Copy size={12} />
-                                              </button>
-                                              <button 
-                                                type="button"
-                                                onPointerDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingVisit(item); }}
-                                                className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
-                                                title="編集"
-                                              >
-                                                <Pencil size={12} />
-                                              </button>
-                                              <button 
-                                                type="button"
-                                                onPointerDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(item.id); }}
-                                                className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                                                title="削除"
-                                              >
-                                                <Trash2 size={12} />
-                                              </button>
-                                              <div className={`font-black text-[10px] md:text-xs truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                              {item.isExcludedFromAutoAssign && (
+                                                <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                              )}
+                                              <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
                                                  {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
                                                  {item.userName}
-                                              </div>
+                                              </h4>
                                            </div>
-                                           <div className="text-[8px] font-bold shrink-0 text-right leading-none pt-0.5">
-                                              {item.originalStartTime && item.originalStartTime !== item.startTime && (
-                                                <span className="text-orange-600 block mb-0.5">元:{item.originalStartTime}</span>
-                                              )}
-                                              <span className={item.originalStartTime !== item.startTime ? "text-orange-600" : (isOther ? "text-indigo-400" : "text-slate-500")}>指:{item.startTime}</span>
-                                           </div>
+                                           <button 
+                                             type="button" 
+                                             onPointerDown={(e) => e.stopPropagation()} 
+                                             onClick={(e) => handleContextMenu(e, item)}
+                                             className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                           >
+                                             <MoreVertical size={14} />
+                                           </button>
                                         </div>
-                                        <div className="flex flex-wrap gap-0.5 mt-0.5 pl-[116px]">
-                                           {item.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                           {item.excludedNurseNames && item.excludedNurseNames.length > 0 && !isOther && <span className="text-[8px] bg-slate-100 text-slate-600 px-1 py-0.5 rounded-sm whitespace-nowrap">除外:{item.excludedNurseNames.join(',')}</span>}
-                                           {item.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
-                                           {item.comment && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8}/> メモ</span>}
+                                        
+                                        <div className="flex justify-between items-end mb-2">
+                                          <div className="flex flex-col gap-0.5">
+                                            <span className="text-[9px] text-slate-400 font-bold">指定: {item.startTime}</span>
+                                            <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                          </div>
+                                          <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                         </div>
-                                        <div className="mt-auto flex justify-between items-center text-[9px] font-black pt-0.5">
-                                           <div className="flex items-center gap-0.5">
-                                             {item.isLate && <AlertTriangle size={8} className="text-red-500" />}
-                                             {item.isLate && <span className="text-red-600 text-[7px]">遅延</span>}
-                                           </div>
-                                           <span className={isOther ? 'text-indigo-400 uppercase' : 'text-slate-300 uppercase'}>{item.duration}分</span>
-                                        </div>
+
+                                        {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment) && (
+                                          <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
+                                            {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
+                                            {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
+                                            {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
+                                            {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                            {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
+                                          </div>
+                                        )}
                                       </div>
                                     </React.Fragment>
                                   )
@@ -2054,7 +2032,7 @@
                                   </div>
 
                                   <div className={`relative flex flex-col p-3 md:p-4 rounded-2xl border-l-[6px] shadow-md w-44 md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
-                                    onContextMenu={(e) => handleRightClick(e, item)}>
+                                    onContextMenu={(e) => handleContextMenu(e, item)}>
                                     
                                     {item.comment && (
                                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-3 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
@@ -2068,43 +2046,22 @@
                                     
                                     <div className="flex justify-between items-start gap-1 mb-2">
                                        <div className="flex items-center gap-1 overflow-hidden flex-1">
-                                          <button 
-                                            type="button"
-                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleExclude(item.id); }}
-                                            className={`shrink-0 p-1.5 rounded-lg transition-colors shadow-sm border ${item.isExcludedFromAutoAssign ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
-                                            title={item.isExcludedFromAutoAssign ? "固定を解除" : "割り当てを固定する"}
-                                          >
-                                            {item.isExcludedFromAutoAssign ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
-                                          </button>
-                                          <button 
-                                            type="button"
-                                            onClick={(e) => handleDuplicateVisit(item, e)}
-                                            className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-green-500 hover:bg-green-50 transition-colors"
-                                            title="複製"
-                                          >
-                                            <Copy size={12} />
-                                          </button>
-                                          <button 
-                                            type="button"
-                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingVisit(item); }}
-                                            className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
-                                            title="編集"
-                                          >
-                                            <Pencil size={12} />
-                                          </button>
-                                          <button 
-                                            type="button"
-                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(item.id); }}
-                                            className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                                            title="削除"
-                                          >
-                                            <Trash2 size={12} />
-                                          </button>
-                                          <h4 className={`font-black text-sm md:text-base truncate ${isOther ? 'text-indigo-800' : 'text-slate-800'}`}>
-                                            {isOther && <Briefcase size={16} className="inline mr-1 text-indigo-500" />}
-                                            {item.userName}
+                                          {item.isExcludedFromAutoAssign && (
+                                            <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                          )}
+                                          <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                             {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
+                                             {item.userName}
                                           </h4>
                                        </div>
+                                       <button 
+                                         type="button" 
+                                         onPointerDown={(e) => e.stopPropagation()} 
+                                         onClick={(e) => handleContextMenu(e, item)}
+                                         className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                       >
+                                         <MoreVertical size={14} />
+                                       </button>
                                     </div>
                                     
                                     <div className="flex justify-between items-end mb-2">
@@ -2232,9 +2189,22 @@
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
                                   <td className="p-6"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5"><option value="unassigned">-- 未指定 --</option>{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                                   <td className="p-6 text-right">
-                                    <button onClick={() => handleDuplicateVisit(v)} className="text-slate-300 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
+                                    <button onClick={(e) => handleDuplicateVisit(v, e)} className="text-slate-300 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
                                     <button onClick={() => setEditingVisit(v)} className="text-slate-300 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="編集"><Pencil size={18} /></button>
-                                    <button onClick={() => setDeleteConfirmId(v.id)} className="text-slate-300 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-colors" title="削除"><Trash2 size={18} /></button>
+                                    <button 
+                                      onClick={() => {
+                                        if(v.isExcludedFromAutoAssign) {
+                                          setToastMessage("固定された予定は削除できません。固定を解除してください。");
+                                          setShowToast(true);
+                                        } else {
+                                          setDeleteConfirmId(v.id);
+                                        }
+                                      }} 
+                                      className={`p-2 rounded-lg transition-colors ${v.isExcludedFromAutoAssign ? 'text-slate-300 cursor-not-allowed' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`} 
+                                      title="削除"
+                                    >
+                                      <Trash2 size={18} />
+                                    </button>
                                   </td>
                                 </tr>
                               ))}
@@ -2415,6 +2385,58 @@
             </div>
           </main>
 
+          {/* コンテキストメニュー */}
+          {contextMenu && (
+            <div 
+              className="fixed inset-0 z-[300]" 
+              onClick={(e) => { e.preventDefault(); setContextMenu(null); }}
+              onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+            >
+              <div 
+                className="absolute bg-white rounded-xl shadow-2xl border border-slate-200 py-2 min-w-[180px] overflow-hidden"
+                style={{ top: contextMenu.mouseY, left: contextMenu.mouseX }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-4 py-2 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">
+                  {contextMenu.visit.userName}
+                </div>
+                <button 
+                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
+                  onClick={() => { handleToggleExclude(contextMenu.visit.id); setContextMenu(null); }}
+                >
+                  {contextMenu.visit.isExcludedFromAutoAssign ? <><Unlock size={16} className="text-slate-400"/>固定を解除</> : <><Lock size={16} className="text-slate-400"/>予定を固定</>}
+                </button>
+                <button 
+                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
+                  onClick={(e) => { handleDuplicateVisit(contextMenu.visit, e); setContextMenu(null); }}
+                >
+                  <Copy size={16} className="text-slate-400"/>複製
+                </button>
+                <button 
+                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-blue-50 flex items-center gap-3 text-blue-600 transition-colors"
+                  onClick={() => { setEditingVisit(contextMenu.visit); setContextMenu(null); }}
+                >
+                  <Pencil size={16}/>編集
+                </button>
+                <button 
+                  className="w-full text-left px-4 py-3 text-sm font-bold flex items-center gap-3 disabled:opacity-50 disabled:bg-slate-50 disabled:cursor-not-allowed group relative text-red-600 hover:bg-red-50 transition-colors"
+                  disabled={contextMenu.visit.isExcludedFromAutoAssign}
+                  onClick={() => { 
+                    if(!contextMenu.visit.isExcludedFromAutoAssign) { 
+                      setDeleteConfirmId(contextMenu.visit.id); 
+                      setContextMenu(null); 
+                    } 
+                  }}
+                >
+                  <Trash2 size={16}/>削除
+                  {contextMenu.visit.isExcludedFromAutoAssign && (
+                     <span className="hidden group-hover:block absolute left-full top-1/2 -translate-y-1/2 ml-2 w-max bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow-lg z-50">固定を解除してから削除してください</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
           {editingVisit && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
               <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl">
@@ -2453,7 +2475,7 @@
             <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4" onClick={() => setActivePatternSlot(null)}>
               <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-black text-slate-800">メモ {activePatternSlot}</h3>
+                  <h3 className="text-xl font-black text-slate-800">メモリ {activePatternSlot}</h3>
                   <button onClick={() => setActivePatternSlot(null)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full"><X size={20} /></button>
                 </div>
                 <div className="space-y-3">
@@ -2489,7 +2511,7 @@
                     className="w-full py-4 rounded-2xl font-black text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Trash2 size={18} />
-                    メモを削除
+                    メモリを削除
                   </button>
                 </div>
               </div>
