@@ -1389,6 +1389,12 @@
               return;
             }
 
+            // 表示中の週以外のデータは同期対象外とし、そのまま保持する
+            if (!displayDates.includes(v.date)) {
+              nextVisits.push(v);
+              return;
+            }
+
             const sheetData = result.find(nv => 
               normalizeName(v.userName) === normalizeName(nv.userName) && 
               v.date === nv.date && 
