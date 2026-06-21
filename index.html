@@ -271,6 +271,7 @@
       const [nurseStatuses, setNurseStatuses] = useState([]); 
       const [savedPatterns, setSavedPatterns] = useState({});
       const [history, setHistory] = useState([]);
+      const [dailyMemos, setDailyMemos] = useState({}); // 日別メモの状態管理
       
       const [baseTravelTime, setBaseTravelTime] = useState(7);
       const [selectedNurseId, setSelectedNurseId] = useState(null);
@@ -293,6 +294,9 @@
       
       const [editingVisit, setEditingVisit] = useState(null);
       const [contextMenu, setContextMenu] = useState(null);
+
+      const [editingMemoDate, setEditingMemoDate] = useState(null);
+      const [memoInputValue, setMemoInputValue] = useState("");
 
       useEffect(() => {
         if (showToast) {
@@ -326,11 +330,12 @@
             if (data.visits) setVisits(JSON.parse(data.visits));
             if (data.nurseStatuses) setNurseStatuses(JSON.parse(data.nurseStatuses));
             if (data.savedPatterns) setSavedPatterns(JSON.parse(data.savedPatterns));
+            if (data.dailyMemos) setDailyMemos(JSON.parse(data.dailyMemos));
             if (data.sheetUrl) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
           } else {
-            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 });
+            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", dailyMemos: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 });
           }
           setIsSyncing(false);
         }, (err) => { console.error(err); setIsSyncing(false); });
@@ -377,6 +382,15 @@
         setSavedPatterns(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ savedPatterns: JSON.stringify(next) });
+          return next;
+        });
+      };
+
+      const handleSetDailyMemo = (date, text) => {
+        if (!isAdmin) return;
+        setDailyMemos(prev => {
+          const next = { ...prev, [date]: text };
+          updateCloudData({ dailyMemos: JSON.stringify(next) });
           return next;
         });
       };
@@ -1723,6 +1737,76 @@
         return filtered;
       }, [visits, selectedDate, visitSortConfig, nurses]);
 
+      // --- その日その日のメモ機能 ---
+      const renderDailyMemo = () => {
+        const currentMemo = dailyMemos[selectedDate] || "";
+        const isEditing = editingMemoDate === selectedDate;
+
+        if (isEditing) {
+            return (
+                <div className="bg-amber-50 border-2 border-amber-300 p-3 md:p-4 rounded-2xl shadow-sm mb-2 shrink-0">
+                    <div className="flex items-center gap-2 mb-2 text-amber-700 font-black text-xs">
+                        <MessageSquare size={14} /> 本日の共有事項・メモ
+                    </div>
+                    <textarea 
+                        className="w-full bg-white border border-amber-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-amber-400 resize-none font-bold text-slate-700" 
+                        rows="3" 
+                        value={memoInputValue}
+                        onChange={(e) => setMemoInputValue(e.target.value)}
+                        placeholder="本日の共有事項や連絡事項を入力してください..."
+                        autoFocus
+                    />
+                    <div className="flex justify-end gap-2 mt-3">
+                        <button onClick={() => setEditingMemoDate(null)} className="px-4 py-2 text-xs font-black text-slate-500 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors">キャンセル</button>
+                        <button onClick={() => {
+                            handleSetDailyMemo(selectedDate, memoInputValue);
+                            setEditingMemoDate(null);
+                        }} className="px-4 py-2 text-xs font-black text-white bg-amber-500 rounded-xl hover:bg-amber-600 shadow-md transition-colors">保存する</button>
+                    </div>
+                </div>
+            );
+        }
+
+        if (currentMemo) {
+            return (
+                <div 
+                    className={`bg-amber-50 border border-amber-200 p-3 md:p-4 rounded-2xl shadow-sm mb-2 flex items-start gap-3 shrink-0 ${isAdmin ? 'cursor-pointer hover:bg-amber-100 transition-colors' : ''}`}
+                    onClick={() => {
+                        if (isAdmin) {
+                            setMemoInputValue(currentMemo);
+                            setEditingMemoDate(selectedDate);
+                        }
+                    }}
+                    title={isAdmin ? "クリックして編集" : ""}
+                >
+                    <div className="bg-amber-100 p-1.5 rounded-lg text-amber-600 shrink-0 mt-0.5">
+                        <MessageSquare size={16} />
+                    </div>
+                    <div className="flex-1 whitespace-pre-wrap text-sm font-bold text-amber-900 leading-relaxed">
+                        {currentMemo}
+                    </div>
+                    {isAdmin && <Pencil size={14} className="text-amber-400 shrink-0 mt-1" />}
+                </div>
+            );
+        }
+
+        if (isAdmin) {
+            return (
+                <div 
+                    className="bg-slate-50 border border-dashed border-slate-300 p-3 md:p-4 rounded-2xl mb-2 text-center cursor-pointer hover:bg-slate-100 transition-colors text-slate-400 hover:text-slate-600 font-bold text-xs flex items-center justify-center gap-2 shrink-0"
+                    onClick={() => {
+                        setMemoInputValue("");
+                        setEditingMemoDate(selectedDate);
+                    }}
+                >
+                    <Plus size={14} /> 本日のメモ・共有事項を追加
+                </div>
+            );
+        }
+
+        return null;
+      };
+
       return (
         <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden" onClick={() => setContextMenu(null)} onContextMenu={() => setContextMenu(null)}>
           <aside className={`bg-slate-900 text-slate-300 hidden md:flex flex-col shrink-0 border-r border-slate-800 transition-all duration-300 relative ${isSidebarOpen ? 'w-72' : 'w-20'}`}>
@@ -1884,7 +1968,7 @@
 
             <div className="flex-1 overflow-auto p-4 md:p-10">
               {activeTab === 'overview' && (
-                <div className="flex flex-col h-full space-y-6">
+                <div className="flex flex-col h-full space-y-4 md:space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 text-sm">
                     <div className="flex flex-wrap items-center gap-4">
                       <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
@@ -1969,6 +2053,8 @@
                       )}
                     </div>
                   </div>
+
+                  {renderDailyMemo()}
 
                   <div className="flex-1 bg-white rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
                     <div className="overflow-auto relative flex-1 timeline-shadow">
@@ -2179,11 +2265,12 @@
                                           <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                         </div>
 
-                                        {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                        {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
                                           <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
                                             {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
                                             {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                             {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
+                                            {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
                                             {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
                                             {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
                                             {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
@@ -2215,6 +2302,9 @@
                       {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
+                  
+                  {renderDailyMemo()}
+
                   {!selectedNurse ? (
                     <div className="bg-white rounded-[3rem] p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-6">
                        <UserCog size={80} className="text-slate-200" /><p className="text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
@@ -2320,11 +2410,12 @@
                                       <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                     </div>
 
-                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
                                       <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
                                         {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
                                         {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                         {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
+                                        {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
                                         {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
                                         {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
                                         {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
