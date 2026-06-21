@@ -42,8 +42,23 @@
     .glass-effect { backdrop-filter: blur(8px); background-color: rgba(255, 255, 255, 0.8); }
     .timeline-shadow { box-shadow: inset -10px 0 10px -10px rgba(0,0,0,0.1); }
     
-    /* カード内のテキストが消えないよう最小高さを確保 */
-    .visit-card { min-height: 48px; display: flex; flex-direction: column; }
+    /* カード内のテキストが消えないよう最小高さを確保し、スマホの長押し標準メニューを無効化 */
+    .visit-card { 
+      min-height: 48px; 
+      display: flex; 
+      flex-direction: column; 
+      -webkit-touch-callout: none;
+      user-select: none;
+    }
+
+    /* PC表示時は横スクロールバーを表示（モバイルでは隠す） */
+    @media (min-width: 768px) {
+      .pc-scrollable::-webkit-scrollbar { display: block !important; height: 6px; }
+      .pc-scrollable::-webkit-scrollbar-track { background: rgba(0,0,0,0.03); border-radius: 8px; margin: 0 4px; }
+      .pc-scrollable::-webkit-scrollbar-thumb { background-color: rgba(148, 163, 184, 0.5); border-radius: 8px; }
+      .pc-scrollable::-webkit-scrollbar-thumb:hover { background-color: rgba(148, 163, 184, 0.8); }
+      .pc-scrollable { -ms-overflow-style: auto !important; scrollbar-width: thin !important; scrollbar-color: rgba(148, 163, 184, 0.5) transparent !important; }
+    }
   </style>
 </head>
 <body>
@@ -749,22 +764,51 @@
         };
       }, [reportMonth, visits, nurses]);
 
+      // コンテキストメニューと長押しの処理
       const handleContextMenu = (e, visit) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        if (!isAdmin) return; // 閲覧モードではコンテキストメニューを開かない
+        if (e.preventDefault) e.preventDefault();
+        if (e.stopPropagation) e.stopPropagation();
         
         let x = e.clientX;
         let y = e.clientY;
 
+        // タッチイベントからの呼び出しを考慮
+        if (e.touches && e.touches.length > 0) {
+            x = e.touches[0].clientX;
+            y = e.touches[0].clientY;
+        }
+
         const menuWidth = 160;
-        const menuHeight = 240; 
+        const menuHeight = 300; 
         if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
         if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
 
         setContextMenu({ mouseX: x, mouseY: y, visit });
         setActiveCardId(null);
+      };
+
+      const longPressTimer = useRef(null);
+
+      const handleTouchStart = (e, visit) => {
+        const touch = e.touches[0];
+        const clientX = touch.clientX;
+        const clientY = touch.clientY;
+        
+        longPressTimer.current = setTimeout(() => {
+          handleContextMenu({
+             preventDefault: () => {},
+             stopPropagation: () => {},
+             clientX,
+             clientY
+          }, visit);
+        }, 500); // 0.5秒長押し
+      };
+
+      const handleTouchEndOrMove = () => {
+        if (longPressTimer.current) {
+          clearTimeout(longPressTimer.current);
+          longPressTimer.current = null;
+        }
       };
 
       const handleSaveEdit = (e) => {
@@ -1840,7 +1884,7 @@
                         <span className="text-xs text-slate-400 font-bold">分</span>
                       </div>
                     </div>
-                    <div ref={scrollRefOverview} className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pb-2 md:pb-3 cursor-grab active:cursor-grabbing">
+                    <div ref={scrollRefOverview} className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pc-scrollable pb-2 md:pb-3 cursor-grab active:cursor-grabbing">
                       
                       {isAdmin && (
                         <>
@@ -2001,6 +2045,10 @@
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
                                    onContextMenu={(e) => handleContextMenu(e, v)}
+                                   onTouchStart={(e) => handleTouchStart(e, v)}
+                                   onTouchMove={handleTouchEndOrMove}
+                                   onTouchEnd={handleTouchEndOrMove}
+                                   onTouchCancel={handleTouchEndOrMove}
                                    className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    
@@ -2087,6 +2135,10 @@
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
+                                        onTouchStart={(e) => handleTouchStart(e, item)}
+                                        onTouchMove={handleTouchEndOrMove}
+                                        onTouchEnd={handleTouchEndOrMove}
+                                        onTouchCancel={handleTouchEndOrMove}
                                         className={`absolute left-2 right-2 group bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
                                         
@@ -2130,11 +2182,12 @@
                                           <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                         </div>
 
-                                        {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                        {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
                                           <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
                                             {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
                                             {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                             {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
+                                            {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
                                             {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
                                             {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
                                             {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
@@ -2162,7 +2215,7 @@
                       <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認 ({formatDateLabel(selectedDate)})</h1>
                       <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '期間未設定'}</p>
                     </div>
-                    <div ref={scrollRefSchedule} className="flex gap-2 overflow-x-auto hide-scrollbar bg-slate-200/50 p-1.5 md:p-2 md:pb-3 rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing">
+                    <div ref={scrollRefSchedule} className="flex gap-2 overflow-x-auto hide-scrollbar pc-scrollable bg-slate-200/50 p-1.5 md:p-2 md:pb-3 rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
                       {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
@@ -2232,7 +2285,12 @@
                                   )}
 
                                   <div className={`relative flex flex-col p-4 rounded-2xl border-l-[6px] shadow-md w-full max-w-[280px] sm:max-w-xs md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50 opacity-90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
-                                    onContextMenu={(e) => handleContextMenu(e, item)}>
+                                    onContextMenu={(e) => handleContextMenu(e, item)}
+                                    onTouchStart={(e) => handleTouchStart(e, item)}
+                                    onTouchMove={handleTouchEndOrMove}
+                                    onTouchEnd={handleTouchEndOrMove}
+                                    onTouchCancel={handleTouchEndOrMove}
+                                  >
                                     
                                     {item.comment && (
                                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-3 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
@@ -2274,11 +2332,11 @@
                                       <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
                                     </div>
 
-                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.excludedNurseNames?.length > 0 || item.isLate || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
                                       <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
-                                        {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
                                         {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                         {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
+                                        {item.excludedNurseNames?.length > 0 && !isOther && <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 truncate max-w-[80px]">除外:{item.excludedNurseNames.join(',')}</span>}
                                         {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
                                         {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
                                         {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
@@ -2615,45 +2673,67 @@
                 <div className="px-4 py-2 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">
                   {contextMenu.visit.userName}
                 </div>
-                <button 
-                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
-                  onClick={() => { handleToggleExclude(contextMenu.visit.id); setContextMenu(null); }}
-                >
-                  {contextMenu.visit.isExcludedFromAutoAssign ? <><Unlock size={16} className="text-slate-400"/>固定を解除</> : <><Lock size={16} className="text-slate-400"/>予定を固定</>}
-                </button>
-                <button 
-                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
-                  onClick={(e) => { handleDuplicateVisit(contextMenu.visit, e); setContextMenu(null); }}
-                >
-                  <Copy size={16} className="text-slate-400"/>複製
-                </button>
-                <button 
-                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-fuchsia-50 flex items-center gap-3 text-fuchsia-700 transition-colors"
-                  onClick={(e) => { handleDuplicateAccompany(contextMenu.visit, e); setContextMenu(null); }}
-                >
-                  <UserPlus size={16} className="text-fuchsia-400"/>同行複製
-                </button>
-                <button 
-                  className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-blue-50 flex items-center gap-3 text-blue-600 transition-colors"
-                  onClick={() => { setEditingVisit(contextMenu.visit); setContextMenu(null); }}
-                >
-                  <Pencil size={16}/>編集
-                </button>
-                <button 
-                  className="w-full text-left px-4 py-3 text-sm font-bold flex items-center gap-3 disabled:opacity-50 disabled:bg-slate-50 disabled:cursor-not-allowed group relative text-red-600 hover:bg-red-50 transition-colors"
-                  disabled={contextMenu.visit.isExcludedFromAutoAssign}
-                  onClick={() => { 
-                    if(!contextMenu.visit.isExcludedFromAutoAssign) { 
-                      setDeleteConfirmId(contextMenu.visit.id); 
-                      setContextMenu(null); 
-                    } 
-                  }}
-                >
-                  <Trash2 size={16}/>削除
-                  {contextMenu.visit.isExcludedFromAutoAssign && (
-                     <span className="hidden group-hover:block absolute left-full top-1/2 -translate-y-1/2 ml-2 w-max bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow-lg z-50">固定を解除してから削除してください</span>
-                  )}
-                </button>
+                
+                {isAdmin && (
+                  <>
+                    <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
+                      onClick={() => { handleToggleExclude(contextMenu.visit.id); setContextMenu(null); }}
+                    >
+                      {contextMenu.visit.isExcludedFromAutoAssign ? <><Unlock size={16} className="text-slate-400"/>固定を解除</> : <><Lock size={16} className="text-slate-400"/>予定を固定</>}
+                    </button>
+                    <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
+                      onClick={(e) => { handleDuplicateVisit(contextMenu.visit, e); setContextMenu(null); }}
+                    >
+                      <Copy size={16} className="text-slate-400"/>複製
+                    </button>
+                    <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-fuchsia-50 flex items-center gap-3 text-fuchsia-700 transition-colors"
+                      onClick={(e) => { handleDuplicateAccompany(contextMenu.visit, e); setContextMenu(null); }}
+                    >
+                      <UserPlus size={16} className="text-fuchsia-400"/>同行複製
+                    </button>
+                    <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-blue-50 flex items-center gap-3 text-blue-600 transition-colors"
+                      onClick={() => { setEditingVisit(contextMenu.visit); setContextMenu(null); }}
+                    >
+                      <Pencil size={16}/>編集
+                    </button>
+                    <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold flex items-center gap-3 disabled:opacity-50 disabled:bg-slate-50 disabled:cursor-not-allowed group relative text-red-600 hover:bg-red-50 transition-colors"
+                      disabled={contextMenu.visit.isExcludedFromAutoAssign}
+                      onClick={() => { 
+                        if(!contextMenu.visit.isExcludedFromAutoAssign) { 
+                          setDeleteConfirmId(contextMenu.visit.id); 
+                          setContextMenu(null); 
+                        } 
+                      }}
+                    >
+                      <Trash2 size={16}/>削除
+                      {contextMenu.visit.isExcludedFromAutoAssign && (
+                         <span className="hidden group-hover:block absolute left-full top-1/2 -translate-y-1/2 ml-2 w-max bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow-lg z-50">固定を解除してから削除してください</span>
+                      )}
+                    </button>
+                  </>
+                )}
+
+                {/* マップで開く（全ユーザー共通、一番下） */}
+                {contextMenu.visit.address ? (
+                  <a 
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(contextMenu.visit.address)}`} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    onClick={() => setContextMenu(null)}
+                    className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-blue-50 flex items-center gap-3 text-blue-600 transition-colors ${isAdmin ? 'border-t border-slate-100' : ''}`}
+                  >
+                    <MapPin size={16} className="text-blue-500" />マップで開く
+                  </a>
+                ) : (
+                  <div className={`w-full text-left px-4 py-3 text-sm font-bold text-slate-400 flex items-center gap-3 ${isAdmin ? 'border-t border-slate-100' : ''}`}>
+                    <MapPin size={16} className="text-slate-300" />住所未登録
+                  </div>
+                )}
               </div>
             </div>
           )}
