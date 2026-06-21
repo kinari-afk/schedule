@@ -243,6 +243,7 @@
       const [isSidebarOpen, setIsSidebarOpen] = useState(true);
       
       const longPressTimer = useRef(null);
+      const logoTimerRef = useRef(null); // ロゴの長押し判定用
 
       const [startDate, setStartDate] = useState(() => {
         const saved = localStorage.getItem('careRoute_startDate');
@@ -823,6 +824,34 @@
         if (longPressTimer.current) {
           clearTimeout(longPressTimer.current);
           longPressTimer.current = null;
+        }
+      };
+
+      // --- 隠し機能（ロゴの長押しでおみくじメッセージ） ---
+      const handleLogoPointerDown = () => {
+        logoTimerRef.current = setTimeout(() => {
+          const messages = [
+            "いつもお疲れ様です！たまには息抜きも大事ですよ🍵",
+            "今日のルートは完璧です！…たぶん！😆",
+            "安全運転で行ってらっしゃい🚗💨",
+            "今日は定時で帰れますように…🙏",
+            "お昼ごはんは何にしますか？美味しいランチが待ってます🍙",
+            "帰り道でご褒美スイーツでも買いませんか？🍰",
+            "深呼吸して、肩の力を抜きましょう〜🌱",
+            "迷子にならないように気をつけて！🗺️",
+            "今日も一日、あなたの笑顔で周りを明るくしてください✨",
+            "たまには寄り道したっていいじゃない🤫"
+          ];
+          const msg = messages[Math.floor(Math.random() * messages.length)];
+          setToastMessage(msg);
+          setShowToast(true);
+        }, 1000); // 1秒長押しで発動
+      };
+
+      const handleLogoPointerUpOrLeave = () => {
+        if (logoTimerRef.current) {
+          clearTimeout(logoTimerRef.current);
+          logoTimerRef.current = null;
         }
       };
 
@@ -1817,7 +1846,13 @@
               {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
             </button>
             <div className={`p-6 ${isSidebarOpen ? '' : 'flex flex-col items-center px-2'}`}>
-              <div className={`flex items-center gap-3 text-white font-black mb-2 ${isSidebarOpen ? 'text-2xl' : 'text-xl justify-center'}`}>
+              <div 
+                className={`flex items-center gap-3 text-white font-black mb-2 ${isSidebarOpen ? 'text-2xl' : 'text-xl justify-center'} select-none`}
+                onPointerDown={handleLogoPointerDown}
+                onPointerUp={handleLogoPointerUpOrLeave}
+                onPointerLeave={handleLogoPointerUpOrLeave}
+                onContextMenu={(e) => e.preventDefault()}
+              >
                 <div className="bg-teal-500 p-2 rounded-xl shadow-lg shadow-teal-500/20 shrink-0">
                   <Activity className="text-white" size={isSidebarOpen ? 24 : 20} />
                 </div>
@@ -1904,8 +1939,16 @@
 
           <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
             <div className="flex items-center gap-2 font-black text-lg">
-              <Activity className="text-teal-400" size={20} />
-              <span>CareRoute</span>
+              <div 
+                className="flex items-center gap-2 select-none"
+                onPointerDown={handleLogoPointerDown}
+                onPointerUp={handleLogoPointerUpOrLeave}
+                onPointerLeave={handleLogoPointerUpOrLeave}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                <Activity className="text-teal-400" size={20} />
+                <span>CareRoute</span>
+              </div>
               {isAdmin ? (
                 <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">管理者</span>
               ) : (
