@@ -44,6 +44,15 @@
     
     /* カード内のテキストが消えないよう最小高さを確保 */
     .visit-card { min-height: 48px; display: flex; flex-direction: column; }
+
+    /* PC表示時は横スクロールバーを表示（モバイルでは隠す） */
+    @media (min-width: 768px) {
+      .pc-scrollable::-webkit-scrollbar { display: block !important; height: 6px; }
+      .pc-scrollable::-webkit-scrollbar-track { background: rgba(0,0,0,0.03); border-radius: 8px; margin: 0 4px; }
+      .pc-scrollable::-webkit-scrollbar-thumb { background-color: rgba(148, 163, 184, 0.5); border-radius: 8px; }
+      .pc-scrollable::-webkit-scrollbar-thumb:hover { background-color: rgba(148, 163, 184, 0.8); }
+      .pc-scrollable { -ms-overflow-style: auto !important; scrollbar-width: thin !important; scrollbar-color: rgba(148, 163, 184, 0.5) transparent !important; }
+    }
   </style>
 </head>
 <body>
@@ -1186,6 +1195,19 @@
         setShowToast(true);
       };
 
+      // マウスホイールでの横スクロール操作
+      const handleHorizontalScroll = (e) => {
+        if (e.deltaY !== 0 && !e.shiftKey) {
+          const el = e.currentTarget;
+          const isAtLeft = el.scrollLeft <= 0 && e.deltaY < 0;
+          const isAtRight = Math.ceil(el.scrollLeft + el.clientWidth) >= el.scrollWidth && e.deltaY > 0;
+          if (!isAtLeft && !isAtRight) {
+            e.preventDefault();
+            el.scrollLeft += e.deltaY;
+          }
+        }
+      };
+
       const handleDrop = (e, targetNurseId) => {
         if (!isAdmin) return;
         e.preventDefault();
@@ -1710,7 +1732,7 @@
           <main className="flex-1 flex flex-col overflow-hidden relative">
             {activeTab !== 'report' && (
               <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
-                <div className="flex items-center gap-3 overflow-x-auto hide-scrollbar whitespace-nowrap pl-2">
+                <div className="flex items-center gap-3 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2" onWheel={handleHorizontalScroll}>
                   <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200">
                     <CalendarDays size={16} className="text-slate-500" />
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">開始日:</span>
@@ -1721,7 +1743,7 @@
                     </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2 pb-1 md:pb-0">
+                <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2" onWheel={handleHorizontalScroll}>
                   <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">日付選択:</div>
                   <button onClick={handlePrevWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="前週" title="前週">
                     <ChevronsLeft size={18} />
@@ -1763,7 +1785,7 @@
                         <span className="text-xs text-slate-400 font-bold">分</span>
                       </div>
                     </div>
-                    <div className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pb-2 md:pb-0">
+                    <div className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pc-scrollable pb-2 md:pb-3" onWheel={handleHorizontalScroll}>
                       
                       {isAdmin && (
                         <>
@@ -2085,7 +2107,7 @@
                       <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認 ({formatDateLabel(selectedDate)})</h1>
                       <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '期間未設定'}</p>
                     </div>
-                    <div className="flex gap-2 overflow-x-auto hide-scrollbar bg-slate-200/50 p-1.5 rounded-[1.5rem] border border-slate-200 shadow-inner">
+                    <div className="flex gap-2 overflow-x-auto hide-scrollbar pc-scrollable bg-slate-200/50 p-1.5 md:p-2 md:pb-3 rounded-[1.5rem] border border-slate-200 shadow-inner" onWheel={handleHorizontalScroll}>
                       {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
