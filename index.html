@@ -152,6 +152,13 @@
     };
 
     function App() {
+      // 管理者モードかどうかの判定 (URLのクエリパラメータ ?mode=admin)
+      const isAdmin = useMemo(() => {
+        if (typeof window === 'undefined') return false;
+        const params = new URLSearchParams(window.location.search);
+        return params.get('mode') === 'admin';
+      }, []);
+
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
       const [activeTab, setActiveTab] = useState('overview');
@@ -237,6 +244,7 @@
       }, [user]);
 
       const updateCloudData = (newData) => {
+        if (!isAdmin) return; // 閲覧モードでは保存させない
         if (user && db) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
           setDoc(docRef, newData, { merge: true }).catch(e => console.error(e));
@@ -244,6 +252,7 @@
       };
 
       const handleSetVisits = (newVal) => {
+        if (!isAdmin) return;
         setVisits(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ visits: JSON.stringify(next) });
@@ -252,6 +261,7 @@
       };
 
       const handleSetNurses = (newVal) => {
+        if (!isAdmin) return;
         setNurses(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ nurses: JSON.stringify(next) });
@@ -260,6 +270,7 @@
       };
 
       const handleSetNurseStatuses = (newVal) => {
+        if (!isAdmin) return;
         setNurseStatuses(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ nurseStatuses: JSON.stringify(next) });
@@ -268,6 +279,7 @@
       };
 
       const handleSetSavedPatterns = (newVal) => {
+        if (!isAdmin) return;
         setSavedPatterns(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ savedPatterns: JSON.stringify(next) });
@@ -276,6 +288,7 @@
       };
 
       const saveHistory = () => {
+        if (!isAdmin) return;
         setHistory(prev => {
           const newHistory = [...prev, { visits: JSON.parse(JSON.stringify(visits)), nurseStatuses: JSON.parse(JSON.stringify(nurseStatuses)) }];
           if (newHistory.length > 20) newHistory.shift();
@@ -284,6 +297,7 @@
       };
 
       const handleUndo = () => {
+        if (!isAdmin) return;
         setHistory(prev => {
           if (prev.length === 0) return prev;
           const nextHistory = [...prev];
@@ -299,9 +313,9 @@
         });
       };
 
-      const handleSetBaseTravelTime = (v) => { setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
-      const handleSheetUrlChange = (e) => { setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
-      const handleNurseSheetUrlChange = (e) => { setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
+      const handleSetBaseTravelTime = (v) => { if(!isAdmin) return; setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
+      const handleSheetUrlChange = (e) => { if(!isAdmin) return; setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
+      const handleNurseSheetUrlChange = (e) => { if(!isAdmin) return; setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
       
       const handleSetStartDate = (dateStr) => {
         setStartDate(dateStr);
@@ -662,6 +676,8 @@
         e.preventDefault();
         e.stopPropagation();
         
+        if (!isAdmin) return; // 閲覧モードではコンテキストメニューを開かない
+        
         let x = e.clientX;
         let y = e.clientY;
 
@@ -675,6 +691,7 @@
       };
 
       const handleSaveEdit = (e) => {
+        if (!isAdmin) return;
         e.preventDefault();
         const formData = new FormData(e.target);
         const newName = formData.get('userName');
@@ -695,6 +712,7 @@
       };
 
       const handleDuplicateVisit = (visit, e) => {
+        if (!isAdmin) return;
         if (e) {
           e.preventDefault();
           e.stopPropagation();
@@ -712,6 +730,7 @@
 
       // --- 同行用の複製 ---
       const handleDuplicateAccompany = (visit, e) => {
+        if (!isAdmin) return;
         if (e) {
           e.preventDefault();
           e.stopPropagation();
@@ -730,6 +749,7 @@
       };
 
       const savePattern = (slot) => {
+        if (!isAdmin) return;
         const todayVisits = JSON.parse(JSON.stringify(visits.filter(v => v.date === selectedDate)));
         handleSetSavedPatterns(prev => {
           const next = { ...prev };
@@ -742,6 +762,7 @@
       };
 
       const loadPattern = (slot) => {
+        if (!isAdmin) return;
         const patternVisits = JSON.parse(JSON.stringify(savedPatterns[selectedDate]?.[slot]));
         if (!patternVisits) return;
         
@@ -755,6 +776,7 @@
       };
 
       const deletePattern = (slot) => {
+        if (!isAdmin) return;
         handleSetSavedPatterns(prev => {
           const next = { ...prev };
           if (next[selectedDate]) {
@@ -767,6 +789,7 @@
       };
 
       const handleToggleExclude = (visitId) => {
+        if (!isAdmin) return;
         saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.id === visitId ? { ...v, isExcludedFromAutoAssign: !v.isExcludedFromAutoAssign } : v
@@ -774,6 +797,7 @@
       };
 
       const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
+        if (!isAdmin) return;
         let nextStatus = 'work';
         if (currentOffType === 'work') nextStatus = 'off';
         else if (currentOffType === 'full') nextStatus = 'am_off';
@@ -809,6 +833,7 @@
       };
 
       const toggleNurseLock = (nurseId, dateStr) => {
+        if (!isAdmin) return;
         saveHistory();
         handleSetNurseStatuses(prev => {
           const next = [...prev];
@@ -829,6 +854,7 @@
       };
 
       const handleLockAllToday = () => {
+        if (!isAdmin) return;
         saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.date === selectedDate ? { ...v, isExcludedFromAutoAssign: true } : v
@@ -861,6 +887,7 @@
       };
 
       const handleUnlockAllToday = () => {
+        if (!isAdmin) return;
         saveHistory();
         handleSetVisits(prev => prev.map(v => 
           v.date === selectedDate ? { ...v, isExcludedFromAutoAssign: false } : v
@@ -875,6 +902,7 @@
       };
 
       const handleAutoAssign = () => {
+        if (!isAdmin) return;
         const availableStates = [];
         nurses.forEach(n => {
             const offType = getIsNurseOffType(n, selectedDate, nurseStatuses);
@@ -1126,6 +1154,7 @@
       };
 
       const executeResetAssignments = () => {
+        if (!isAdmin) return;
         saveHistory();
         handleSetVisits(prev => prev.map(v => {
           if (v.date === selectedDate && !v.isExcludedFromAutoAssign) {
@@ -1144,6 +1173,7 @@
       };
 
       const handleDrop = (e, targetNurseId) => {
+        if (!isAdmin) return;
         e.preventDefault();
         const visitId = parseInt(e.dataTransfer.getData('text/plain'), 10);
         if (isNaN(visitId)) return;
@@ -1212,6 +1242,7 @@
       };
 
       const updateVisitNurse = (visitId, newNurseId) => {
+        if (!isAdmin) return;
         const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
         const targetVisit = visits.find(v => v.id === visitId);
         const targetStart = parseTime(targetVisit.startTime);
@@ -1257,10 +1288,12 @@
       };
 
       const updateCustomTravelTime = (visitId, newTime) => {
+        if (!isAdmin) return;
         handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, customTravelTime: newTime } : v));
       };
 
       const handleAddEvent = (e) => {
+        if (!isAdmin) return;
         e.preventDefault();
         const formData = new FormData(e.target);
         const title = formData.get('title');
@@ -1314,6 +1347,7 @@
       };
 
       const handleFetchSheet = async () => {
+        if (!isAdmin) return;
         setIsLoadingSheet(true);
         try {
           const res = await fetch(sheetUrl);
@@ -1438,6 +1472,7 @@
       };
 
       const handleFetchNurseSheet = async () => {
+        if (!isAdmin) return;
         setIsLoadingNurseSheet(true);
         try {
           const res = await fetch(nurseSheetUrl);
@@ -1560,7 +1595,16 @@
                 </div>
                 {isSidebarOpen && <span>CareRoute</span>}
               </div>
-              {isSidebarOpen && <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1 whitespace-nowrap overflow-hidden">Route Optimization v2.5</p>}
+              {isSidebarOpen && (
+                <div className="flex flex-col gap-1 items-start mt-1">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1 whitespace-nowrap overflow-hidden">Route Optimization v2.5</p>
+                  {isAdmin ? (
+                    <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] px-2 py-0.5 rounded font-black ml-1">管理者モード</span>
+                  ) : (
+                    <span className="bg-slate-700 text-slate-400 text-[10px] px-2 py-0.5 rounded font-black ml-1 border border-slate-600">閲覧モード</span>
+                  )}
+                </div>
+              )}
             </div>
             <nav className={`flex-1 space-y-1.5 mt-2 ${isSidebarOpen ? 'px-4' : 'px-2'}`}>
               <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center ${isSidebarOpen ? 'justify-between px-5' : 'justify-center px-0'} py-4 rounded-2xl transition-all group ${activeTab === 'overview' ? 'bg-teal-600 text-white shadow-xl shadow-teal-900/30' : 'hover:bg-slate-800/50 hover:text-white'}`} title={!isSidebarOpen ? "全体スケジュール" : ""}>
@@ -1631,7 +1675,15 @@
           </aside>
 
           <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
-            <div className="flex items-center gap-2 font-black text-lg"><Activity className="text-teal-400" size={20} /><span>CareRoute</span></div>
+            <div className="flex items-center gap-2 font-black text-lg">
+              <Activity className="text-teal-400" size={20} />
+              <span>CareRoute</span>
+              {isAdmin ? (
+                <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">管理者</span>
+              ) : (
+                <span className="bg-slate-700 text-slate-400 border border-slate-600 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">閲覧</span>
+              )}
+            </div>
             <div className="flex gap-0.5">
               <button onClick={() => setActiveTab('overview')} className={`p-2 rounded-xl ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Columns size={20} /></button>
               <button onClick={() => setActiveTab('schedule')} className={`p-2 rounded-xl ${activeTab === 'schedule' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Calendar size={20} /></button>
@@ -1693,76 +1745,80 @@
                       <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
                         <Clock size={16} className="text-slate-400" />
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
-                        <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20"/>
+                        <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 disabled:bg-transparent read-only:focus:ring-0"/>
                         <span className="text-xs text-slate-400 font-bold">分</span>
                       </div>
                     </div>
                     <div className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pb-2 md:pb-0">
                       
-                      <button 
-                        onClick={handleUndo}
-                        disabled={history.length === 0}
-                        className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
-                        title="直前の操作を取り消す"
-                      >
-                        <Undo size={16} />
-                        元に戻す
-                      </button>
+                      {isAdmin && (
+                        <>
+                          <button 
+                            onClick={handleUndo}
+                            disabled={history.length === 0}
+                            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                            title="直前の操作を取り消す"
+                          >
+                            <Undo size={16} />
+                            元に戻す
+                          </button>
 
-                      <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm shrink-0">
-                        <span className="text-[10px] font-black text-slate-400 px-2 uppercase">メモリ</span>
-                        {[1, 2, 3].map(slot => {
-                          const hasData = savedPatterns[selectedDate]?.[slot];
-                          return (
-                            <button
-                              key={slot}
-                              onClick={() => setActivePatternSlot(slot)}
-                              className={`w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-xl font-black text-xs mx-0.5 transition-colors ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-transparent text-slate-400 hover:bg-slate-100'}`}
-                              title={`メモリ${slot}`}
-                            >
-                              {slot}
-                            </button>
-                          )
-                        })}
-                      </div>
+                          <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm shrink-0">
+                            <span className="text-[10px] font-black text-slate-400 px-2 uppercase">メモリ</span>
+                            {[1, 2, 3].map(slot => {
+                              const hasData = savedPatterns[selectedDate]?.[slot];
+                              return (
+                                <button
+                                  key={slot}
+                                  onClick={() => setActivePatternSlot(slot)}
+                                  className={`w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-xl font-black text-xs mx-0.5 transition-colors ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-transparent text-slate-400 hover:bg-slate-100'}`}
+                                  title={`メモリ${slot}`}
+                                >
+                                  {slot}
+                                </button>
+                              )
+                            })}
+                          </div>
 
-                      <button 
-                        onClick={() => setShowAddEventModal(true)}
-                        className="bg-white border border-slate-200 hover:bg-indigo-50 text-indigo-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-                        title="会議や研修などの予定を追加"
-                      >
-                        <Briefcase size={16} />
-                        予定を追加
-                      </button>
-                      <button 
-                        onClick={handleLockAllToday}
-                        className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-                        title="この日の予定と出勤状況を一括固定"
-                      >
-                        <Lock size={16} />
-                        一括固定
-                      </button>
-                      <button 
-                        onClick={handleUnlockAllToday}
-                        className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-                        title="この日の固定を一括解除"
-                      >
-                        <Unlock size={16} />
-                        一括解除
-                      </button>
-                      <button 
-                        onClick={() => setShowResetConfirm(true)}
-                        disabled={!hasAssignedVisits}
-                        className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
-                      >
-                        <RotateCcw size={16} />
-                        リセット
-                      </button>
-                      <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
-                        className="bg-teal-600 hover:bg-teal-700 text-white px-4 md:px-6 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap shrink-0">
-                        <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
-                        {isOptimizing ? "編成中..." : "自動編成"}
-                      </button>
+                          <button 
+                            onClick={() => setShowAddEventModal(true)}
+                            className="bg-white border border-slate-200 hover:bg-indigo-50 text-indigo-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                            title="会議や研修などの予定を追加"
+                          >
+                            <Briefcase size={16} />
+                            予定を追加
+                          </button>
+                          <button 
+                            onClick={handleLockAllToday}
+                            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                            title="この日の予定と出勤状況を一括固定"
+                          >
+                            <Lock size={16} />
+                            一括固定
+                          </button>
+                          <button 
+                            onClick={handleUnlockAllToday}
+                            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                            title="この日の固定を一括解除"
+                          >
+                            <Unlock size={16} />
+                            一括解除
+                          </button>
+                          <button 
+                            onClick={() => setShowResetConfirm(true)}
+                            disabled={!hasAssignedVisits}
+                            className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                          >
+                            <RotateCcw size={16} />
+                            リセット
+                          </button>
+                          <button onClick={handleAutoAssign} disabled={isOptimizing || unassignedCount === 0 || nurses.length === 0}
+                            className="bg-teal-600 hover:bg-teal-700 text-white px-4 md:px-6 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap shrink-0">
+                            <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
+                            {isOptimizing ? "編成中..." : "自動編成"}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -1788,7 +1844,8 @@
                                    <button 
                                      type="button"
                                      onClick={() => toggleNurseLock(nurse.id, selectedDate)}
-                                     className={`p-1 rounded transition-colors shadow-sm border ${isLocked ? 'bg-red-100 text-red-600 border-red-200 hover:bg-red-200' : 'bg-white text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-600'}`}
+                                     disabled={!isAdmin}
+                                     className={`p-1 rounded transition-colors shadow-sm border ${isLocked ? 'bg-red-100 text-red-600 border-red-200' : 'bg-white text-slate-300 border-slate-200'} ${isAdmin ? (isLocked ? 'hover:bg-red-200' : 'hover:bg-slate-100 hover:text-slate-600') : 'cursor-default opacity-80'}`}
                                    >
                                      {isLocked ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
                                    </button>
@@ -1796,9 +1853,9 @@
                                    <button 
                                      type="button"
                                      onClick={() => toggleNurseStatus(nurse.id, selectedDate, offType)}
-                                     disabled={isLocked}
-                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-colors shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
-                                     title={isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
+                                     disabled={isLocked || !isAdmin}
+                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
+                                     title={!isAdmin ? "閲覧モード" : isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
                                    >
                                      {offType === 'full' ? "全休" : offType === 'AM' ? "午前休" : offType === 'PM' ? "午後休" : "出勤"}
                                    </button>
@@ -1833,7 +1890,7 @@
                               <div key={i} className={`absolute w-full border-t ${i % 4 === 0 ? 'border-slate-200' : i % 2 === 0 ? 'border-slate-100' : 'border-slate-50 border-dashed'}`} style={{ top: i * 15 * PIXELS_PER_MINUTE }}></div>
                             ))}
                           </div>
-                          <div className="w-36 md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
+                          <div className="w-36 md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {unassignedVisitsWithLayout.map(v => {
                                const top = getTop(parseTime(v.startTime)), h = v.duration * PIXELS_PER_MINUTE;
                                const leftOffset = v._col * 20; 
@@ -1842,8 +1899,8 @@
                                const isOther = v.type === 'other';
                                
                                return (
-                                 <div key={v.id} draggable={!v.isExcludedFromAutoAssign} onDragStart={(e) => { 
-                                     if(v.isExcludedFromAutoAssign) { e.preventDefault(); return; }
+                                 <div key={v.id} draggable={isAdmin && !v.isExcludedFromAutoAssign} onDragStart={(e) => { 
+                                     if(!isAdmin || v.isExcludedFromAutoAssign) { e.preventDefault(); return; }
                                      e.dataTransfer.setData('text/plain', v.id); 
                                      const rect = e.currentTarget.getBoundingClientRect(); 
                                      e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
@@ -1853,7 +1910,7 @@
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
                                    onContextMenu={(e) => handleContextMenu(e, v)}
-                                   className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!v.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
                                    
                                    {v.comment && (
@@ -1874,14 +1931,16 @@
                                           {v.userName}
                                         </h4>
                                      </div>
-                                     <button 
-                                       type="button" 
-                                       onPointerDown={(e) => e.stopPropagation()} 
-                                       onClick={(e) => handleContextMenu(e, v)}
-                                       className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
-                                     >
-                                       <MoreVertical size={14} />
-                                     </button>
+                                     {isAdmin && (
+                                       <button 
+                                         type="button" 
+                                         onPointerDown={(e) => e.stopPropagation()} 
+                                         onClick={(e) => handleContextMenu(e, v)}
+                                         className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                       >
+                                         <MoreVertical size={14} />
+                                       </button>
+                                     )}
                                    </div>
                                    
                                    <div className="flex justify-between items-end mb-1 mt-auto">
@@ -1908,7 +1967,7 @@
                             const assigned = sch?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-36 md:w-48'}`} onDragOver={(e) => !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-36 md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
                                   const top = getTop(parseTime(item.actualStartTime)), h = item.duration * PIXELS_PER_MINUTE;
                                   let prevDep = idx === 0 ? parseTime(sch.calculatedStartTime) : parseTime(assigned[idx-1].departureTime);
@@ -1920,14 +1979,14 @@
                                       {travelH > 10 && (
                                         <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-300 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
                                           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[10px] md:text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-[70] pointer-events-auto flex items-center whitespace-nowrap">
-                                            <input type="number" min="0" className="w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0" value={item.customTravelTime ?? item.travelTime}
+                                            <input type="number" min="0" className="w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0 disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin}
                                               onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
                                             <span>分</span>
                                           </div>
                                         </div>
                                       )}
-                                      <div draggable={!item.isExcludedFromAutoAssign} onDragStart={(e) => { 
-                                          if(item.isExcludedFromAutoAssign) { e.preventDefault(); return; }
+                                      <div draggable={isAdmin && !item.isExcludedFromAutoAssign} onDragStart={(e) => { 
+                                          if(!isAdmin || item.isExcludedFromAutoAssign) { e.preventDefault(); return; }
                                           e.dataTransfer.setData('text/plain', item.id); 
                                           const rect = e.currentTarget.getBoundingClientRect(); 
                                           e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
@@ -1937,7 +1996,7 @@
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
-                                        className={`absolute left-2 right-2 group bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${!item.isExcludedFromAutoAssign ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        className={`absolute left-2 right-2 group bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
                                         
                                         {item.comment && (
@@ -1960,14 +2019,16 @@
                                                  {item.userName}
                                               </h4>
                                            </div>
-                                           <button 
-                                             type="button" 
-                                             onPointerDown={(e) => e.stopPropagation()} 
-                                             onClick={(e) => handleContextMenu(e, item)}
-                                             className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
-                                           >
-                                             <MoreVertical size={14} />
-                                           </button>
+                                           {isAdmin && (
+                                             <button 
+                                               type="button" 
+                                               onPointerDown={(e) => e.stopPropagation()} 
+                                               onClick={(e) => handleContextMenu(e, item)}
+                                               className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                             >
+                                               <MoreVertical size={14} />
+                                             </button>
+                                           )}
                                         </div>
                                         
                                         <div className="flex justify-between items-end mb-2">
@@ -2031,15 +2092,17 @@
                         </div>
                         
                         <div className="w-full md:w-auto md:ml-auto flex items-center justify-end gap-2 mt-2 md:mt-0">
-                           <button 
-                              onClick={handleUndo}
-                              disabled={history.length === 0}
-                              className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
-                              title="直前の操作を取り消す"
-                            >
-                              <Undo size={16} />
-                              元に戻す
-                            </button>
+                           {isAdmin && (
+                             <button 
+                                onClick={handleUndo}
+                                disabled={history.length === 0}
+                                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                title="直前の操作を取り消す"
+                              >
+                                <Undo size={16} />
+                                元に戻す
+                              </button>
+                           )}
                         </div>
                       </div>
 
@@ -2058,7 +2121,7 @@
                                   <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0 group">
                                     <ArrowRight size={16} className="text-slate-300 mb-1 group-hover:text-teal-400 transition-all rotate-90 md:rotate-0" />
                                     <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 pl-1 pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
-                                      <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded" value={item.customTravelTime ?? item.travelTime} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
+                                      <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
                                       <span>分</span>
                                     </div>
                                   </div>
@@ -2086,14 +2149,16 @@
                                              {item.userName}
                                           </h4>
                                        </div>
-                                       <button 
-                                         type="button" 
-                                         onPointerDown={(e) => e.stopPropagation()} 
-                                         onClick={(e) => handleContextMenu(e, item)}
-                                         className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
-                                       >
-                                         <MoreVertical size={14} />
-                                       </button>
+                                       {isAdmin && (
+                                         <button 
+                                           type="button" 
+                                           onPointerDown={(e) => e.stopPropagation()} 
+                                           onClick={(e) => handleContextMenu(e, item)}
+                                           className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                         >
+                                           <MoreVertical size={14} />
+                                         </button>
+                                       )}
                                     </div>
                                     
                                     <div className="flex justify-between items-end mb-2">
@@ -2161,9 +2226,11 @@
                       <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '期間未設定'}</p>
                     </div>
                     <div className="flex flex-col items-start md:items-end gap-2 mt-2 md:mt-0 w-full md:w-auto">
-                      <button onClick={handleFetchSheet} disabled={isLoadingSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-blue-200 transition-all flex items-center gap-3 disabled:opacity-50 w-full md:w-auto justify-center">
-                        {isLoadingSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}同期を実行
-                      </button>
+                      {isAdmin && (
+                        <button onClick={handleFetchSheet} disabled={isLoadingSheet} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-blue-200 transition-all flex items-center gap-3 disabled:opacity-50 w-full md:w-auto justify-center">
+                          {isLoadingSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}同期を実行
+                        </button>
+                      )}
                       <div className="flex flex-wrap gap-2 justify-start md:justify-end">
                         <p className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
                           表示期間: {displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '未設定'}
@@ -2181,7 +2248,7 @@
                     <div className="xl:col-span-1 space-y-6">
                        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
                           <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">接続設定</h2>
-                          <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" placeholder="CSVのURLを入力"/>
+                          <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
                           <div className="mt-4 pt-4 border-t border-slate-100">
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
                             <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等)</p>
@@ -2202,7 +2269,7 @@
                                 <th className="p-6">名称/氏名</th>
                                 <th className="p-6">所要時間</th>
                                 <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
-                                <th className="p-6 text-right">操作</th>
+                                {isAdmin && <th className="p-6 text-right">操作</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -2220,26 +2287,33 @@
                                     </div>
                                   </td>
                                   <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
-                                  <td className="p-6"><select value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5"><option value="unassigned">-- 未指定 --</option>{nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
-                                  <td className="p-6 text-right">
-                                    <button onClick={(e) => handleDuplicateVisit(v, e)} className="text-slate-400 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
-                                    <button onClick={(e) => handleDuplicateAccompany(v, e)} className="text-slate-400 hover:text-fuchsia-500 p-2 rounded-lg hover:bg-fuchsia-50 transition-colors" title="同行複製"><UserPlus size={18} /></button>
-                                    <button onClick={() => setEditingVisit(v)} className="text-slate-400 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="編集"><Pencil size={18} /></button>
-                                    <button 
-                                      onClick={() => {
-                                        if(v.isExcludedFromAutoAssign) {
-                                          setToastMessage("固定された予定は削除できません。固定を解除してください。");
-                                          setShowToast(true);
-                                        } else {
-                                          setDeleteConfirmId(v.id);
-                                        }
-                                      }} 
-                                      className={`p-2 rounded-lg transition-colors ${v.isExcludedFromAutoAssign ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-red-500 hover:bg-red-50'}`} 
-                                      title="削除"
-                                    >
-                                      <Trash2 size={18} />
-                                    </button>
+                                  <td className="p-6">
+                                    <select disabled={!isAdmin} value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5 disabled:appearance-none disabled:bg-transparent disabled:border-none disabled:p-0 disabled:text-sm">
+                                      <option value="unassigned">-- 未指定 --</option>
+                                      {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                                    </select>
                                   </td>
+                                  {isAdmin && (
+                                    <td className="p-6 text-right">
+                                      <button onClick={(e) => handleDuplicateVisit(v, e)} className="text-slate-400 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
+                                      <button onClick={(e) => handleDuplicateAccompany(v, e)} className="text-slate-400 hover:text-fuchsia-500 p-2 rounded-lg hover:bg-fuchsia-50 transition-colors" title="同行複製"><UserPlus size={18} /></button>
+                                      <button onClick={() => setEditingVisit(v)} className="text-slate-400 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="編集"><Pencil size={18} /></button>
+                                      <button 
+                                        onClick={() => {
+                                          if(v.isExcludedFromAutoAssign) {
+                                            setToastMessage("固定された予定は削除できません。固定を解除してください。");
+                                            setShowToast(true);
+                                          } else {
+                                            setDeleteConfirmId(v.id);
+                                          }
+                                        }} 
+                                        className={`p-2 rounded-lg transition-colors ${v.isExcludedFromAutoAssign ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-red-500 hover:bg-red-50'}`} 
+                                        title="削除"
+                                      >
+                                        <Trash2 size={18} />
+                                      </button>
+                                    </td>
+                                  )}
                                 </tr>
                               ))}
                             </tbody>
@@ -2255,15 +2329,17 @@
                 <div className="max-w-7xl mx-auto space-y-8 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">看護師の管理</h1>
-                    <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50 text-sm">
-                      {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}更新
-                    </button>
+                    {isAdmin && (
+                      <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50 text-sm">
+                        {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}更新
+                      </button>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                     <div className="lg:col-span-1 space-y-6">
                       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
                         <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
-                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="URLを入力"/>
+                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
                         <div className="mt-4 pt-4 border-t border-slate-100">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
                           <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地</p>
