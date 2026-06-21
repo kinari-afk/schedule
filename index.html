@@ -44,15 +44,6 @@
     
     /* カード内のテキストが消えないよう最小高さを確保 */
     .visit-card { min-height: 48px; display: flex; flex-direction: column; }
-
-    /* PC表示時は横スクロールバーを表示（モバイルでは隠す） */
-    @media (min-width: 768px) {
-      .pc-scrollable::-webkit-scrollbar { display: block !important; height: 6px; }
-      .pc-scrollable::-webkit-scrollbar-track { background: rgba(0,0,0,0.03); border-radius: 8px; margin: 0 4px; }
-      .pc-scrollable::-webkit-scrollbar-thumb { background-color: rgba(148, 163, 184, 0.5); border-radius: 8px; }
-      .pc-scrollable::-webkit-scrollbar-thumb:hover { background-color: rgba(148, 163, 184, 0.8); }
-      .pc-scrollable { -ms-overflow-style: auto !important; scrollbar-width: thin !important; scrollbar-color: rgba(148, 163, 184, 0.5) transparent !important; }
-    }
   </style>
 </head>
 <body>
@@ -160,6 +151,64 @@
       return d.toISOString().split('T')[0];
     };
 
+    // マウスドラッグで横スクロールを実現するカスタムフック
+    const useDragScroll = () => {
+      const ref = useRef(null);
+      useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+
+        let isDown = false;
+        let startX;
+        let scrollLeft;
+
+        const onMouseDown = (e) => {
+          isDown = true;
+          startX = e.pageX - el.offsetLeft;
+          scrollLeft = el.scrollLeft;
+        };
+        const onMouseLeave = () => {
+          isDown = false;
+        };
+        const onMouseUp = () => {
+          isDown = false;
+        };
+        const onMouseMove = (e) => {
+          if (!isDown) return;
+          e.preventDefault();
+          const x = e.pageX - el.offsetLeft;
+          const walk = (x - startX) * 2; // スクロール速度
+          el.scrollLeft = scrollLeft - walk;
+        };
+        const onWheel = (e) => {
+          if (e.deltaY !== 0 && !e.shiftKey) {
+             const isAtLeft = el.scrollLeft <= 0 && e.deltaY < 0;
+             const isAtRight = Math.ceil(el.scrollLeft + el.clientWidth) >= el.scrollWidth && e.deltaY > 0;
+             if (!isAtLeft && !isAtRight) {
+               e.preventDefault();
+               el.scrollLeft += e.deltaY;
+             }
+          }
+        };
+
+        el.addEventListener('mousedown', onMouseDown);
+        el.addEventListener('mouseleave', onMouseLeave);
+        el.addEventListener('mouseup', onMouseUp);
+        el.addEventListener('mousemove', onMouseMove);
+        el.addEventListener('wheel', onWheel, { passive: false });
+
+        return () => {
+          el.removeEventListener('mousedown', onMouseDown);
+          el.removeEventListener('mouseleave', onMouseLeave);
+          el.removeEventListener('mouseup', onMouseUp);
+          el.removeEventListener('mousemove', onMouseMove);
+          el.removeEventListener('wheel', onWheel);
+        };
+      }, []);
+
+      return ref;
+    };
+
     function App() {
       // 管理者モードかどうかの判定 (URLのクエリパラメータ ?mode=admin)
       const isAdmin = useMemo(() => {
@@ -167,6 +216,11 @@
         const params = new URLSearchParams(window.location.search);
         return params.get('mode') === 'admin';
       }, []);
+
+      const scrollRefHeader1 = useDragScroll();
+      const scrollRefHeader2 = useDragScroll();
+      const scrollRefOverview = useDragScroll();
+      const scrollRefSchedule = useDragScroll();
 
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
@@ -1195,19 +1249,6 @@
         setShowToast(true);
       };
 
-      // マウスホイールでの横スクロール操作
-      const handleHorizontalScroll = (e) => {
-        if (e.deltaY !== 0 && !e.shiftKey) {
-          const el = e.currentTarget;
-          const isAtLeft = el.scrollLeft <= 0 && e.deltaY < 0;
-          const isAtRight = Math.ceil(el.scrollLeft + el.clientWidth) >= el.scrollWidth && e.deltaY > 0;
-          if (!isAtLeft && !isAtRight) {
-            e.preventDefault();
-            el.scrollLeft += e.deltaY;
-          }
-        }
-      };
-
       const handleDrop = (e, targetNurseId) => {
         if (!isAdmin) return;
         e.preventDefault();
@@ -1742,19 +1783,19 @@
           <main className="flex-1 flex flex-col overflow-hidden relative">
             {activeTab !== 'report' && (
               <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
-                <div className="flex items-center gap-3 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2" onWheel={handleHorizontalScroll}>
-                  <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200">
+                <div ref={scrollRefHeader1} className="flex items-center gap-3 overflow-x-auto hide-scrollbar pr-4 pl-2 pb-1 md:pb-2 cursor-grab active:cursor-grabbing">
+                  <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 pointer-events-none">
                     <CalendarDays size={16} className="text-slate-500" />
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">開始日:</span>
-                    <input type="date" value={startDate} onChange={e => handleSetStartDate(e.target.value)} className="bg-transparent border-none p-0 text-sm font-black text-slate-700 outline-none focus:ring-0"/>
+                    <input type="date" value={startDate} onChange={e => handleSetStartDate(e.target.value)} className="bg-transparent border-none p-0 text-sm font-black text-slate-700 outline-none focus:ring-0 pointer-events-auto"/>
                     <div className="hidden md:block w-px h-4 bg-slate-300 mx-1"></div>
                     <span className="text-xs font-black text-slate-500 bg-white px-2 py-0.5 rounded-lg shadow-sm border border-slate-200">
                       {displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '期間未設定'}
                     </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2" onWheel={handleHorizontalScroll}>
-                  <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap">日付選択:</div>
+                <div ref={scrollRefHeader2} className="flex items-center gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pr-4 pl-2 pb-1 md:pb-2 cursor-grab active:cursor-grabbing">
+                  <div className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-tighter mr-1 whitespace-nowrap pointer-events-none">日付選択:</div>
                   <button onClick={handlePrevWeek} className="w-8 h-9 md:w-9 md:h-11 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200" aria-label="前週" title="前週">
                     <ChevronsLeft size={18} />
                   </button>
@@ -1795,7 +1836,7 @@
                         <span className="text-xs text-slate-400 font-bold">分</span>
                       </div>
                     </div>
-                    <div className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pc-scrollable pb-2 md:pb-3" onWheel={handleHorizontalScroll}>
+                    <div ref={scrollRefOverview} className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pb-2 md:pb-3 cursor-grab active:cursor-grabbing">
                       
                       {isAdmin && (
                         <>
@@ -1809,7 +1850,7 @@
                             元に戻す
                           </button>
 
-                          <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm shrink-0">
+                          <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm shrink-0 pointer-events-none">
                             <span className="text-[10px] font-black text-slate-400 px-2 uppercase">メモリ</span>
                             {[1, 2, 3].map(slot => {
                               const hasData = savedPatterns[selectedDate]?.[slot];
@@ -1817,7 +1858,7 @@
                                 <button
                                   key={slot}
                                   onClick={() => setActivePatternSlot(slot)}
-                                  className={`w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-xl font-black text-xs mx-0.5 transition-colors ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-transparent text-slate-400 hover:bg-slate-100'}`}
+                                  className={`w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-xl font-black text-xs mx-0.5 transition-colors pointer-events-auto ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-transparent text-slate-400 hover:bg-slate-100'}`}
                                   title={`メモリ${slot}`}
                                 >
                                   {slot}
@@ -2107,6 +2148,174 @@
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'schedule' && (
+                <div className="flex flex-col h-full max-w-full space-y-4 md:space-y-6 text-sm">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
+                    <div className="flex flex-col">
+                      <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認 ({formatDateLabel(selectedDate)})</h1>
+                      <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '期間未設定'}</p>
+                    </div>
+                    <div ref={scrollRefSchedule} className="flex gap-2 overflow-x-auto hide-scrollbar bg-slate-200/50 p-1.5 md:p-2 md:pb-3 rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing">
+                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
+                    </div>
+                  </div>
+                  {!selectedNurse ? (
+                    <div className="bg-white rounded-[3rem] p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-6">
+                       <UserCog size={80} className="text-slate-200" /><p className="text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col bg-white rounded-[2rem] md:rounded-[3rem] border border-slate-200 shadow-2xl shadow-slate-200/40 p-6 md:p-8 relative overflow-hidden">
+                      <div className="flex flex-wrap items-center gap-4 md:gap-12 mb-4 md:mb-6 pb-4 md:pb-6 border-b border-slate-100 shrink-0">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Users size={20} className="md:w-6 md:h-6" /></div>
+                          <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">訪問件数</p><p className="text-xl md:text-2xl font-black text-slate-800">{stats.count}<span className="text-xs ml-1 text-slate-400 font-bold">件</span></p></div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={20} className="md:w-6 md:h-6" /></div>
+                          <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">移動合計</p><p className="text-xl md:text-2xl font-black text-slate-800">{stats.totalTravel}<span className="text-xs ml-1 text-slate-400 font-bold">分</span></p></div>
+                        </div>
+                        
+                        <div className="w-full md:w-auto md:ml-auto flex items-center justify-end gap-2 mt-2 md:mt-0">
+                           {isAdmin && (
+                             <button 
+                                onClick={handleUndo}
+                                disabled={history.length === 0}
+                                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                title="直前の操作を取り消す"
+                              >
+                                <Undo size={16} />
+                                元に戻す
+                              </button>
+                           )}
+                        </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto hide-scrollbar">
+                         <div className="flex flex-col md:flex-row md:flex-wrap items-center md:items-start gap-y-3 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-2 md:px-0">
+                            <div className="flex flex-col items-center w-full md:w-16 shrink-0 relative">
+                              <div className="w-12 h-12 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg z-10"><MapPin size={20}/></div>
+                              <div className="text-[10px] font-black text-slate-400 mt-2">出発</div>
+                              <div className="text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
+                            </div>
+
+                            {allSchedules[selectedNurse.id]?.visits.map((item, idx) => {
+                              const isOther = item.type === 'other';
+                              return (
+                                <React.Fragment key={item.id}>
+                                  <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0 group">
+                                    <ArrowRight size={16} className="text-slate-300 mb-1 group-hover:text-teal-400 transition-all rotate-90 md:rotate-0" />
+                                    <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 pl-1 pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
+                                      <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
+                                      <span>分</span>
+                                    </div>
+                                  </div>
+
+                                  {item.waitTime > 0 && (
+                                    <React.Fragment>
+                                      <div className="flex flex-col items-center justify-center py-2 w-full md:w-auto shrink-0 px-2 md:px-0">
+                                        <div className="flex flex-col items-center justify-center bg-amber-50/80 border-2 border-dashed border-amber-300 px-5 py-2.5 rounded-2xl w-full md:w-auto shadow-sm">
+                                           <span className="text-[11px] text-amber-600 font-black flex items-center gap-1.5 mb-1"><Clock size={14}/>事務作業・空き</span>
+                                           <span className="text-2xl font-black text-amber-700 leading-none">{item.waitTime}<span className="text-xs ml-0.5 font-bold">分</span></span>
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-10 shrink-0">
+                                        <ArrowRight size={16} className="text-slate-300 transition-all rotate-90 md:rotate-0" />
+                                      </div>
+                                    </React.Fragment>
+                                  )}
+
+                                  <div className={`relative flex flex-col p-4 rounded-2xl border-l-[6px] shadow-md w-full max-w-[280px] sm:max-w-xs md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50 opacity-90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                    onContextMenu={(e) => handleContextMenu(e, item)}>
+                                    
+                                    {item.comment && (
+                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] sm:max-w-[250px] bg-slate-800 text-white text-xs p-3 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[150] pointer-events-none">
+                                        <div className="font-bold text-slate-300 mb-1 flex items-center gap-1"><MessageSquare size={12}/>コメント</div>
+                                        <div className="whitespace-pre-wrap leading-relaxed">{item.comment}</div>
+                                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-slate-800 rotate-45"></div>
+                                      </div>
+                                    )}
+
+                                    <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                    
+                                    <div className="flex justify-between items-start gap-1 mb-2">
+                                       <div className="flex items-center gap-1 overflow-hidden flex-1">
+                                          {item.isExcludedFromAutoAssign && (
+                                            <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                          )}
+                                          <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                             {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
+                                             {item.userName}
+                                          </h4>
+                                       </div>
+                                       {isAdmin && (
+                                         <button 
+                                           type="button" 
+                                           onPointerDown={(e) => e.stopPropagation()} 
+                                           onClick={(e) => handleContextMenu(e, item)}
+                                           className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                         >
+                                           <MoreVertical size={14} />
+                                         </button>
+                                       )}
+                                    </div>
+                                    
+                                    <div className="flex justify-between items-end mb-2">
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[9px] text-slate-400 font-bold">指定: {item.startTime}</span>
+                                        <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                      </div>
+                                      <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
+                                    </div>
+
+                                    {(item.requiresFemaleNurse || item.preferredNurseNames?.length > 0 || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                      <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
+                                        {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
+                                        {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                        {item.preferredNurseNames?.length > 0 && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold border border-indigo-100 truncate max-w-[80px]">優先:{item.preferredNurseNames.join(',')}</span>}
+                                        {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
+                                        {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                        {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                        {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                </React.Fragment>
+                              );
+                            })}
+
+                            <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0">
+                               <ArrowRight size={16} className="text-slate-300 mb-1 rotate-90 md:rotate-0" />
+                               <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                                  <span>移動{allSchedules[selectedNurse.id]?.finalTravelTime}分</span>
+                               </div>
+                            </div>
+
+                            <div className="flex flex-col items-center w-full md:w-16 shrink-0 relative">
+                              <div className="w-12 h-12 rounded-full bg-slate-200 border-2 border-slate-300 text-slate-500 flex items-center justify-center shadow-sm z-10"><MapPin size={20}/></div>
+                              <div className="text-[10px] font-black text-slate-400 mt-2">帰着</div>
+                              <div className="flex flex-col items-center gap-1">
+                                {(() => {
+                                  const returnTimeMin = parseTime(allSchedules[selectedNurse.id]?.returnTime);
+                                  const endTimeMin = parseTime(selectedNurse.endTime || '17:30');
+                                  const isOvertime = returnTimeMin > endTimeMin;
+                                  return (
+                                    <>
+                                      <div className={`text-sm font-black ${isOvertime ? 'text-red-600' : 'text-slate-800'}`}>
+                                        {allSchedules[selectedNurse.id]?.returnTime}
+                                      </div>
+                                      {isOvertime && <span className="text-[9px] font-black text-red-500 bg-red-50 px-1.5 py-0.5 rounded border border-red-200">時間外</span>}
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                         </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
