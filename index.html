@@ -164,8 +164,22 @@
       const [activeTab, setActiveTab] = useState('overview');
       const [isSidebarOpen, setIsSidebarOpen] = useState(true);
       
-      const [startDate, setStartDate] = useState(getMondayStr(getTodayStr()));
-      const [selectedDate, setSelectedDate] = useState(getTodayStr());
+      const [startDate, setStartDate] = useState(() => {
+        const saved = localStorage.getItem('careRoute_startDate');
+        return saved || getMondayStr(getTodayStr());
+      });
+      const [selectedDate, setSelectedDate] = useState(() => {
+        const saved = localStorage.getItem('careRoute_selectedDate');
+        return saved || getTodayStr();
+      });
+
+      useEffect(() => {
+        if (startDate) localStorage.setItem('careRoute_startDate', startDate);
+      }, [startDate]);
+
+      useEffect(() => {
+        if (selectedDate) localStorage.setItem('careRoute_selectedDate', selectedDate);
+      }, [selectedDate]);
       
       const [reportMonth, setReportMonth] = useState(() => {
         const d = new Date();
