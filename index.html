@@ -272,7 +272,7 @@
       const [savedPatterns, setSavedPatterns] = useState({});
       const [history, setHistory] = useState([]);
       
-      const [baseTravelTime, setBaseTravelTime] = useState(10);
+      const [baseTravelTime, setBaseTravelTime] = useState(7);
       const [selectedNurseId, setSelectedNurseId] = useState(null);
       const [isOptimizing, setIsOptimizing] = useState(false);
       const [showToast, setShowToast] = useState(false);
@@ -330,7 +330,7 @@
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
           } else {
-            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 10 });
+            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 });
           }
           setIsSyncing(false);
         }, (err) => { console.error(err); setIsSyncing(false); });
