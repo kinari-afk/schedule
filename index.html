@@ -214,6 +214,7 @@
 
         return () => {
           el.removeEventListener('mousedown', onMouseDown);
+          el.removeEventListener('mousedown', onMouseDown);
           el.removeEventListener('mouseleave', onMouseLeave);
           el.removeEventListener('mouseup', onMouseUp);
           el.removeEventListener('mousemove', onMouseMove);
@@ -2307,15 +2308,17 @@
                                    onTouchMove={handleTouchEndOrMove}
                                    onTouchEnd={handleTouchEndOrMove}
                                    onTouchCancel={handleTouchEndOrMove}
-                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 40)}px`, left: leftStyle, width: widthStyle }}>
 
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
                                         {v.isExcludedFromAutoAssign && (
-                                          <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
+                                          <button type="button" onClick={(e) => { e.stopPropagation(); handleToggleExclude(v.id); }} onPointerDown={(e) => e.stopPropagation()} className="text-red-500 shrink-0 hover:text-red-700 transition-colors p-0.5 rounded bg-red-50" title="固定を解除">
+                                            <Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" />
+                                          </button>
                                         )}
-                                        <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                        <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600'}`}>
                                           {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                           {v.userName}
                                         </h4>
@@ -2338,6 +2341,14 @@
                                      </div>
                                      <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{v.duration}分</span>
                                    </div>
+
+                                   {(v.requiresFemaleNurse || v.comment || v.isAccompany) && (
+                                     <div className="flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
+                                       {v.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                       {v.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                       {v.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
+                                     </div>
+                                   )}
                                  </div>
                                )
                              })}
@@ -2382,7 +2393,7 @@
                                         onTouchMove={handleTouchEndOrMove}
                                         onTouchEnd={handleTouchEndOrMove}
                                         onTouchCancel={handleTouchEndOrMove}
-                                        className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 40)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
 
                                         <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
@@ -2390,9 +2401,11 @@
                                         <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               {item.isExcludedFromAutoAssign && (
-                                                <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); handleToggleExclude(item.id); }} onPointerDown={(e) => e.stopPropagation()} className="text-red-500 shrink-0 hover:text-red-700 transition-colors p-0.5 rounded bg-red-50" title="固定を解除">
+                                                  <Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" />
+                                                </button>
                                               )}
-                                              <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                              <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600'}`}>
                                                  {isOther && <Briefcase size={10} className="inline mr-0.5 md:mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                                  {item.userName}
                                               </h4>
@@ -2409,17 +2422,22 @@
                                            )}
                                         </div>
                                         
-                                        <div className="flex justify-between items-end mt-auto pt-1 border-t border-slate-50">
-                                          <div className="flex flex-col gap-0.5">
-                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>
-                                              {item.actualStartTime} <span className="text-[8px] md:text-[9px] text-slate-400 font-bold">〜{item.departureTime}</span>
-                                            </span>
-                                            {item.isLate && <span className="text-[8px] md:text-[9px] text-red-500 font-bold leading-none mt-0.5">指定: {item.startTime}</span>}
-                                            {!item.isLate && item.waitTime > 0 && <span className="hidden md:block text-[8px] md:text-[9px] text-slate-400 font-bold leading-none mt-0.5">到着: {item.arrivalTime}</span>}
+                                        <div className="flex justify-between items-end mt-auto">
+                                          <div className="flex flex-col gap-0">
+                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
                                           </div>
-                                          <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none shrink-0">{item.duration}分</span>
+                                          <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
                                         </div>
 
+                                        {(item.requiresFemaleNurse || item.isLate || item.waitTime > 0 || item.comment || item.isAccompany) && (
+                                          <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
+                                            {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
+                                            {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                            {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
+                                          </div>
+                                        )}
                                       </div>
                                     </React.Fragment>
                                   )
@@ -2579,7 +2597,7 @@
                                       
                                       {/* カード本体 */}
                                       <div 
-                                        className={`flex-1 flex flex-col p-2.5 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-1 md:mb-0 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                        className={`flex-1 flex flex-col p-2.5 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-1 md:mb-0 ${isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400'} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2592,9 +2610,11 @@
                                         <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               {item.isExcludedFromAutoAssign && (
-                                                <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); handleToggleExclude(item.id); }} onPointerDown={(e) => e.stopPropagation()} className="text-red-500 shrink-0 hover:text-red-700 transition-colors p-0.5 rounded bg-red-50" title="固定を解除">
+                                                  <Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" />
+                                                </button>
                                               )}
-                                              <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                              <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600'}`}>
                                                  {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                                  {item.userName}
                                               </h4>
@@ -2632,10 +2652,9 @@
                                         </div>
 
                                         {/* タグ類 */}
-                                        {(item.requiresFemaleNurse || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
                                           <div className="flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
                                             {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                            {item.isExcludedFromAutoAssign && <span className="text-[8px] md:text-[9px] bg-red-100 text-red-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
                                             {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
                                             {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
                                           </div>
