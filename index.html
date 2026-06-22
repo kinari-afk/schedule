@@ -51,6 +51,14 @@
       user-select: none;
     }
 
+    /* ミッキーの手（手袋）のようなカーソル */
+    .mickey-grab {
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='36' height='36'%3E%3Cpath fill='white' stroke='black' stroke-width='4' stroke-linejoin='round' stroke-linecap='round' d='M40,45 V20 a10,10 0 0,1 20,0 V45 M60,45 V25 a10,10 0 0,1 20,0 V45 M80,45 V35 a10,10 0 0,1 15,5 V60 a30,30 0 0,1 -30,30 H45 a30,30 0 0,1 -30,-30 V40 a10,10 0 0,1 20,0 V45' /%3E%3Cpath stroke='black' stroke-width='4' stroke-linecap='round' d='M35,80 Q50,85 65,80 M35,90 Q50,95 65,90' /%3E%3C/svg%3E") 18 18, grab !important;
+    }
+    .mickey-grab:active {
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='36' height='36'%3E%3Cpath fill='white' stroke='black' stroke-width='4' stroke-linejoin='round' stroke-linecap='round' d='M15,50 a15,15 0 0,1 30,0 V70 a15,15 0 0,0 15,15 H70 a15,15 0 0,0 15,-15 V50 a15,15 0 0,0 -30,0 a15,15 0 0,0 -20,0 a15,15 0 0,0 -20,0 Z' /%3E%3Cpath stroke='black' stroke-width='4' stroke-linecap='round' d='M30,85 Q50,90 70,85 M30,95 Q50,100 70,95' /%3E%3C/svg%3E") 18 18, grabbing !important;
+    }
+
     /* PC表示時は横スクロールバーを表示（モバイルでは隠す） */
     @media (min-width: 768px) {
       .visit-card {
@@ -242,7 +250,16 @@
 
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
-      const [activeTab, setActiveTab] = useState('overview');
+      
+      // リロード時にタブを維持
+      const [activeTab, setActiveTab] = useState(() => {
+        return localStorage.getItem('careRoute_activeTab') || 'overview';
+      });
+      
+      useEffect(() => {
+        localStorage.setItem('careRoute_activeTab', activeTab);
+      }, [activeTab]);
+      
       const [isSidebarOpen, setIsSidebarOpen] = useState(true);
       
       const longPressTimer = useRef(null);
@@ -2310,7 +2327,7 @@
                                    onTouchMove={handleTouchEndOrMove}
                                    onTouchEnd={handleTouchEndOrMove}
                                    onTouchCancel={handleTouchEndOrMove}
-                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'mickey-grab hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, left: leftStyle, width: widthStyle }}>
 
                                    <div className="flex justify-between items-start gap-1">
@@ -2395,7 +2412,7 @@
                                         onTouchMove={handleTouchEndOrMove}
                                         onTouchEnd={handleTouchEndOrMove}
                                         onTouchCancel={handleTouchEndOrMove}
-                                        className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'mickey-grab hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
 
                                         <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
@@ -2589,7 +2606,7 @@
                                       
                                       {/* カード本体 */}
                                       <div 
-                                        className={`flex-1 flex flex-col p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                        className={`flex-1 flex flex-col p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')} ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'mickey-grab hover:-translate-y-0.5' : ''}`}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2626,7 +2643,8 @@
                                         {/* PC用 フッター */}
                                         <div className="hidden md:flex justify-between items-end mt-auto pt-2 border-t border-slate-50">
                                           <div className="flex flex-col gap-1">
-                                            {item.isLate && <span className="text-[10px] text-red-500 font-bold leading-none">指定: {item.startTime}</span>}
+                                            {item.isLate && <span className="text-[10px] text-red-500 font-bold leading-none">指定: {item.startTime} (到着: {item.arrivalTime})</span>}
+                                            {!item.isLate && item.waitTime > 0 && <span className="text-[10px] text-slate-400 font-bold leading-none">到着: {item.arrivalTime}</span>}
                                           </div>
                                           <div className="flex items-center gap-2">
                                             <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.actualStartTime} 〜 {item.departureTime}</span>
