@@ -2310,7 +2310,7 @@
                                    onTouchMove={handleTouchEndOrMove}
                                    onTouchEnd={handleTouchEndOrMove}
                                    onTouchCancel={handleTouchEndOrMove}
-                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400'} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, left: leftStyle, width: widthStyle }}>
 
                                    <div className="flex justify-between items-start gap-1">
@@ -2538,7 +2538,7 @@
                                     <React.Fragment>
                                       <div className="hidden md:flex flex-col items-center justify-center py-2 w-auto shrink-0 relative">
                                         <div className="flex flex-col items-center justify-center bg-amber-50/80 border border-dashed border-amber-300 px-5 py-2.5 rounded-2xl w-auto shadow-sm relative z-10">
-                                           <span className="text-[11px] text-amber-600 font-black flex items-center gap-1"><Clock size={12}/>事務作業・空き</span>
+                                           <span className="text-[11px] text-amber-600 font-black flex items-center gap-1"><Clock size={12}/>有効活用タイム✨</span>
                                            <span className="text-2xl font-black text-amber-700 leading-none">{item.waitTime}<span className="text-xs ml-0.5 font-bold">分</span></span>
                                         </div>
                                       </div>
@@ -2565,7 +2565,7 @@
                                       </div>
                                       {item.waitTime > 0 && (
                                         <div className="flex items-center text-[10px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shadow-sm">
-                                          <Clock size={10} className="mr-0.5"/> 待機 {item.waitTime}分
+                                          <Clock size={10} className="mr-0.5"/> 有効活用タイム✨ {item.waitTime}分
                                         </div>
                                       )}
                                     </div>
