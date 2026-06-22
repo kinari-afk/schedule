@@ -51,12 +51,12 @@
       user-select: none;
     }
 
-    /* ミッキーの手（手袋）のようなカーソル */
+    /* ミッキーの手（手袋）のようなカーソル - クオリティアップ版 */
     .mickey-grab {
-      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='36' height='36'%3E%3Cpath fill='white' stroke='black' stroke-width='4' stroke-linejoin='round' stroke-linecap='round' d='M40,45 V20 a10,10 0 0,1 20,0 V45 M60,45 V25 a10,10 0 0,1 20,0 V45 M80,45 V35 a10,10 0 0,1 15,5 V60 a30,30 0 0,1 -30,30 H45 a30,30 0 0,1 -30,-30 V40 a10,10 0 0,1 20,0 V45' /%3E%3Cpath stroke='black' stroke-width='4' stroke-linecap='round' d='M35,80 Q50,85 65,80 M35,90 Q50,95 65,90' /%3E%3C/svg%3E") 18 18, grab !important;
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Cdefs%3E%3Cfilter id='shadow' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1' flood-opacity='0.3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23shadow)' stroke='%23000' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath fill='%23FFF' d='M10 25c-1.5 0-2 2-2 4h16c0-2-.5-4-2-4z'/%3E%3Cpath fill='%23FFF' d='M12 25c-3 0-4-6-4-8 0-2 2-2 3-1v-5c0-2 2-2 3 0v-4c0-2 3-2 4 0v1c0-2 3-2 4 0v2c0-2 3-2 4 0v7c0 4-4 8-8 8z'/%3E%3Cpath fill='none' d='M15 15v5m3-5v5m3-5v4'/%3E%3C/g%3E%3C/svg%3E") 16 10, grab !important;
     }
     .mickey-grab:active {
-      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='36' height='36'%3E%3Cpath fill='white' stroke='black' stroke-width='4' stroke-linejoin='round' stroke-linecap='round' d='M15,50 a15,15 0 0,1 30,0 V70 a15,15 0 0,0 15,15 H70 a15,15 0 0,0 15,-15 V50 a15,15 0 0,0 -30,0 a15,15 0 0,0 -20,0 a15,15 0 0,0 -20,0 Z' /%3E%3Cpath stroke='black' stroke-width='4' stroke-linecap='round' d='M30,85 Q50,90 70,85 M30,95 Q50,100 70,95' /%3E%3C/svg%3E") 18 18, grabbing !important;
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Cdefs%3E%3Cfilter id='shadow' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1' flood-opacity='0.3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23shadow)' stroke='%23000' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath fill='%23FFF' d='M10 25c-1.5 0-2 2-2 4h16c0-2-.5-4-2-4z'/%3E%3Cpath fill='%23FFF' d='M12 25c-3 0-4-3-4-5 0-2 2-2 3-1 0-2 2-2 3 0 0-2 2-2 3 0 0-2 2-2 3 0 0-2 2-2 3 0v6c0 4-4 8-8 8z'/%3E%3Cpath fill='none' d='M14 18v3m3-3v3m3-3v2'/%3E%3C/g%3E%3C/svg%3E") 16 10, grabbing !important;
     }
 
     @media (max-width: 767px) {
