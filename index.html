@@ -2208,10 +2208,10 @@
                     <div className="overflow-auto relative flex-1 timeline-shadow">
                       <div className="min-w-max flex flex-col">
                         <div className="flex sticky top-0 z-[60] bg-slate-50/95 backdrop-blur-sm border-b border-slate-200">
-                          <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
-                          <div className="w-36 md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-4 bg-white/50">
-                             <div className="font-black text-slate-500 text-[10px] uppercase tracking-wider mb-1">未割り当て</div>
-                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[11px] font-black px-3 py-1 rounded-full`}>{unassignedCount}件</div>
+                          <div className="w-10 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[9px] md:text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
+                          <div className="w-32 md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50">
+                             <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1">未割り当て</div>
+                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[10px] md:text-[11px] font-black px-2 md:px-3 py-0.5 md:py-1 rounded-full`}>{unassignedCount}件</div>
                           </div>
                           {nurses.map(nurse => {
                             const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
@@ -2221,13 +2221,13 @@
                             const assigned = allSchedules[nurse.id]?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-14 bg-slate-100/50' : 'w-36 md:w-48 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
-                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-3 mb-1'} `}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-10 md:w-14 bg-slate-100/50' : 'w-36 md:w-48 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
+                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-2 md:px-3 mb-1'} `}>
                                    <button 
                                      type="button"
                                      onClick={() => toggleNurseLock(nurse.id, selectedDate)}
                                      disabled={!isAdmin}
-                                     className={`p-1 rounded transition-colors shadow-sm border ${isLocked ? 'bg-red-100 text-red-600 border-red-200' : 'bg-white text-slate-300 border-slate-200'} ${isAdmin ? (isLocked ? 'hover:bg-red-200' : 'hover:bg-slate-100 hover:text-slate-600') : 'cursor-default opacity-80'}`}
+                                     className={`p-0.5 md:p-1 rounded transition-colors shadow-sm border ${isLocked ? 'bg-red-100 text-red-600 border-red-200' : 'bg-white text-slate-300 border-slate-200'} ${isAdmin ? (isLocked ? 'hover:bg-red-200' : 'hover:bg-slate-100 hover:text-slate-600') : 'cursor-default opacity-80'}`}
                                    >
                                      {isLocked ? <Lock size={12} strokeWidth={3} /> : <Unlock size={12} />}
                                    </button>
@@ -2236,24 +2236,24 @@
                                      type="button"
                                      onClick={() => toggleNurseStatus(nurse.id, selectedDate, offType)}
                                      disabled={isLocked || !isAdmin}
-                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
+                                     className={`text-[8px] md:text-[9px] font-black px-1 md:px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
                                      title={!isAdmin ? "閲覧モード" : isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
                                    >
                                      {offType === 'full' ? "全休" : offType === 'AM' ? "午前休" : offType === 'PM' ? "午後休" : "出勤"}
                                    </button>
                                 </div>
                                 {isOff ? (
-                                  <div className="text-[10px] font-black text-red-400 tracking-tighter uppercase" style={{writingMode: 'vertical-rl'}}>お休み</div>
+                                  <div className="text-[9px] md:text-[10px] font-black text-red-400 tracking-tighter uppercase" style={{writingMode: 'vertical-rl'}}>お休み</div>
                                 ) : (
                                   <div className="flex flex-col items-center">
-                                    <div className="font-black text-slate-800 text-sm flex items-center gap-2">
-                                        <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
-                                        <span className="truncate max-w-[80px]" title={nurse.name}>{nurse.name}</span>
+                                    <div className="font-black text-slate-800 text-xs md:text-sm flex items-center gap-1 md:gap-2">
+                                        <div className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
+                                        <span className="truncate max-w-[70px] md:max-w-[80px]" title={nurse.name}>{nurse.name}</span>
                                     </div>
-                                    <div className="flex items-center gap-1 mt-1">
-                                        {offType === 'AM' && <span className="text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1.5 rounded-full">午前休</span>}
-                                        {offType === 'PM' && <span className="text-[9px] font-black text-orange-500 bg-orange-50 border border-orange-200 px-1.5 rounded-full">午後休</span>}
-                                        <span className="text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
+                                    <div className="flex flex-wrap items-center justify-center gap-1 mt-1">
+                                        {offType === 'AM' && <span className="text-[8px] md:text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1 md:px-1.5 rounded-full">午前休</span>}
+                                        {offType === 'PM' && <span className="text-[8px] md:text-[9px] font-black text-orange-500 bg-orange-50 border border-orange-200 px-1 md:px-1.5 rounded-full">午後休</span>}
+                                        <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
                                     </div>
                                   </div>
                                 )}
@@ -2262,22 +2262,22 @@
                           })}
                         </div>
                         <div className="flex relative" style={{ height: `${(END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE}px` }} onPointerDown={() => setActiveCardId(null)}>
-                          <div className="w-14 md:w-20 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20 text-[10px]">
+                          <div className="w-10 md:w-20 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-20 text-[10px]">
                             {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
-                              <div key={i} className="absolute w-full text-right pr-3 text-[11px] font-black text-slate-300" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{(START_HOUR + i).toString().padStart(2, '0')}:00</div>
+                              <div key={i} className="absolute w-full text-right pr-1 md:pr-3 text-[9px] md:text-[11px] font-black text-slate-300" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{(START_HOUR + i).toString().padStart(2, '0')}:00</div>
                             ))}
                           </div>
-                          <div className="absolute left-14 md:left-20 right-0 inset-y-0 pointer-events-none z-0">
+                          <div className="absolute left-10 md:left-20 right-0 inset-y-0 pointer-events-none z-0">
                             {Array.from({ length: (END_HOUR - START_HOUR) * 4 }).map((_, i) => (
                               <div key={i} className={`absolute w-full border-t ${i % 4 === 0 ? 'border-slate-200' : i % 2 === 0 ? 'border-slate-100' : 'border-slate-50 border-dashed'}`} style={{ top: i * 15 * PIXELS_PER_MINUTE }}></div>
                             ))}
                           </div>
-                          <div className="w-36 md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
+                          <div className="w-32 md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {unassignedVisitsWithLayout.map(v => {
                                const top = getTop(parseTime(v.startTime)), h = v.duration * PIXELS_PER_MINUTE;
-                               const leftOffset = v._col * 20; 
-                               const leftStyle = `calc(8px + ${leftOffset}px)`;
-                               const widthStyle = `calc(100% - ${16 + leftOffset}px)`;
+                               const leftOffset = v._col * 15; // スマホ時は重なり幅を狭く
+                               const leftStyle = `calc(4px + ${leftOffset}px)`;
+                               const widthStyle = `calc(100% - ${8 + leftOffset}px)`;
                                const isOther = v.type === 'other';
                                
                                return (
@@ -2296,16 +2296,16 @@
                                    onTouchMove={handleTouchEndOrMove}
                                    onTouchEnd={handleTouchEndOrMove}
                                    onTouchCancel={handleTouchEndOrMove}
-                                   className={`absolute border border-slate-200 border-l-[6px] rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
-                                   style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, left: leftStyle, width: widthStyle }}>
-                                   
+                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   style={{ top: `${top}px`, height: `${Math.max(h, 40)}px`, left: leftStyle, width: widthStyle }}>
+
                                    <div className="flex justify-between items-start gap-1">
                                      <div className="flex items-center gap-1 overflow-hidden flex-1">
                                         {v.isExcludedFromAutoAssign && (
-                                          <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                          <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
                                         )}
-                                        <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
-                                          {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
+                                        <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${v.isExcludedFromAutoAssign ? 'text-slate-500' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                          {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                           {v.userName}
                                         </h4>
                                      </div>
@@ -2314,25 +2314,18 @@
                                          type="button" 
                                          onPointerDown={(e) => e.stopPropagation()} 
                                          onClick={(e) => handleContextMenu(e, v)}
-                                         className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                         className="shrink-0 text-slate-300 hover:text-slate-600 p-0 md:p-0.5 rounded-full hover:bg-slate-100 transition-colors"
                                        >
-                                         <MoreVertical size={14} />
+                                         <MoreVertical size={12} className="md:w-3 md:h-3" />
                                        </button>
                                      )}
                                    </div>
                                    
-                                   <div className="flex justify-between items-end mb-1 mt-auto">
+                                   <div className="flex justify-between items-end mt-auto">
                                      <div className="flex flex-col gap-0.5">
-                                       <span className="text-[9px] text-slate-400 font-bold">指定: {v.startTime}</span>
+                                       <span className="text-[8px] md:text-[9px] text-slate-400 font-bold leading-none">{v.startTime}</span>
                                      </div>
-                                     <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{v.duration}分</span>
-                                   </div>
-
-                                   <div className="flex flex-wrap gap-0.5 mt-0.5">
-                                     {v.requiresFemaleNurse && !isOther && <span className="text-[8px] bg-pink-100 text-pink-600 px-1 py-0.5 rounded-sm whitespace-nowrap">女性限定</span>}
-                                     {v.isExcludedFromAutoAssign && <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black">固定済み</span>}
-                                     {v.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black flex items-center gap-0.5 border border-fuchsia-200"><UserPlus size={8}/> 同行</span>}
-                                     {v.comment && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8}/> メモ</span>}
+                                     <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{v.duration}分</span>
                                    </div>
                                  </div>
                                )
@@ -2345,7 +2338,7 @@
                             const assigned = sch?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-14 bg-slate-100/30' : 'w-36 md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-10 md:w-14 bg-slate-100/30' : 'w-36 md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
                                   const top = getTop(parseTime(item.actualStartTime)), h = item.duration * PIXELS_PER_MINUTE;
                                   let prevDep = idx === 0 ? parseTime(sch.calculatedStartTime) : parseTime(assigned[idx-1].departureTime);
@@ -2355,11 +2348,11 @@
                                   return (
                                     <React.Fragment key={item.id}>
                                       {travelH > 10 && (
-                                        <div className="absolute left-1/2 w-0 border-l-2 border-dashed border-slate-300 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
-                                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border-2 border-slate-100 text-slate-500 text-[10px] md:text-[11px] font-black px-2 py-0.5 rounded-full shadow-md z-[70] pointer-events-auto flex items-center whitespace-nowrap">
-                                            <input type="number" min="0" className="w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0 disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin}
+                                        <div className="absolute left-1/2 w-0 border-l border-dashed border-slate-300 md:border-l-2 pointer-events-none" style={{ top: `${getTop(prevDep)}px`, height: `${travelH}px`, transform: 'translateX(-50%)' }}>
+                                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border border-slate-200 md:border-2 text-slate-500 text-[8px] md:text-[11px] font-black px-1 md:px-2 py-0 md:py-0.5 rounded-full shadow-sm z-[70] pointer-events-auto flex items-center whitespace-nowrap">
+                                            <input type="number" min="0" className="w-5 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:ring-0 disabled:text-slate-500 p-0 m-0" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin}
                                               onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
-                                            <span>分</span>
+                                            <span className="hidden md:inline text-[11px]">分</span>
                                           </div>
                                         </div>
                                       )}
@@ -2378,18 +2371,18 @@
                                         onTouchMove={handleTouchEndOrMove}
                                         onTouchEnd={handleTouchEndOrMove}
                                         onTouchCancel={handleTouchEndOrMove}
-                                        className={`absolute left-2 right-2 group bg-white border-y border-r border-slate-100 rounded-xl shadow-md p-1.5 overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
-                                        style={{ top: `${top}px`, height: `${Math.max(h, 48)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
+                                        className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50/90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                        style={{ top: `${top}px`, height: `${Math.max(h, 40)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
 
-                                        <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                        <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                         
-                                        <div className="flex justify-between items-start gap-1 mb-2">
+                                        <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
                                               {item.isExcludedFromAutoAssign && (
-                                                <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                                <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
                                               )}
-                                              <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
-                                                 {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
+                                              <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                                 {isOther && <Briefcase size={10} className="inline mr-0.5 md:mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                                  {item.userName}
                                               </h4>
                                            </div>
@@ -2398,31 +2391,20 @@
                                                type="button" 
                                                onPointerDown={(e) => e.stopPropagation()} 
                                                onClick={(e) => handleContextMenu(e, item)}
-                                               className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                               className="shrink-0 text-slate-300 hover:text-slate-600 p-0 md:p-0.5 rounded-full hover:bg-slate-100 transition-colors"
                                              >
-                                               <MoreVertical size={14} />
+                                               <MoreVertical size={12} className="md:w-3 md:h-3" />
                                              </button>
                                            )}
                                         </div>
                                         
-                                        <div className="flex justify-between items-end mb-2">
-                                          <div className="flex flex-col gap-0.5">
-                                            <span className="text-[9px] text-slate-400 font-bold">指定: {item.startTime}</span>
-                                            <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                        <div className="flex justify-between items-end mt-auto">
+                                          <div className="flex flex-col gap-0">
+                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
                                           </div>
-                                          <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
+                                          <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
                                         </div>
 
-                                        {(item.requiresFemaleNurse || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
-                                          <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
-                                            {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
-                                            {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                            {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
-                                            {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
-                                            {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                            {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
-                                          </div>
-                                        )}
                                       </div>
                                     </React.Fragment>
                                   )
@@ -2438,41 +2420,43 @@
               )}
 
               {activeTab === 'schedule' && (
-                <div className="flex flex-col h-full max-w-full space-y-4 md:space-y-6 text-sm">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-                    <div className="flex flex-col">
-                      <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認 ({formatDateLabel(selectedDate)})</h1>
-                      <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{displayDates.length > 0 ? `${displayDates[0].replace(/-/g, '/')} 〜 ${displayDates[6].replace(/-/g, '/')}` : '期間未設定'}</p>
+                <div className="flex flex-col h-full max-w-full space-y-3 md:space-y-6 text-sm">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-end md:items-center gap-2 md:gap-3">
+                      <h1 className="text-xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認</h1>
+                      <p className="text-xs md:text-sm font-bold text-slate-400 uppercase tracking-widest">{formatDateLabel(selectedDate)}</p>
                     </div>
-                    <div ref={scrollRefSchedule} className="flex gap-2 overflow-x-auto hide-scrollbar pc-scrollable bg-slate-200/50 p-1.5 md:p-2 md:pb-3 rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
-                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
+                    <div ref={scrollRefSchedule} className="flex gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pc-scrollable bg-slate-200/50 p-1 md:p-2 md:pb-3 rounded-xl md:rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
+                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-3 md:px-6 py-1.5 md:py-3 rounded-lg md:rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-md md:shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
                   
                   {renderDailyMemo()}
 
                   {!selectedNurse ? (
-                    <div className="bg-white rounded-[3rem] p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-6">
-                       <UserCog size={80} className="text-slate-200" /><p className="text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
+                    <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-20 md:p-32 border-4 border-dashed border-slate-100 text-center flex flex-col items-center justify-center space-y-4 md:space-y-6">
+                       <UserCog size={64} className="text-slate-200 md:w-20 md:h-20" /><p className="text-lg md:text-xl font-black text-slate-300 uppercase tracking-widest">担当者を選択してください</p>
                     </div>
                   ) : (
-                    <div className="flex-1 flex flex-col bg-white rounded-[2rem] md:rounded-[3rem] border border-slate-200 shadow-2xl shadow-slate-200/40 p-6 md:p-8 relative overflow-hidden">
-                      <div className="flex flex-wrap items-center gap-4 md:gap-12 mb-4 md:mb-6 pb-4 md:pb-6 border-b border-slate-100 shrink-0">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Users size={20} className="md:w-6 md:h-6" /></div>
-                          <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">訪問件数</p><p className="text-xl md:text-2xl font-black text-slate-800">{stats.count}<span className="text-xs ml-1 text-slate-400 font-bold">件</span></p></div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={20} className="md:w-6 md:h-6" /></div>
-                          <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">移動合計</p><p className="text-xl md:text-2xl font-black text-slate-800">{stats.totalTravel}<span className="text-xs ml-1 text-slate-400 font-bold">分</span></p></div>
+                    <div className="flex-1 flex flex-col bg-white rounded-[1.5rem] md:rounded-[3rem] border border-slate-200 shadow-lg md:shadow-2xl shadow-slate-200/40 p-4 md:p-8 relative overflow-hidden">
+                      <div className="flex items-center justify-between md:justify-start gap-4 md:gap-12 mb-3 md:mb-6 pb-3 md:pb-6 border-b border-slate-100 shrink-0">
+                        <div className="flex items-center gap-4 md:gap-8">
+                          <div className="flex items-center gap-2 md:gap-3">
+                            <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Users size={16} className="md:w-6 md:h-6" /></div>
+                            <div><p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">訪問件数</p><p className="text-lg md:text-2xl font-black text-slate-800 leading-none">{stats.count}<span className="text-[10px] md:text-xs ml-0.5 text-slate-400 font-bold">件</span></p></div>
+                          </div>
+                          <div className="flex items-center gap-2 md:gap-3">
+                            <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-teal-50 flex items-center justify-center text-teal-600"><MapIcon size={16} className="md:w-6 md:h-6" /></div>
+                            <div><p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">移動合計</p><p className="text-lg md:text-2xl font-black text-slate-800 leading-none">{stats.totalTravel}<span className="text-[10px] md:text-xs ml-0.5 text-slate-400 font-bold">分</span></p></div>
+                          </div>
                         </div>
                         
-                        <div className="w-full md:w-auto md:ml-auto flex items-center justify-end gap-2 mt-2 md:mt-0">
+                        <div className="flex items-center gap-2">
                            {isAdmin && (
                              <button 
                                 onClick={handleUndo}
                                 disabled={history.length === 0}
-                                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                className="hidden md:flex bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-1.5 md:py-3 rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
                                 title="直前の操作を取り消す"
                               >
                                 <Undo size={16} />
@@ -2485,28 +2469,28 @@
                                 handleAutoAssign();
                               }} 
                               onPointerDown={handleAutoAssignPointerDown}
-                              className={`bg-teal-600 hover:bg-teal-700 text-white px-4 md:px-6 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 select-none ${(isOptimizing || unassignedCount === 0 || nurses.length === 0) ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                              <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
+                              className={`bg-teal-600 hover:bg-teal-700 text-white px-3 md:px-6 py-1.5 md:py-3 rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-md md:shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-1.5 md:gap-2 whitespace-nowrap shrink-0 select-none ${(isOptimizing || unassignedCount === 0 || nurses.length === 0) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                              <RefreshCw size={14} className={`md:w-4 md:h-4 ${isOptimizing ? "animate-spin" : ""}`} />
                               {autoAssignFunnyMessage ? autoAssignFunnyMessage : (isOptimizing ? "編成中..." : "自動編成")}
                             </button>
                         </div>
                       </div>
 
                       <div className="flex-1 overflow-y-auto hide-scrollbar">
-                         <div className="flex flex-col md:flex-row md:flex-wrap items-center md:items-start gap-y-3 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-2 md:px-0">
+                         <div className="flex flex-col md:flex-row md:flex-wrap items-center md:items-start gap-y-1.5 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-1 md:px-0">
                             <div className="flex flex-col items-center w-full md:w-16 shrink-0 relative">
-                              <div className="w-12 h-12 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg z-10"><MapPin size={20}/></div>
-                              <div className="text-[10px] font-black text-slate-400 mt-2">出発</div>
-                              <div className="text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
+                              <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg z-10"><MapPin size={16} className="md:w-5 md:h-5"/></div>
+                              <div className="text-[9px] md:text-[10px] font-black text-slate-400 mt-1 md:mt-2">出発</div>
+                              <div className="text-xs md:text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
                             </div>
 
                             {allSchedules[selectedNurse.id]?.visits.map((item, idx) => {
                               const isOther = item.type === 'other';
                               return (
                                 <React.Fragment key={item.id}>
-                                  <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0 group">
-                                    <ArrowRight size={16} className="text-slate-300 mb-1 group-hover:text-teal-400 transition-all rotate-90 md:rotate-0" />
-                                    <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 pl-1 pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
+                                  <div className="flex flex-col items-center justify-center py-1 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0 group">
+                                    <ArrowRight size={14} className="text-slate-300 mb-0.5 md:mb-1 group-hover:text-teal-400 transition-all rotate-90 md:rotate-0 md:w-4 md:h-4" />
+                                    <div className="flex items-center text-[10px] font-black text-slate-500 bg-slate-50 pl-1 pr-1.5 md:pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
                                       <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
                                       <span>分</span>
                                     </div>
@@ -2514,19 +2498,19 @@
 
                                   {item.waitTime > 0 && (
                                     <React.Fragment>
-                                      <div className="flex flex-col items-center justify-center py-2 w-full md:w-auto shrink-0 px-2 md:px-0">
-                                        <div className="flex flex-col items-center justify-center bg-amber-50/80 border-2 border-dashed border-amber-300 px-5 py-2.5 rounded-2xl w-full md:w-auto shadow-sm">
-                                           <span className="text-[11px] text-amber-600 font-black flex items-center gap-1.5 mb-1"><Clock size={14}/>事務作業・空き</span>
-                                           <span className="text-2xl font-black text-amber-700 leading-none">{item.waitTime}<span className="text-xs ml-0.5 font-bold">分</span></span>
+                                      <div className="flex flex-col items-center justify-center py-1 md:py-2 w-full md:w-auto shrink-0 px-2 md:px-0">
+                                        <div className="flex flex-row md:flex-col items-center justify-center gap-2 md:gap-0 bg-amber-50/80 border border-dashed border-amber-300 px-3 md:px-5 py-1.5 md:py-2.5 rounded-xl md:rounded-2xl w-full md:w-auto shadow-sm">
+                                           <span className="text-[10px] md:text-[11px] text-amber-600 font-black flex items-center gap-1"><Clock size={12}/>事務作業・空き</span>
+                                           <span className="text-lg md:text-2xl font-black text-amber-700 leading-none">{item.waitTime}<span className="text-[9px] md:text-xs ml-0.5 font-bold">分</span></span>
                                         </div>
                                       </div>
-                                      <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-10 shrink-0">
-                                        <ArrowRight size={16} className="text-slate-300 transition-all rotate-90 md:rotate-0" />
+                                      <div className="flex flex-col items-center justify-center py-1 md:py-0 h-auto md:h-12 w-full md:w-10 shrink-0">
+                                        <ArrowRight size={14} className="text-slate-300 transition-all rotate-90 md:rotate-0 md:w-4 md:h-4" />
                                       </div>
                                     </React.Fragment>
                                   )}
 
-                                  <div className={`relative flex flex-col p-4 rounded-2xl border-l-[6px] shadow-md w-full max-w-[280px] sm:max-w-xs md:w-52 shrink-0 transition-all hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50 opacity-90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                  <div className={`relative flex flex-col p-3 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md w-full md:w-52 shrink-0 transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50 opacity-90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
                                     onContextMenu={(e) => handleContextMenu(e, item)}
                                     onTouchStart={(e) => handleTouchStart(e, item)}
                                     onTouchMove={handleTouchEndOrMove}
@@ -2534,15 +2518,15 @@
                                     onTouchCancel={handleTouchEndOrMove}
                                   >
                                     
-                                    <div className="absolute -top-3 -left-3 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                    <div className="absolute -top-2.5 -left-2.5 md:-top-3 md:-left-3 w-5 h-5 md:w-6 md:h-6 rounded-full text-white flex items-center justify-center text-[10px] md:text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                     
-                                    <div className="flex justify-between items-start gap-1 mb-2">
+                                    <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
                                        <div className="flex items-center gap-1 overflow-hidden flex-1">
                                           {item.isExcludedFromAutoAssign && (
-                                            <span className="text-red-500 shrink-0"><Lock size={12} strokeWidth={3} /></span>
+                                            <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
                                           )}
                                           <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
-                                             {isOther && <Briefcase size={12} className="inline mr-1 text-indigo-500" />}
+                                             {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                              {item.userName}
                                           </h4>
                                        </div>
@@ -2551,29 +2535,28 @@
                                            type="button" 
                                            onPointerDown={(e) => e.stopPropagation()} 
                                            onClick={(e) => handleContextMenu(e, item)}
-                                           className="shrink-0 text-slate-300 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                           className="shrink-0 text-slate-300 hover:text-slate-600 p-0 md:p-0.5 rounded-full hover:bg-slate-100 transition-colors"
                                          >
                                            <MoreVertical size={14} />
                                          </button>
                                        )}
                                     </div>
                                     
-                                    <div className="flex justify-between items-end mb-2">
-                                      <div className="flex flex-col gap-0.5">
-                                        <span className="text-[9px] text-slate-400 font-bold">指定: {item.startTime}</span>
-                                        <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                    <div className="flex justify-between items-end mb-1 md:mb-2">
+                                      <div className="flex flex-col gap-0 md:gap-0.5">
+                                        <span className="text-[8px] md:text-[9px] text-slate-400 font-bold leading-none">指定: {item.startTime}</span>
+                                        <span className={`text-[11px] md:text-xs font-black mt-0.5 ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
                                       </div>
-                                      <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{item.duration}分</span>
+                                      <span className="text-[9px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg">{item.duration}分</span>
                                     </div>
 
-                                    {(item.requiresFemaleNurse || item.isLate || item.waitTime > 0 || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
-                                      <div className="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
-                                        {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
-                                        {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                        {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
-                                        {item.isExcludedFromAutoAssign && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
-                                        {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                        {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
+                                    {(item.requiresFemaleNurse || item.isLate || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                      <div className="flex flex-wrap gap-1 mt-auto pt-1.5 md:pt-2 border-t border-slate-50">
+                                        {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                        {item.isLate && <span className="text-[8px] md:text-[9px] bg-red-50 text-red-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={8} className="md:w-2.5 md:h-2.5"/>遅延</span>}
+                                        {item.isExcludedFromAutoAssign && <span className="text-[8px] md:text-[9px] bg-red-100 text-red-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                        {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                        {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
                                       </div>
                                     )}
                                   </div>
@@ -2581,27 +2564,27 @@
                               );
                             })}
 
-                            <div className="flex flex-col items-center justify-center py-2 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0">
-                               <ArrowRight size={16} className="text-slate-300 mb-1 rotate-90 md:rotate-0" />
-                               <div className="flex items-center text-[9px] font-black text-slate-500 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                            <div className="flex flex-col items-center justify-center py-1 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0">
+                               <ArrowRight size={14} className="text-slate-300 mb-0.5 md:mb-1 rotate-90 md:rotate-0 md:w-4 md:h-4" />
+                               <div className="flex items-center text-[8px] md:text-[9px] font-black text-slate-500 bg-slate-50 px-1.5 md:px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
                                   <span>移動{allSchedules[selectedNurse.id]?.finalTravelTime}分</span>
                                </div>
                             </div>
 
                             <div className="flex flex-col items-center w-full md:w-16 shrink-0 relative">
-                              <div className="w-12 h-12 rounded-full bg-slate-200 border-2 border-slate-300 text-slate-500 flex items-center justify-center shadow-sm z-10"><MapPin size={20}/></div>
-                              <div className="text-[10px] font-black text-slate-400 mt-2">帰着</div>
-                              <div className="flex flex-col items-center gap-1">
+                              <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-slate-200 border-2 border-slate-300 text-slate-500 flex items-center justify-center shadow-sm z-10"><MapPin size={16} className="md:w-5 md:h-5"/></div>
+                              <div className="text-[9px] md:text-[10px] font-black text-slate-400 mt-1 md:mt-2">帰着</div>
+                              <div className="flex flex-col items-center gap-0.5 md:gap-1">
                                 {(() => {
                                   const returnTimeMin = parseTime(allSchedules[selectedNurse.id]?.returnTime);
                                   const endTimeMin = parseTime(selectedNurse.endTime || '17:30');
                                   const isOvertime = returnTimeMin > endTimeMin;
                                   return (
                                     <>
-                                      <div className={`text-sm font-black ${isOvertime ? 'text-red-600' : 'text-slate-800'}`}>
+                                      <div className={`text-xs md:text-sm font-black ${isOvertime ? 'text-red-600' : 'text-slate-800'}`}>
                                         {allSchedules[selectedNurse.id]?.returnTime}
                                       </div>
-                                      {isOvertime && <span className="text-[9px] font-black text-red-500 bg-red-50 px-1.5 py-0.5 rounded border border-red-200">時間外</span>}
+                                      {isOvertime && <span className="text-[8px] md:text-[9px] font-black text-red-500 bg-red-50 px-1 md:px-1.5 py-0.5 rounded border border-red-200">時間外</span>}
                                     </>
                                   );
                                 })()}
