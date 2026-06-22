@@ -217,7 +217,6 @@
 
         return () => {
           el.removeEventListener('mousedown', onMouseDown);
-          el.removeEventListener('mousedown', onMouseDown);
           el.removeEventListener('mouseleave', onMouseLeave);
           el.removeEventListener('mouseup', onMouseUp);
           el.removeEventListener('mousemove', onMouseMove);
@@ -2427,20 +2426,10 @@
                                         
                                         <div className="flex justify-between items-end mt-auto">
                                           <div className="flex flex-col gap-0">
-                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
                                           </div>
                                           <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
                                         </div>
-
-                                        {(item.requiresFemaleNurse || item.isLate || item.waitTime > 0 || item.comment || item.isAccompany) && (
-                                          <div className="hidden md:flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-50">
-                                            {item.waitTime > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">待機{item.waitTime}分</span>}
-                                            {item.requiresFemaleNurse && !isOther && <span className="text-[9px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                            {item.isLate && <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={10}/>遅延</span>}
-                                            {item.isAccompany && <span className="text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                            {item.comment && <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={10}/> メモ</span>}
-                                          </div>
-                                        )}
                                       </div>
                                     </React.Fragment>
                                   )
@@ -2600,7 +2589,7 @@
                                       
                                       {/* カード本体 */}
                                       <div 
-                                        className={`flex-1 flex flex-col p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 ${isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400'} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                        className={`flex-1 flex flex-col p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2637,8 +2626,7 @@
                                         {/* PC用 フッター */}
                                         <div className="hidden md:flex justify-between items-end mt-auto pt-2 border-t border-slate-50">
                                           <div className="flex flex-col gap-1">
-                                            {item.isLate && <span className="text-[10px] text-red-500 font-bold leading-none">指定: {item.startTime} (到着: {item.arrivalTime})</span>}
-                                            {!item.isLate && item.waitTime > 0 && <span className="text-[10px] text-slate-400 font-bold leading-none">到着: {item.arrivalTime}</span>}
+                                            {item.isLate && <span className="text-[10px] text-red-500 font-bold leading-none">指定: {item.startTime}</span>}
                                           </div>
                                           <div className="flex items-center gap-2">
                                             <span className={`text-xs font-black ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.actualStartTime} 〜 {item.departureTime}</span>
@@ -2647,21 +2635,11 @@
                                         </div>
 
                                         {/* スマホ用 フッター (指定時間等) */}
-                                        {(item.isLate || item.waitTime > 0) && (
+                                        {item.isLate && (
                                           <div className="md:hidden flex justify-between items-end mt-0.5 border-t border-slate-50 pt-0.5">
                                             <div className="flex flex-col gap-0.5">
-                                              {item.isLate && <span className="text-[9px] text-red-500 font-bold leading-none">指定: {item.startTime}</span>}
-                                              {!item.isLate && item.waitTime > 0 && <span className="text-[9px] text-slate-400 font-bold leading-none">到着: {item.arrivalTime}</span>}
+                                              <span className="text-[9px] text-red-500 font-bold leading-none">指定: {item.startTime}</span>
                                             </div>
-                                          </div>
-                                        )}
-
-                                        {/* タグ類 */}
-                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
-                                          <div className="hidden md:flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
-                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                            {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                            {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
                                           </div>
                                         )}
                                       </div>
