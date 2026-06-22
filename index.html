@@ -59,6 +59,12 @@
       cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='36' height='36'%3E%3Cpath fill='white' stroke='black' stroke-width='4' stroke-linejoin='round' stroke-linecap='round' d='M15,50 a15,15 0 0,1 30,0 V70 a15,15 0 0,0 15,15 H70 a15,15 0 0,0 15,-15 V50 a15,15 0 0,0 -30,0 a15,15 0 0,0 -20,0 a15,15 0 0,0 -20,0 Z' /%3E%3Cpath stroke='black' stroke-width='4' stroke-linecap='round' d='M30,85 Q50,90 70,85 M30,95 Q50,100 70,95' /%3E%3C/svg%3E") 18 18, grabbing !important;
     }
 
+    @media (max-width: 767px) {
+      .mobile-dynamic-h {
+        min-height: var(--card-min-h);
+      }
+    }
+
     /* PC表示時は横スクロールバーを表示（モバイルでは隠す） */
     @media (min-width: 768px) {
       .visit-card {
@@ -2589,24 +2595,24 @@
                                   </div>
 
                                   {/* 訪問カード */}
-                                  <div className="relative flex md:flex-col w-full md:w-52 shrink-0 group py-0 mt-0.5 md:mt-0">
+                                  <div className="relative flex md:flex-col w-full md:w-52 shrink-0 group py-0 mt-0.5 md:mt-0" style={{ '--card-min-h': `${Math.max(item.duration * 1.2, 42)}px` }}>
                                     <div className="md:hidden absolute left-[3.25rem] top-0 bottom-0 w-0.5 bg-slate-200 z-0"></div>
                                     
                                     <div className="flex md:contents w-full">
                                       {/* スマホ用左側: 時刻 */}
-                                      <div className="md:hidden flex flex-col items-end w-12 pr-2 relative z-10 pt-1 shrink-0">
+                                      <div className="md:hidden flex flex-col items-end justify-between w-12 pr-2 relative z-10 py-1.5 shrink-0 mobile-dynamic-h">
                                          <span className={`text-[11px] font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
-                                         <span className="text-[9px] text-slate-400 mt-0.5 font-bold">〜{item.departureTime}</span>
+                                         <span className="text-[9px] text-slate-400 font-bold">{item.departureTime}</span>
                                       </div>
                                       
                                       {/* スマホ用: 丸い番号ピン */}
-                                      <div className="md:hidden w-8 flex justify-center relative z-10 pt-0.5 shrink-0">
+                                      <div className="md:hidden w-8 flex justify-center relative z-10 pt-1 shrink-0">
                                          <div className="w-5 h-5 rounded-full text-white flex items-center justify-center text-[10px] font-black shadow-md border-2 border-white" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
                                       </div>
                                       
                                       {/* カード本体 */}
                                       <div 
-                                        className={`flex-1 flex flex-col p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')} ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'mickey-grab hover:-translate-y-0.5' : ''}`}
+                                        className={`flex-1 flex flex-col justify-between p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 mobile-dynamic-h ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')} ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'mickey-grab hover:-translate-y-0.5' : ''}`}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
