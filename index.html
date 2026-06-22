@@ -67,7 +67,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -2065,7 +2065,18 @@
           </header>
 
           <main className="flex-1 flex flex-col overflow-hidden relative">
-            {activeTab !== 'report' && (
+            {activeTab === 'schedule' ? (
+              <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center justify-between shrink-0 sticky top-0 md:relative">
+                <div className="flex items-center gap-2 pr-2">
+                  <button onClick={handlePrevDay} className="w-10 h-10 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200"><ChevronLeft size={20} /></button>
+                  <div className="px-4 h-10 bg-white rounded-xl border border-slate-200 font-black text-slate-700 text-sm shadow-sm flex items-center justify-center gap-2 min-w-[120px]">
+                     <CalendarDays size={16} className="text-teal-600" />
+                     {formatDateLabel(selectedDate)}
+                  </div>
+                  <button onClick={handleNextDay} className="w-10 h-10 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200"><ChevronRight size={20} /></button>
+                </div>
+              </div>
+            ) : activeTab !== 'report' ? (
               <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
                 <div ref={scrollRefHeader1} className="flex items-center gap-3 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2 cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
                   <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 pointer-events-none">
@@ -2107,7 +2118,7 @@
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
 
             <div className="flex-1 overflow-auto p-4 md:p-10">
               {activeTab === 'overview' && (
@@ -2477,117 +2488,163 @@
                       </div>
 
                       <div className="flex-1 overflow-y-auto hide-scrollbar">
-                         <div className="flex flex-col md:flex-row md:flex-wrap items-center md:items-start gap-y-1.5 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-1 md:px-0">
-                            <div className="flex flex-col items-center w-full md:w-16 shrink-0 relative">
-                              <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg z-10"><MapPin size={16} className="md:w-5 md:h-5"/></div>
-                              <div className="text-[9px] md:text-[10px] font-black text-slate-400 mt-1 md:mt-2">出発</div>
-                              <div className="text-xs md:text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
+                         <div className="flex flex-col md:flex-row md:flex-wrap items-stretch md:items-start gap-y-0 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-2 md:px-0">
+                            
+                            {/* 出発 */}
+                            <div className="flex md:flex-col items-center md:justify-center w-full md:w-16 shrink-0 relative py-2 md:py-0">
+                              {/* スマホ用時刻 */}
+                              <div className="md:hidden w-12 text-right text-xs font-black text-slate-800 pr-2">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
+                              {/* アイコン */}
+                              <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg z-10 shrink-0"><MapPin size={16} className="md:w-5 md:h-5"/></div>
+                              {/* テキスト */}
+                              <div className="flex-1 md:flex-none flex flex-col md:items-center pl-3 md:pl-0">
+                                <div className="text-[10px] font-black text-slate-400 mt-0 md:mt-2">出発</div>
+                                <div className="hidden md:block text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.calculatedStartTime || selectedNurse.startTime}</div>
+                              </div>
+                              {/* スマホ用の縦線 */}
+                              <div className="md:hidden absolute left-[3.25rem] top-10 bottom-0 w-0.5 bg-slate-200 z-0"></div>
                             </div>
 
                             {allSchedules[selectedNurse.id]?.visits.map((item, idx) => {
                               const isOther = item.type === 'other';
                               return (
                                 <React.Fragment key={item.id}>
-                                  <div className="flex flex-col items-center justify-center py-1 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0 group">
-                                    <ArrowRight size={14} className="text-slate-300 mb-0.5 md:mb-1 group-hover:text-teal-400 transition-all rotate-90 md:rotate-0 md:w-4 md:h-4" />
-                                    <div className="flex items-center text-[10px] font-black text-slate-500 bg-slate-50 pl-1 pr-1.5 md:pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm">
-                                      <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
-                                      <span>分</span>
+                                  
+                                  {/* 移動時間 */}
+                                  <div className="flex md:flex-col items-center justify-center h-8 md:h-12 w-full md:w-16 shrink-0 group relative">
+                                    <div className="md:hidden absolute left-[3.25rem] top-0 bottom-0 w-0.5 bg-slate-200 z-0"></div>
+                                    <div className="md:hidden w-12 pr-2"></div>
+                                    <ArrowRight size={14} className="hidden md:block text-slate-300 mb-1 group-hover:text-teal-400 transition-all rotate-90 md:rotate-0 md:w-4 md:h-4" />
+                                    <div className="flex-1 md:flex-none flex items-center">
+                                      <div className="flex items-center text-[10px] font-black text-slate-500 bg-white/80 backdrop-blur pl-1 pr-1.5 md:pr-2 py-0.5 rounded-full border border-slate-200 group-hover:border-teal-300 transition-colors shadow-sm z-10 ml-6 md:ml-0">
+                                        <ArrowDown size={10} className="md:hidden mr-0.5 text-slate-400"/>
+                                        <input type="number" className="w-6 md:w-8 text-center bg-transparent outline-none text-teal-600 focus:bg-white rounded disabled:text-slate-500" value={item.customTravelTime ?? item.travelTime} readOnly={!isAdmin} onChange={(e) => updateCustomTravelTime(item.id, e.target.value === '' ? null : parseInt(e.target.value))}/>
+                                        <span>分</span>
+                                      </div>
                                     </div>
                                   </div>
 
+                                  {/* 事務作業・空き */}
                                   {item.waitTime > 0 && (
                                     <React.Fragment>
-                                      <div className="flex flex-col items-center justify-center py-1 md:py-2 w-full md:w-auto shrink-0 px-2 md:px-0">
-                                        <div className="flex flex-row md:flex-col items-center justify-center gap-2 md:gap-0 bg-amber-50/80 border border-dashed border-amber-300 px-3 md:px-5 py-1.5 md:py-2.5 rounded-xl md:rounded-2xl w-full md:w-auto shadow-sm">
-                                           <span className="text-[10px] md:text-[11px] text-amber-600 font-black flex items-center gap-1"><Clock size={12}/>事務作業・空き</span>
-                                           <span className="text-lg md:text-2xl font-black text-amber-700 leading-none">{item.waitTime}<span className="text-[9px] md:text-xs ml-0.5 font-bold">分</span></span>
+                                      <div className="flex md:flex-col items-stretch md:items-center justify-center py-2 md:py-2 w-full md:w-auto shrink-0 relative">
+                                        <div className="md:hidden absolute left-[3.25rem] top-0 bottom-0 w-0.5 bg-slate-200 z-0"></div>
+                                        <div className="md:hidden w-12 pr-2"></div>
+                                        <div className="flex-1 md:flex-none pl-6 md:pl-0 pr-2 md:pr-0">
+                                          <div className="flex flex-row md:flex-col items-center justify-center gap-2 md:gap-0 bg-amber-50/80 border border-dashed border-amber-300 px-3 md:px-5 py-1.5 md:py-2.5 rounded-xl md:rounded-2xl w-full md:w-auto shadow-sm relative z-10">
+                                             <span className="text-[10px] md:text-[11px] text-amber-600 font-black flex items-center gap-1"><Clock size={12}/>事務作業・空き</span>
+                                             <span className="text-lg md:text-2xl font-black text-amber-700 leading-none">{item.waitTime}<span className="text-[9px] md:text-xs ml-0.5 font-bold">分</span></span>
+                                          </div>
                                         </div>
                                       </div>
-                                      <div className="flex flex-col items-center justify-center py-1 md:py-0 h-auto md:h-12 w-full md:w-10 shrink-0">
-                                        <ArrowRight size={14} className="text-slate-300 transition-all rotate-90 md:rotate-0 md:w-4 md:h-4" />
+                                      <div className="flex md:flex-col items-center justify-center h-4 md:h-12 w-full md:w-10 shrink-0 relative">
+                                        <div className="md:hidden absolute left-[3.25rem] top-0 bottom-0 w-0.5 bg-slate-200 z-0"></div>
+                                        <ArrowRight size={14} className="hidden md:block text-slate-300 transition-all rotate-90 md:rotate-0 md:w-4 md:h-4" />
                                       </div>
                                     </React.Fragment>
                                   )}
 
-                                  <div className={`relative flex flex-col p-3 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md w-full md:w-52 shrink-0 transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 group ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90' : item.isAccompany ? 'bg-fuchsia-50 opacity-90' : 'bg-slate-50 opacity-90') : (isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
-                                    onContextMenu={(e) => handleContextMenu(e, item)}
-                                    onTouchStart={(e) => handleTouchStart(e, item)}
-                                    onTouchMove={handleTouchEndOrMove}
-                                    onTouchEnd={handleTouchEndOrMove}
-                                    onTouchCancel={handleTouchEndOrMove}
-                                  >
+                                  {/* 訪問カード */}
+                                  <div className="relative flex md:flex-col w-full md:w-52 shrink-0 group py-1 md:py-0">
+                                    <div className="md:hidden absolute left-[3.25rem] top-0 bottom-0 w-0.5 bg-slate-200 z-0"></div>
                                     
-                                    <div className="absolute -top-2.5 -left-2.5 md:-top-3 md:-left-3 w-5 h-5 md:w-6 md:h-6 rounded-full text-white flex items-center justify-center text-[10px] md:text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
-                                    
-                                    <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
-                                       <div className="flex items-center gap-1 overflow-hidden flex-1">
-                                          {item.isExcludedFromAutoAssign && (
-                                            <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
-                                          )}
-                                          <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
-                                             {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
-                                             {item.userName}
-                                          </h4>
-                                       </div>
-                                       {isAdmin && (
-                                         <button 
-                                           type="button" 
-                                           onPointerDown={(e) => e.stopPropagation()} 
-                                           onClick={(e) => handleContextMenu(e, item)}
-                                           className="shrink-0 text-slate-300 hover:text-slate-600 p-0 md:p-0.5 rounded-full hover:bg-slate-100 transition-colors"
-                                         >
-                                           <MoreVertical size={14} />
-                                         </button>
-                                       )}
-                                    </div>
-                                    
-                                    <div className="flex justify-between items-end mb-1 md:mb-2">
-                                      <div className="flex flex-col gap-0 md:gap-0.5">
-                                        <span className="text-[8px] md:text-[9px] text-slate-400 font-bold leading-none">指定: {item.startTime}</span>
-                                        <span className={`text-[11px] md:text-xs font-black mt-0.5 ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                    <div className="flex md:contents w-full">
+                                      {/* スマホ用左側: 時刻 */}
+                                      <div className="md:hidden flex flex-col items-end w-12 pr-2 relative z-10 pt-2 shrink-0">
+                                         <span className="text-xs font-black text-slate-800 leading-none">{item.arrivalTime}</span>
+                                         <span className="text-[9px] text-slate-400 mt-1 font-bold">{item.duration}分</span>
                                       </div>
-                                      <span className="text-[9px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg">{item.duration}分</span>
-                                    </div>
+                                      
+                                      {/* スマホ用: 丸い番号ピン */}
+                                      <div className="md:hidden w-8 flex justify-center relative z-10 pt-1 shrink-0">
+                                         <div className="w-5 h-5 rounded-full text-white flex items-center justify-center text-[10px] font-black shadow-md border-2 border-white" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                      </div>
+                                      
+                                      {/* カード本体 */}
+                                      <div 
+                                        className={`flex-1 flex flex-col p-3 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')}`}
+                                        onContextMenu={(e) => handleContextMenu(e, item)}
+                                        onTouchStart={(e) => handleTouchStart(e, item)}
+                                        onTouchMove={handleTouchEndOrMove}
+                                        onTouchEnd={handleTouchEndOrMove}
+                                        onTouchCancel={handleTouchEndOrMove}
+                                      >
+                                        
+                                        <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                        
+                                        <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
+                                           <div className="flex items-center gap-1 overflow-hidden flex-1">
+                                              {item.isExcludedFromAutoAssign && (
+                                                <span className="text-red-500 shrink-0"><Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" /></span>
+                                              )}
+                                              <h4 className={`font-black text-sm md:text-base truncate flex-1 leading-tight ${item.isExcludedFromAutoAssign ? 'text-slate-600' : (isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600')}`}>
+                                                 {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
+                                                 {item.userName}
+                                              </h4>
+                                           </div>
+                                           {isAdmin && (
+                                             <button 
+                                               type="button" 
+                                               onPointerDown={(e) => e.stopPropagation()} 
+                                               onClick={(e) => handleContextMenu(e, item)}
+                                               className="shrink-0 text-slate-300 hover:text-slate-600 p-0 md:p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                                             >
+                                               <MoreVertical size={14} />
+                                             </button>
+                                           )}
+                                        </div>
+                                        
+                                        {/* PC用 フッター */}
+                                        <div className="hidden md:flex justify-between items-end mt-auto pt-2">
+                                          <div className="flex flex-col gap-0.5">
+                                            <span className="text-[9px] text-slate-400 font-bold leading-none">指定: {item.startTime}</span>
+                                            <span className={`text-xs font-black mt-0.5 ${item.isLate ? 'text-red-600' : 'text-slate-700'}`}>{item.arrivalTime} 着</span>
+                                          </div>
+                                          <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-lg leading-none">{item.duration}分</span>
+                                        </div>
 
-                                    {(item.requiresFemaleNurse || item.isLate || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
-                                      <div className="flex flex-wrap gap-1 mt-auto pt-1.5 md:pt-2 border-t border-slate-50">
-                                        {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                        {item.isLate && <span className="text-[8px] md:text-[9px] bg-red-50 text-red-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-red-100 flex items-center gap-0.5"><AlertTriangle size={8} className="md:w-2.5 md:h-2.5"/>遅延</span>}
-                                        {item.isExcludedFromAutoAssign && <span className="text-[8px] md:text-[9px] bg-red-100 text-red-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
-                                        {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                        {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
+                                        {/* スマホ用 フッター (指定時間のみ) */}
+                                        <div className="md:hidden flex justify-between items-end mt-1">
+                                          <span className="text-[9px] text-slate-400 font-bold leading-none">指定: {item.startTime}</span>
+                                        </div>
+
+                                        {/* タグ類 */}
+                                        {(item.requiresFemaleNurse || item.isExcludedFromAutoAssign || item.comment || item.isAccompany) && (
+                                          <div className="flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.isExcludedFromAutoAssign && <span className="text-[8px] md:text-[9px] bg-red-100 text-red-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-red-200">固定済み</span>}
+                                            {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                            {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
+                                    </div>
                                   </div>
                                 </React.Fragment>
                               );
                             })}
 
-                            <div className="flex flex-col items-center justify-center py-1 md:py-0 h-auto md:h-12 w-full md:w-16 shrink-0">
-                               <ArrowRight size={14} className="text-slate-300 mb-0.5 md:mb-1 rotate-90 md:rotate-0 md:w-4 md:h-4" />
-                               <div className="flex items-center text-[8px] md:text-[9px] font-black text-slate-500 bg-slate-50 px-1.5 md:px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
-                                  <span>移動{allSchedules[selectedNurse.id]?.finalTravelTime}分</span>
-                               </div>
-                            </div>
-
-                            <div className="flex flex-col items-center w-full md:w-16 shrink-0 relative">
-                              <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-slate-200 border-2 border-slate-300 text-slate-500 flex items-center justify-center shadow-sm z-10"><MapPin size={16} className="md:w-5 md:h-5"/></div>
-                              <div className="text-[9px] md:text-[10px] font-black text-slate-400 mt-1 md:mt-2">帰着</div>
-                              <div className="flex flex-col items-center gap-0.5 md:gap-1">
-                                {(() => {
-                                  const returnTimeMin = parseTime(allSchedules[selectedNurse.id]?.returnTime);
-                                  const endTimeMin = parseTime(selectedNurse.endTime || '17:30');
-                                  const isOvertime = returnTimeMin > endTimeMin;
-                                  return (
-                                    <>
-                                      <div className={`text-xs md:text-sm font-black ${isOvertime ? 'text-red-600' : 'text-slate-800'}`}>
-                                        {allSchedules[selectedNurse.id]?.returnTime}
-                                      </div>
-                                      {isOvertime && <span className="text-[8px] md:text-[9px] font-black text-red-500 bg-red-50 px-1 md:px-1.5 py-0.5 rounded border border-red-200">時間外</span>}
-                                    </>
-                                  );
-                                })()}
+                            {/* 帰着 */}
+                            <div className="flex md:flex-col items-stretch md:items-center w-full md:w-16 shrink-0 relative py-2 md:py-0">
+                              <div className="md:hidden absolute left-[3.25rem] top-0 bottom-6 w-0.5 bg-slate-200 z-0"></div>
+                              
+                              <div className="md:hidden w-12 pr-2"></div>
+                              <div className="md:hidden w-8 flex justify-center relative z-10 pt-1 shrink-0"><ArrowDown size={10} className="text-slate-300"/></div>
+                              
+                              <div className="flex-1 md:flex-none flex items-center md:flex-col md:w-full ml-1 md:ml-0 min-h-[3rem] md:min-h-0 relative z-10">
+                                <div className="hidden md:block text-slate-300 mb-1"><ArrowRight size={14}/></div>
+                                <div className="md:hidden w-12 text-right text-xs font-black text-slate-800 pr-2">{allSchedules[selectedNurse.id]?.returnTime}</div>
+                                <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-slate-200 border-2 border-slate-300 text-slate-500 flex items-center justify-center shadow-sm shrink-0"><MapPin size={16} className="md:w-5 md:h-5"/></div>
+                                <div className="flex flex-col md:items-center pl-3 md:pl-0">
+                                  <div className="text-[10px] font-black text-slate-400 mt-0 md:mt-2">帰着</div>
+                                  <div className="hidden md:block text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.returnTime}</div>
+                                  {(() => {
+                                    const returnTimeMin = parseTime(allSchedules[selectedNurse.id]?.returnTime);
+                                    const endTimeMin = parseTime(selectedNurse.endTime || '17:30');
+                                    if (returnTimeMin > endTimeMin) return <span className="text-[8px] md:text-[9px] font-black text-red-500 bg-red-50 px-1 md:px-1.5 py-0.5 rounded border border-red-200 mt-0.5">時間外</span>;
+                                    return null;
+                                  })()}
+                                </div>
                               </div>
                             </div>
                          </div>
