@@ -109,7 +109,6 @@
     } catch (e) { console.error("Firebase init error", e); }
 
     const START_HOUR = 7;
-    // 予定が遅れても表示されるように、19時から22時までに延長
     const END_HOUR = 22;
     const PIXELS_PER_MINUTE = 2.0; 
     const getTop = (minutes) => (minutes - START_HOUR * 60) * PIXELS_PER_MINUTE;
@@ -175,7 +174,6 @@
       return d.toISOString().split('T')[0];
     };
 
-    // マウスドラッグで横スクロールを実現するカスタムフック
     const useDragScroll = () => {
       const ref = useRef(null);
       useEffect(() => {
@@ -201,7 +199,7 @@
           if (!isDown) return;
           e.preventDefault();
           const x = e.pageX - el.offsetLeft;
-          const walk = (x - startX) * 2; // スクロール速度
+          const walk = (x - startX) * 2; 
           el.scrollLeft = scrollLeft - walk;
         };
         const onWheel = (e) => {
@@ -234,7 +232,6 @@
     };
 
     function App() {
-      // 管理者モードかどうかの判定 (URLのクエリパラメータ ?mode=admin)
       const isAdmin = useMemo(() => {
         if (typeof window === 'undefined') return false;
         const params = new URLSearchParams(window.location.search);
@@ -249,7 +246,6 @@
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
       
-      // リロード時にタブを維持
       const [activeTab, setActiveTab] = useState(() => {
         return localStorage.getItem('careRoute_activeTab') || 'overview';
       });
@@ -261,9 +257,8 @@
       const [isSidebarOpen, setIsSidebarOpen] = useState(true);
       
       const longPressTimer = useRef(null);
-      const logoTimerRef = useRef(null); // ロゴの長押し判定用
+      const logoTimerRef = useRef(null);
 
-      // 自動編成ボタン連打の隠し機能用
       const [autoAssignClickCount, setAutoAssignClickCount] = useState(0);
       const [autoAssignFunnyMessage, setAutoAssignFunnyMessage] = useState("");
       const autoAssignTimerRef = useRef(null);
@@ -301,7 +296,7 @@
       const [nurseStatuses, setNurseStatuses] = useState([]); 
       const [savedPatterns, setSavedPatterns] = useState({});
       const [history, setHistory] = useState([]);
-      const [dailyMemos, setDailyMemos] = useState({}); // 日別メモの状態管理
+      const [dailyMemos, setDailyMemos] = useState({});
       
       const [baseTravelTime, setBaseTravelTime] = useState(7);
       const [selectedNurseId, setSelectedNurseId] = useState(() => {
@@ -340,6 +335,10 @@
 
       const addEventTitleInputRef = useRef(null);
 
+      // 設定のアコーディオン用の状態
+      const [showVisitSettings, setShowVisitSettings] = useState(false);
+      const [showNurseSettings, setShowNurseSettings] = useState(false);
+
       useEffect(() => {
         if (showToast) {
           const timer = setTimeout(() => setShowToast(false), 4000);
@@ -347,7 +346,6 @@
         }
       }, [showToast]);
 
-      // 予定追加モーダルが開いたときにタイトル入力欄にフォーカスを当てる
       useEffect(() => {
         if (showAddEventModal) {
           const timer = setTimeout(() => {
@@ -395,7 +393,7 @@
       }, [user]);
 
       const updateCloudData = (newData) => {
-        if (!isAdmin) return; // 閲覧モードでは保存させない
+        if (!isAdmin) return;
         if (user && db) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
           setDoc(docRef, newData, { merge: true }).catch(e => console.error(e));
@@ -832,7 +830,6 @@
         };
       }, [reportMonth, visits, nurses]);
 
-      // コンテキストメニューと長押しの処理
       const handleContextMenu = (e, visit) => {
         if (e.preventDefault) e.preventDefault();
         if (e.stopPropagation) e.stopPropagation();
@@ -840,7 +837,6 @@
         let x = e.clientX;
         let y = e.clientY;
 
-        // タッチイベントからの呼び出しを考慮
         if (e.touches && e.touches.length > 0) {
             x = e.touches[0].clientX;
             y = e.touches[0].clientY;
@@ -868,7 +864,7 @@
              clientX,
              clientY
           }, visit);
-        }, 500); // 0.5秒長押し
+        }, 500);
       };
 
       const handleTouchEndOrMove = () => {
@@ -878,7 +874,6 @@
         }
       };
 
-      // --- アイデア1: 隠し機能（ロゴの長押しでおみくじメッセージ） ---
       const handleLogoPointerDown = () => {
         if (logoTimerRef.current) return;
         logoTimerRef.current = setTimeout(() => {
@@ -938,7 +933,7 @@
           setToastMessage(msg);
           setShowToast(true);
           logoTimerRef.current = null;
-        }, 1000); // 1秒長押しで発動
+        }, 1000); 
       };
 
       const handleLogoPointerUpOrLeave = () => {
@@ -948,7 +943,6 @@
         }
       };
 
-      // --- アイデア2: 自動編成ボタンの連打メッセージ ---
       const handleAutoAssignPointerDown = () => {
         if (isOptimizing || unassignedCount === 0 || nurses.length === 0) {
           setAutoAssignClickCount(prev => {
@@ -971,7 +965,6 @@
         }
       };
 
-      // --- アイデア3: 季節の隠しエフェクト ---
       const seasonalEffect = useMemo(() => {
         if (!selectedDate) return null;
         const parts = selectedDate.split('-');
@@ -1031,7 +1024,6 @@
         setShowToast(true);
       };
 
-      // --- 同行用の複製 ---
       const handleDuplicateAccompany = (visit, e) => {
         if (!isAdmin) return;
         if (e) {
@@ -1042,7 +1034,7 @@
           ...visit,
           id: Date.now() + Math.floor(Math.random() * 1000),
           isExcludedFromAutoAssign: false, 
-          nurseId: null, // 同行者は別の人になるため、未割り当てとして作成
+          nurseId: null, 
           isAccompany: true
         };
         saveHistory();
@@ -1673,7 +1665,7 @@
           
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i].split(',');
-            if (p[9] && p[9].includes('休止')) continue; // J列(10列目)に「休止」という文字が含まれる行はスキップ
+            if (p[9] && p[9].includes('休止')) continue; 
             if (p[0]?.trim()) {
               const nameStr = p[0].trim();
               const dateOrDay = p[1]?.trim() || '';
@@ -1738,7 +1730,6 @@
               return;
             }
 
-            // 表示中の週以外のデータは同期対象外とし、そのまま保持する
             if (!displayDates.includes(v.date)) {
               nextVisits.push(v);
               return;
@@ -1831,7 +1822,6 @@
                      else if (rawSpec.includes('(午後)') || rawSpec.includes('(PM)')) { type = 'PM'; dateStr = rawSpec.replace(/\(午後\)/g, '').replace(/\(PM\)/g, ''); }
                      dateStr = dateStr.replace(/\//g, '-'); 
                      
-                     // ゼロ埋め対応 (例: 2026-1-5 -> 2026-01-05)
                      const dateParts = dateStr.split('-');
                      if(dateParts.length === 3) {
                          const y = dateParts[0];
@@ -2691,6 +2681,15 @@
                                             </div>
                                           </div>
                                         )}
+
+                                        {/* タグ類 */}
+                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
+                                          <div className="hidden md:flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                            {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -2780,12 +2779,19 @@
                   <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
                     <div className="xl:col-span-1 space-y-6">
                        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
-                          <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">接続設定</h2>
-                          <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
-                          <div className="mt-4 pt-4 border-t border-slate-100">
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                            <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等)</p>
-                          </div>
+                          <button onClick={() => setShowVisitSettings(!showVisitSettings)} className="w-full flex items-center justify-between text-xs font-black text-slate-400 uppercase tracking-widest outline-none hover:text-slate-600 transition-colors">
+                             <span className="flex items-center gap-1.5"><Settings2 size={16}/> 接続設定</span>
+                             {showVisitSettings ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </button>
+                          {showVisitSettings && (
+                            <div className="mt-4 pt-4 border-t border-slate-100 animate-[fadeIn_0.2s_ease-out]">
+                              <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
+                              <div className="mt-4 pt-4 border-t border-slate-100">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
+                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等)</p>
+                              </div>
+                            </div>
+                          )}
                        </div>
                     </div>
                     <div className="xl:col-span-3">
@@ -2871,12 +2877,19 @@
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                     <div className="lg:col-span-1 space-y-6">
                       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
-                        <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">名簿 CSV URL</h2>
-                        <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
-                        <div className="mt-4 pt-4 border-t border-slate-100">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                          <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地</p>
-                        </div>
+                         <button onClick={() => setShowNurseSettings(!showNurseSettings)} className="w-full flex items-center justify-between text-xs font-black text-slate-400 uppercase tracking-widest outline-none hover:text-slate-600 transition-colors">
+                            <span className="flex items-center gap-1.5"><Settings2 size={16}/> 接続設定</span>
+                            {showNurseSettings ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                         </button>
+                         {showNurseSettings && (
+                           <div className="mt-4 pt-4 border-t border-slate-100 animate-[fadeIn_0.2s_ease-out]">
+                             <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
+                             <div className="mt-4 pt-4 border-t border-slate-100">
+                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
+                               <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地</p>
+                             </div>
+                           </div>
+                         )}
                       </div>
                     </div>
                     <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
