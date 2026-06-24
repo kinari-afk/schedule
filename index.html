@@ -51,15 +51,15 @@
       user-select: none;
     }
 
-    /* 三毛猫の手（肉球）カーソル */
+    /* 三毛猫の手（手の甲・ふさふさ仕様） */
     /* 通常時 (Grab: 開いた手) */
     .mickey-grab {
-      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Cdefs%3E%3Cfilter id='drop-shadow' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeDropShadow dx='1' dy='1' stdDeviation='1' flood-opacity='0.3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23drop-shadow)'%3E%3C!-- 輪郭 --%3E%3Cpath fill='%23fff' stroke='%23333' stroke-width='1.5' stroke-linejoin='round' d='M8,18 C6,16 4,14 6,10 C8,6 12,8 13,11 C14,8 18,8 19,11 C20,8 24,6 26,10 C28,14 26,16 24,18 C26,22 24,28 16,28 C8,28 6,22 8,18 Z'/%3E%3C!-- 三毛猫の模様（茶色） --%3E%3Cpath fill='%23D97B29' d='M24,18 C26,22 24,28 16,28 C19,28 22,25 22,21 C22,18 20,16 20,16 C22,16 23,17 24,18 Z'/%3E%3C!-- 三毛猫の模様（黒） --%3E%3Cpath fill='%23333' d='M8,18 C6,22 8,28 16,28 C13,28 10,25 10,21 C10,18 12,16 12,16 C10,16 9,17 8,18 Z'/%3E%3C!-- 肉球（メイン） --%3E%3Cpath fill='%23FF91A4' d='M11,18 C11,16 13,14 16,14 C19,14 21,16 21,18 C21,20 18,22 16,22 C14,22 11,20 11,18 Z'/%3E%3C!-- 肉球（指） --%3E%3Ccircle cx='9' cy='12' r='2' fill='%23FF91A4'/%3E%3Ccircle cx='13.5' cy='10.5' r='2' fill='%23FF91A4'/%3E%3Ccircle cx='18.5' cy='10.5' r='2' fill='%23FF91A4'/%3E%3Ccircle cx='23' cy='12' r='2' fill='%23FF91A4'/%3E%3C/g%3E%3C/svg%3E") 16 16, grab !important;
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' width='40' height='40'%3E%3Cdefs%3E%3Cfilter id='shadow'%3E%3CfeDropShadow dx='1' dy='1' stdDeviation='1' flood-opacity='0.3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23shadow)'%3E%3Cpath fill='%23FFF' stroke='%23333' stroke-width='1' d='M10 25c-2 0-3 3-3 6s2 6 3 6h20c1 0 3-3 3-6s-1-6-3-6c0-4-3-8-7-8s-7 4-7 8z'/%3E%3Cpath fill='%23D97B29' d='M12 20c-1 0-2 2-2 4h6c0-2-1-4-4-4z'/%3E%3Cpath fill='%23333' d='M22 18c-1 0-2 2-2 4h6c0-2-1-4-4-4z'/%3E%3Cpath fill='none' stroke='%23333' stroke-width='2' d='M12 30h16M10 33h20M12 36h16'/%3E%3C/g%3E%3C/svg%3E") 20 20, grab !important;
     }
     
     /* 掴んだ時 (Grabbing: 握った手) */
     .mickey-grab:active {
-      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Cdefs%3E%3Cfilter id='drop-shadow' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeDropShadow dx='1' dy='1' stdDeviation='1' flood-opacity='0.3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23drop-shadow)'%3E%3C!-- 輪郭（ギュッと縮んだ感じ） --%3E%3Cpath fill='%23fff' stroke='%23333' stroke-width='1.5' stroke-linejoin='round' d='M9,16 C7,14 6,13 8,11 C10,9 12,10 13,12 C14,10 18,10 19,12 C20,10 22,9 24,11 C26,13 25,14 23,16 C25,20 23,26 16,26 C9,26 7,20 9,16 Z'/%3E%3C!-- 三毛猫の模様（茶色） --%3E%3Cpath fill='%23D97B29' d='M23,16 C25,20 23,26 16,26 C19,26 21,23 21,20 C21,18 20,16 20,16 C21,16 22,16.5 23,16 Z'/%3E%3C!-- 三毛猫の模様（黒） --%3E%3Cpath fill='%23333' d='M9,16 C7,20 9,26 16,26 C13,26 11,23 11,20 C11,18 12,16 12,16 C11,16 10,16.5 9,16 Z'/%3E%3C!-- 肉球（メイン、少し小さく） --%3E%3Cpath fill='%23FF91A4' d='M12,17 C12,15.5 14,14 16,14 C18,14 20,15.5 20,17 C20,18.5 18,20.5 16,20.5 C14,20.5 12,18.5 12,17 Z'/%3E%3C!-- 肉球（指、少し下に移動してギュッとした感じ） --%3E%3Ccircle cx='9.5' cy='13' r='1.5' fill='%23FF91A4'/%3E%3Ccircle cx='13.5' cy='12' r='1.5' fill='%23FF91A4'/%3E%3Ccircle cx='18.5' cy='12' r='1.5' fill='%23FF91A4'/%3E%3Ccircle cx='22.5' cy='13' r='1.5' fill='%23FF91A4'/%3E%3C/g%3E%3C/svg%3E") 16 16, grabbing !important;
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Cdefs%3E%3Cfilter id='shadow'%3E%3CfeDropShadow dx='1' dy='1' stdDeviation='1' flood-opacity='0.3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23shadow)' stroke='%23333' stroke-width='1.5' stroke-linejoin='round'%3E%3Cpath fill='%23FFF' d='M6 18c0-5 4-9 9-9s9 4 9 9v10c0 2-2 4-4 4H10c-2 0-4-2-4-4z'/%3E%3Cpath fill='%23D97B29' d='M7 20c0-2 1-4 3-4s3 2 3 4'/%3E%3Cpath fill='%23333' d='M15 15c0-2 1-4 3-4s3 2 3 4'/%3E%3C/g%3E%3C/svg%3E") 16 16, grabbing !important;
     }
 
     @media (max-width: 767px) {
@@ -2357,7 +2357,7 @@
                                    onTouchMove={handleTouchEndOrMove}
                                    onTouchEnd={handleTouchEndOrMove}
                                    onTouchCancel={handleTouchEndOrMove}
-                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'mickey-grab hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, left: leftStyle, width: widthStyle }}>
 
                                    <div className="flex justify-between items-start gap-1">
@@ -2688,6 +2688,15 @@
                                             <div className="flex flex-col gap-0.5">
                                               <span className="text-[9px] text-red-500 font-bold leading-none">指定: {item.startTime}</span>
                                             </div>
+                                          </div>
+                                        )}
+
+                                        {/* タグ類 */}
+                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
+                                          <div className="hidden md:flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                            {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
                                           </div>
                                         )}
                                       </div>
