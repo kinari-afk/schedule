@@ -1091,13 +1091,15 @@
         ));
       };
 
-      const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
+const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         if (!isAdmin) return;
+        
+        // 【修正箇所】出勤 → 午後休 → 午前休 → 全休 → 出勤 の順番に変更
         let nextStatus = 'work';
-        if (currentOffType === 'work') nextStatus = 'off';
-        else if (currentOffType === 'full') nextStatus = 'am_off';
-        else if (currentOffType === 'AM') nextStatus = 'pm_off';
-        else if (currentOffType === 'PM') nextStatus = 'work';
+        if (currentOffType === 'work') nextStatus = 'pm_off';
+        else if (currentOffType === 'PM') nextStatus = 'am_off';
+        else if (currentOffType === 'AM') nextStatus = 'off';
+        else if (currentOffType === 'full') nextStatus = 'work';
 
         saveHistory();
         handleSetNurseStatuses(prev => {
@@ -1112,21 +1114,24 @@
           return next;
         });
 
+        // 休み設定時の訪問予定の自動解除ロジックも新しいステータスに合わせて調整
         if (nextStatus !== 'work') {
           handleSetVisits(prev => prev.map(v => {
             if (v.date === dateStr && v.nurseId === nurseId && !v.isExcludedFromAutoAssign) {
                 const targetStart = parseTime(v.startTime);
-                if (nextStatus === 'off' || 
-                   (nextStatus === 'am_off' && targetStart < parseTime('13:30')) ||
-                   (nextStatus === 'pm_off' && targetStart >= parseTime('12:30'))) {
-                    return { ...v, nurseId: null, startTime: v.originalStartTime || v.startTime, customTravelTime: null };
+                const shouldUnassign = 
+                  (nextStatus === 'off') || 
+                  (nextStatus === 'am_off' && targetStart < parseTime('13:30')) ||
+                  (nextStatus === 'pm_off' && targetStart >= parseTime('12:30'));
+                
+                if (shouldUnassign) {
+                  return { ...v, nurseId: null, startTime: v.originalStartTime || v.startTime, customTravelTime: null };
                 }
             }
             return v;
           }));
         }
       };
-
       const toggleNurseLock = (nurseId, dateStr) => {
         if (!isAdmin) return;
         saveHistory();
