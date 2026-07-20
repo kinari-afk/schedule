@@ -110,8 +110,17 @@
 
     const START_HOUR = 7;
     const END_HOUR = 22;
-    const PIXELS_PER_MINUTE = 2.0; 
+    const PIXELS_PER_MINUTE = 2.0;
     const getTop = (minutes) => (minutes - START_HOUR * 60) * PIXELS_PER_MINUTE;
+
+    // 予定の一意ID生成。Date.now() ベースだと同一ミリ秒内の連続生成（複製・全員追加・CSV一括取込）で
+    // 衝突するため、単調増加を保証する。既存の Date.now() 由来IDとも比較可能なように現在時刻を基準にする。
+    let __lastGeneratedId = 0;
+    const generateId = () => {
+      const now = Date.now();
+      __lastGeneratedId = now > __lastGeneratedId ? now : __lastGeneratedId + 1;
+      return __lastGeneratedId;
+    };
 
     const parseTime = (timeStr) => {
       if (!timeStr) return 0;
@@ -1015,8 +1024,8 @@
         }
         const newVisit = {
           ...visit,
-          id: Date.now() + Math.floor(Math.random() * 1000),
-          isExcludedFromAutoAssign: false, 
+          id: generateId(),
+          isExcludedFromAutoAssign: false,
         };
         saveHistory();
         handleSetVisits(prev => [...prev, newVisit]);
@@ -1032,9 +1041,9 @@
         }
         const newVisit = {
           ...visit,
-          id: Date.now() + Math.floor(Math.random() * 1000),
-          isExcludedFromAutoAssign: false, 
-          nurseId: null, 
+          id: generateId(),
+          isExcludedFromAutoAssign: false,
+          nurseId: null,
           isAccompany: true
         };
         saveHistory();
@@ -1635,7 +1644,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           availableNurses.forEach((n, idx) => {
             newEvents.push({
               ...baseEvent,
-              id: Date.now() + idx,
+              id: generateId(),
               nurseId: n.id,
               location: n.startLocation || { x: 50, y: 50 }
             });
@@ -1645,7 +1654,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           const targetNurse = nurses.find(n => n.id === nId);
           newEvents.push({
             ...baseEvent,
-            id: Date.now(),
+            id: generateId(),
             nurseId: nId,
             location: targetNurse?.startLocation || { x: 50, y: 50 }
           });
@@ -1704,9 +1713,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 }
               }
 
-              result.push({ 
-                id: Date.now() + i, 
-                userName: nameStr.includes('様') ? nameStr : nameStr + ' 様', 
+              result.push({
+                id: generateId(),
+                userName: nameStr.includes('様') ? nameStr : nameStr + ' 様',
                 location: getHashLoc(address || nameStr), 
                 duration: dur, 
                 date: visitDate, 
