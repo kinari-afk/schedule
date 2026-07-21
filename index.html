@@ -81,6 +81,34 @@
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
     import { getFirestore, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+    import * as _LZ from 'https://esm.sh/lz-string@1.5.0';
+    const LZString = (_LZ && _LZ.default && _LZ.default.compressToBase64) ? _LZ.default : _LZ;
+
+    // 大きなフィールド（visits / savedPatterns）を圧縮して保存し、
+    // Firestoreの「1ドキュメント約1MB」上限に引っかからないようにする。
+    const COMPRESS_PREFIX = 'LZ:';
+    const encodeField = (obj) => {
+      const json = JSON.stringify(obj);
+      try {
+        if (LZString && typeof LZString.compressToBase64 === 'function') {
+          return COMPRESS_PREFIX + LZString.compressToBase64(json);
+        }
+      } catch (e) { console.error("compress failed:", e); }
+      return json; // 圧縮不可のときは従来どおり素のJSONで保存
+    };
+    const decodeField = (str, fallback) => {
+      if (str == null) return fallback;
+      try {
+        if (typeof str === 'string' && str.startsWith(COMPRESS_PREFIX)) {
+          const json = LZString.decompressFromBase64(str.slice(COMPRESS_PREFIX.length));
+          return json ? JSON.parse(json) : fallback;
+        }
+        return JSON.parse(str); // 旧形式（非圧縮のJSON文字列）
+      } catch (e) {
+        console.error("decodeField failed:", e);
+        return fallback;
+      }
+    };
 
     const myFirebaseConfig = {
       apiKey: "AIzaSyBQFSkTTh582w-WwlfU6mwejs8rPAGrm8M",
@@ -334,6 +362,7 @@
       const [memoInputValue, setMemoInputValue] = useState("");
 
       const addEventTitleInputRef = useRef(null);
+      const migratedRef = useRef(false); // 旧データの圧縮移行を一度だけ実行するためのフラグ
 
       // 設定のアコーディオン用の状態
       const [showVisitSettings, setShowVisitSettings] = useState(false);
@@ -377,13 +406,28 @@
           if (docSnap.exists()) {
             const data = docSnap.data();
             if (data.nurses) setNurses(JSON.parse(data.nurses));
-            if (data.visits) setVisits(JSON.parse(data.visits));
-            if (data.nurseStatuses) setNurseStatuses(JSON.parse(data.nurseStatuses));
-            if (data.savedPatterns) setSavedPatterns(JSON.parse(data.savedPatterns));
+            if (data.visits != null) setVisits(decodeField(data.visits, []));
+            if (data.nurseStatuses != null) setNurseStatuses(decodeField(data.nurseStatuses, []));
+            if (data.savedPatterns != null) setSavedPatterns(decodeField(data.savedPatterns, {}));
             if (data.dailyMemos) setDailyMemos(JSON.parse(data.dailyMemos));
             if (data.sheetUrl) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
+
+            // 旧形式（非圧縮）のデータを検出したら、圧縮形式へ一度だけ移行する
+            const isRawJson = (s) => typeof s === 'string' && s.length > 0 && !s.startsWith(COMPRESS_PREFIX);
+            const visitsRaw = data.visits;
+            const patternsRaw = data.savedPatterns;
+            const statusesRaw = data.nurseStatuses;
+            const needsMigration = isRawJson(visitsRaw) || isRawJson(patternsRaw) || isRawJson(statusesRaw);
+            if (isAdmin && needsMigration && !migratedRef.current && LZString && typeof LZString.compressToBase64 === 'function') {
+              migratedRef.current = true;
+              updateCloudData({
+                visits: encodeField(decodeField(visitsRaw, [])),
+                savedPatterns: encodeField(decodeField(patternsRaw, {})),
+                nurseStatuses: encodeField(decodeField(statusesRaw, []))
+              });
+            }
           } else {
             setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", dailyMemos: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 });
           }
@@ -396,9 +440,9 @@
       const estimateDocSize = (override = {}) => {
         const fields = {
           nurses: JSON.stringify(nurses),
-          visits: JSON.stringify(visits),
-          nurseStatuses: JSON.stringify(nurseStatuses),
-          savedPatterns: JSON.stringify(savedPatterns),
+          visits: encodeField(visits),
+          nurseStatuses: encodeField(nurseStatuses),
+          savedPatterns: encodeField(savedPatterns),
           dailyMemos: JSON.stringify(dailyMemos),
           sheetUrl: sheetUrl,
           nurseSheetUrl: nurseSheetUrl,
@@ -442,7 +486,7 @@
         if (!isAdmin) return;
         setVisits(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
-          updateCloudData({ visits: JSON.stringify(next) });
+          updateCloudData({ visits: encodeField(next) });
           return next;
         });
       };
@@ -460,7 +504,7 @@
         if (!isAdmin) return;
         setNurseStatuses(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
-          updateCloudData({ nurseStatuses: JSON.stringify(next) });
+          updateCloudData({ nurseStatuses: encodeField(next) });
           return next;
         });
       };
@@ -469,7 +513,7 @@
         if (!isAdmin) return;
         setSavedPatterns(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
-          updateCloudData({ savedPatterns: JSON.stringify(next) });
+          updateCloudData({ savedPatterns: encodeField(next) });
           return next;
         });
       };
