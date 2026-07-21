@@ -392,11 +392,49 @@
         return () => unsubscribe();
       }, [user]);
 
+      // ドキュメント全体のおおよそのバイト数を見積もる（Firestoreの上限は1ドキュメント約1MB）
+      const estimateDocSize = (override = {}) => {
+        const fields = {
+          nurses: JSON.stringify(nurses),
+          visits: JSON.stringify(visits),
+          nurseStatuses: JSON.stringify(nurseStatuses),
+          savedPatterns: JSON.stringify(savedPatterns),
+          dailyMemos: JSON.stringify(dailyMemos),
+          sheetUrl: sheetUrl,
+          nurseSheetUrl: nurseSheetUrl,
+          baseTravelTime: String(baseTravelTime),
+          ...override
+        };
+        let bytes = 0;
+        for (const key in fields) {
+          const val = fields[key] == null ? "" : String(fields[key]);
+          // フィールド名 + 値のUTF-8バイト数を概算
+          bytes += key.length + (typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(val).length : val.length);
+        }
+        return bytes;
+      };
+
       const updateCloudData = (newData) => {
         if (!isAdmin) return;
         if (user && db) {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
-          setDoc(docRef, newData, { merge: true }).catch(e => console.error(e));
+          setDoc(docRef, newData, { merge: true }).catch(e => {
+            console.error("Firestore write failed:", e);
+            const size = estimateDocSize(newData);
+            const overLimit = size > 1048487; // 1MiB (1048576) - 余裕分
+            let msg;
+            if (e.code === 'resource-exhausted' || e.code === 'invalid-argument' || e.code === 'out-of-range' || overLimit) {
+              msg = `保存できませんでした：データ量が上限（約1MB）に達しています（現在 約${Math.round(size / 1024)}KB）。過去の予定やメモリ保存の整理が必要です。`;
+            } else if (e.code === 'permission-denied') {
+              msg = "保存できませんでした：データベースへの書き込みが許可されていません（Firestoreのセキュリティルールをご確認ください）。";
+            } else if (e.code === 'unavailable' || e.code === 'deadline-exceeded') {
+              msg = "保存できませんでした：ネットワークに接続できません。通信環境をご確認ください。";
+            } else {
+              msg = `保存に失敗しました：${e.message || e.code || "不明なエラー"}`;
+            }
+            setToastMessage(msg);
+            setShowToast(true);
+          });
         }
       };
 
