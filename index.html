@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>訪問看護ルート最適化アプリ</title>
   
   <!-- ファビコン（波形アイコンのSVGデータ） -->
@@ -39,6 +39,9 @@
       input, select, textarea { font-size: 16px !important; }
     }
     
+    /* スマホのアドレスバー分を除いた「実際に見えている高さ」に合わせる */
+    .app-shell { height: 100vh; height: 100dvh; }
+
     .glass-effect { backdrop-filter: blur(8px); background-color: rgba(255, 255, 255, 0.8); }
     .timeline-shadow { box-shadow: inset -10px 0 10px -10px rgba(0,0,0,0.1); }
     
@@ -76,7 +79,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -201,6 +204,283 @@
       d.setDate(d.getDate() + diff);
       return d.toISOString().split('T')[0];
     };
+
+    // ============================================================
+    // ここから下は「画面の状態に依存しない純粋な計算」をまとめたもの。
+    // 入力が同じなら必ず同じ結果になるので、単体でテストできる。
+    // ============================================================
+    /*__PURE_HELPERS_START__*/
+    const locDist = (a, b) => {
+      const ax = a?.x ?? 50, ay = a?.y ?? 50, bx = b?.x ?? 50, by = b?.y ?? 50;
+      return Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
+    };
+
+    // 日付文字列を必ず YYYY-MM-DD（ゼロ埋め）にそろえる。 例: 2026/4/5 → 2026-04-05
+    const normalizeDateStr = (raw) => {
+      if (!raw) return '';
+      const parts = String(raw).trim().replace(/\//g, '-').split('-');
+      if (parts.length !== 3) return String(raw).trim().replace(/\//g, '-');
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    };
+
+    // 担当者が決まっていない予定か？（担当者が名簿から消えている場合も「未割り当て」とみなす）
+    const isVisitUnassigned = (v, nurseIdSet) => v.nurseId == null || !nurseIdSet.has(v.nurseId);
+
+    // 過去の担当実績を集計する。
+    // 利用者ごとに「どの看護師が何回訪問したか」を数え、同じ曜日の実績は2倍に重み付けする。
+    const HISTORY_WINDOW_DAYS = 120;
+    const buildAssignHistory = (visits, nurseIdSet, date) => {
+      const map = new Map();
+      const target = new Date(date);
+      if (isNaN(target.getTime())) return map;
+      const targetDow = target.getDay();
+      const from = new Date(date);
+      from.setDate(from.getDate() - HISTORY_WINDOW_DAYS);
+      const fromStr = from.toISOString().split('T')[0];
+      visits.forEach(v => {
+        if (!v.date || v.date >= date || v.date < fromStr) return;
+        if (v.nurseId == null || !nurseIdSet.has(v.nurseId)) return;
+        if (v.type === 'other' || v.isAccompany) return;
+        const key = normalizeName(v.userName);
+        if (!key) return;
+        const w = new Date(v.date).getDay() === targetDow ? 2 : 1;
+        let e = map.get(key);
+        if (!e) { e = { total: 0, byNurse: {} }; map.set(key, e); }
+        e.total += w;
+        e.byNurse[v.nurseId] = (e.byNurse[v.nurseId] || 0) + w;
+      });
+      return map;
+    };
+
+    // 自動編成の本体。
+    //  ・看護師ごとに「その日の予定の並び」を持ち、新しい訪問が「空き時間に収まるか」で判定する
+    //    （＝後ろの時間に予定が入っていても、その前の空き時間を使える／ダブルブッキングはしない）
+    //  ・収まる候補が複数いるときは「負担の少なさ・午前午後のバランス・移動の少なさ・過去の担当実績」の合計点で選ぶ
+    const planAutoAssign = ({ visits, nurses, date, offTypeOf, baseTravelTime, history }) => {
+      const travelTo = (fromLoc, v) => v.customTravelTime ?? (baseTravelTime + Math.round(locDist(fromLoc, v.location) * 0.05));
+      const nurseIdSet = new Set(nurses.map(n => n.id));
+
+      const states = [];
+      nurses.forEach(n => {
+        const offType = offTypeOf(n);
+        if (offType === 'full') return;
+        let startMin = parseTime(n.startTime);
+        let endMin = parseTime(n.endTime || '17:30');
+        if (offType === 'AM') { startMin = parseTime('13:30'); endMin = parseTime('17:30'); }
+        else if (offType === 'PM') { startMin = parseTime('08:00'); endMin = parseTime('12:30'); }
+
+        const s = { nurse: n, offType, startMin, endMin, items: [], total: 0, am: 0, pm: 0, home: n.startLocation || { x: 50, y: 50 } };
+        visits.forEach(v => {
+          if (v.date !== date || v.nurseId !== n.id) return;
+          const start = parseTime(v.startTime), dur = v.duration || 30;
+          s.items.push({ start, end: start + dur, visit: v });
+          s.total += dur;
+          if (start < 12 * 60) s.am += dur; else s.pm += dur;
+        });
+        s.items.sort((a, b) => a.start - b.start);
+        states.push(s);
+      });
+
+      // level 1: 移動時間まで含めて無理なく収まる
+      // level 2: 移動時間の余裕はないが、時間は重ならず勤務時間内に収まる
+      // level 3: 時間は重ならないが、勤務終了時刻を超える（時間外）
+      const checkFit = (s, v, level) => {
+        const start = parseTime(v.startTime), dur = v.duration || 30, end = start + dur;
+        if (start < s.startMin) return null;
+        if (level < 3 && end > s.endMin) return null;
+        if (level === 3 && s.offType !== 'work') return null;
+        let prev = null, next = null;
+        for (const it of s.items) { if (it.start <= start) prev = it; else { next = it; break; } }
+        if (prev && prev.end > start) return null;
+        if (next && next.start < end) return null;
+        const prevLoc = prev ? prev.visit.location : s.home;
+        const prevEnd = prev ? prev.end : s.startMin;
+        const tIn = travelTo(prevLoc, v);
+        const tOut = next ? travelTo(v.location, next.visit) : 0;
+        if (level === 1) {
+          if (prevEnd + tIn > start) return null;
+          if (next && end + tOut > next.start) return null;
+        }
+        return { detour: tIn + (next ? tOut - travelTo(prevLoc, next.visit) : 0) };
+      };
+
+      const nameMatches = (nurseName, target) => !!nurseName && !!target && (nurseName === target || nurseName.includes(target) || target.includes(nurseName));
+
+      const scoreOf = (s, v, fit) => {
+        const start = parseTime(v.startTime), dur = v.duration || 30;
+        const span = Math.max(60, s.endMin - s.startMin);
+        const isAM = start < 12 * 60;
+        let score = ((s.total + dur) / span) * 100;                       // 勤務時間に対する負担率
+        score += ((isAM ? s.am - s.pm : s.pm - s.am) / span) * 30;        // 午前・午後のかたより
+        score += fit.detour;                                               // 増える移動時間（分）
+        let usedHistory = false;
+        if (history && v.type !== 'other' && !v.isAccompany) {
+          const h = history.get(normalizeName(v.userName));
+          const cnt = h ? (h.byNurse[s.nurse.id] || 0) : 0;
+          if (cnt > 0) {
+            score -= (cnt / h.total) * Math.min(1, h.total / 3) * 30;     // なじみの看護師を優先
+            usedHistory = true;
+          }
+        }
+        return { score, usedHistory };
+      };
+
+      const targets = visits
+        .filter(v => v.date === date && isVisitUnassigned(v, nurseIdSet) && !v.isExcludedFromAutoAssign)
+        .map(v => {
+          const hasPref = (v.preferredNurseNames || []).some(Boolean);
+          const constrained = v.requiresFemaleNurse || (v.excludedNurseNames || []).length > 0;
+          return { v, rank: hasPref ? 0 : constrained ? 1 : 2 };
+        })
+        // 条件の厳しい予定（優先担当あり → 女性限定・除外あり → その他）から先に席を確保する
+        .sort((a, b) => a.rank - b.rank || parseTime(a.v.startTime) - parseTime(b.v.startTime) || (b.v.duration || 0) - (a.v.duration || 0));
+
+      const assignedTo = new Map();
+      const failed = [];
+      let historyHits = 0, overtimeCount = 0;
+
+      targets.forEach(({ v }) => {
+        const excludedNames = v.excludedNurseNames || [];
+        const isExcluded = (name) => excludedNames.some(ex => nameMatches(name, ex));
+        let best = null, bestUsedHistory = false, bestLevel = 0;
+
+        for (const prefName of (v.preferredNurseNames || [])) {
+          if (!prefName) continue;
+          const s = states.find(st => nameMatches(st.nurse.name, prefName) && !isExcluded(st.nurse.name));
+          if (s && (checkFit(s, v, 1) || checkFit(s, v, 2))) { best = s; break; }
+        }
+
+        if (!best) {
+          const candidates = states.filter(s => !isExcluded(s.nurse.name) && !(v.requiresFemaleNurse && !s.nurse.isFemale));
+          outer:
+          for (const level of [1, 2, 3]) {
+            for (const low of [false, true]) {
+              let bestScore = Infinity;
+              candidates.forEach(s => {
+                if (!!s.nurse.isLowPriority !== low) return;
+                const fit = checkFit(s, v, level);
+                if (!fit) return;
+                const { score, usedHistory } = scoreOf(s, v, fit);
+                if (score < bestScore) { bestScore = score; best = s; bestUsedHistory = usedHistory; bestLevel = level; }
+              });
+              if (best) break outer;
+            }
+          }
+        }
+
+        if (!best) { failed.push(v); return; }
+        const start = parseTime(v.startTime), dur = v.duration || 30;
+        best.items.push({ start, end: start + dur, visit: v });
+        best.items.sort((a, b) => a.start - b.start);
+        best.total += dur;
+        if (start < 12 * 60) best.am += dur; else best.pm += dur;
+        assignedTo.set(v.id, best.nurse.id);
+        if (bestUsedHistory) historyHits++;
+        if (bestLevel === 3) overtimeCount++;
+      });
+
+      return {
+        visits: visits.map(v => assignedTo.has(v.id) ? { ...v, nurseId: assignedTo.get(v.id) } : v),
+        assignedCount: assignedTo.size,
+        failed,
+        historyHits,
+        overtimeCount
+      };
+    };
+
+    // 利用者スプレッドシートの内容（sheetRows）を、今ある予定（visits）に突き合わせる。
+    // 表示中の1週間（weekDates）だけを対象にし、担当者の割り当て・固定・コメントはできるだけ引き継ぐ。
+    const mergeSheetVisits = ({ visits, sheetRows, weekDates }) => {
+      const keyOf = (v) => `${normalizeName(v.userName)}|${v.date}|${v.originalStartTime || v.startTime}`;
+      const dayKeyOf = (v) => `${normalizeName(v.userName)}|${v.date}`;
+      const isSheetManaged = (v) => v.type !== 'other' && !v.isAccompany;
+      const inWeek = (v) => weekDates.includes(v.date);
+
+      const sheetByKey = new Map();
+      sheetRows.forEach(r => { if (!sheetByKey.has(keyOf(r))) sheetByKey.set(keyOf(r), r); });
+      const existingKeys = new Set(visits.filter(isSheetManaged).map(keyOf));
+
+      const carryOver = (sheetRow, v, startTime) => ({
+        ...sheetRow,
+        id: v.id,
+        nurseId: v.nurseId ?? null,
+        startTime,
+        customTravelTime: v.customTravelTime ?? null,
+        isExcludedFromAutoAssign: !!v.isExcludedFromAutoAssign,
+        ...(v.comment ? { comment: v.comment } : {})
+      });
+
+      const next = [];
+      const leftovers = [];   // シートに同じ行が見つからなかった既存の予定
+      let updated = 0;
+      visits.forEach(v => {
+        if (!isSheetManaged(v) || !inWeek(v)) { next.push(v); return; }
+        const row = sheetByKey.get(keyOf(v));
+        if (row) { next.push(carryOver(row, v, v.startTime)); updated++; }
+        else leftovers.push(v);
+      });
+
+      // シートにしか無い行（＝新規）。ただし「時間だけ変わった」既存の予定があれば、担当者を引き継ぐ
+      const newRows = sheetRows.filter(r => !existingKeys.has(keyOf(r)));
+      const newByDay = new Map();
+      newRows.forEach(r => { const k = dayKeyOf(r); if (!newByDay.has(k)) newByDay.set(k, []); newByDay.get(k).push(r); });
+      newByDay.forEach(list => list.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime)));
+
+      let retimed = 0, deleted = 0, deletedAssigned = 0;
+      const usedRows = new Set();
+      leftovers.sort((a, b) => parseTime(a.originalStartTime || a.startTime) - parseTime(b.originalStartTime || b.startTime));
+      leftovers.forEach(v => {
+        const list = newByDay.get(dayKeyOf(v)) || [];
+        const row = list.find(r => !usedRows.has(r));
+        if (row) {
+          usedRows.add(row);
+          next.push(carryOver(row, v, row.startTime));
+          retimed++;
+        } else {
+          deleted++;
+          if (v.nurseId != null) deletedAssigned++;
+        }
+      });
+
+      let added = 0;
+      newRows.forEach(r => { if (!usedRows.has(r)) { next.push(r); added++; } });
+
+      return { visits: next, added, updated, retimed, deleted, deletedAssigned };
+    };
+
+    // 看護師スプレッドシートの内容を、今の名簿に突き合わせる。
+    // 同じ名前の看護師は「同じID」のまま更新する（IDが変わると、過去・未来の割り当てがすべて外れてしまうため）。
+    const mergeNurseSheet = ({ nurses, sheetNurses, makeId }) => {
+      const prevByName = new Map();
+      nurses.forEach(n => { const k = normalizeName(n.name); if (k && !prevByName.has(k)) prevByName.set(k, n); });
+      const usedIds = new Set();
+      const usedColors = new Set();
+      let kept = 0, added = 0;
+      const merged = sheetNurses.map(sn => {
+        const prev = prevByName.get(normalizeName(sn.name));
+        if (prev && !usedIds.has(prev.id)) {
+          usedIds.add(prev.id);
+          kept++;
+          if (prev.color) usedColors.add(prev.color);
+          return { ...sn, id: prev.id, color: prev.color || sn.color };
+        }
+        return { ...sn, id: null };
+      });
+      merged.forEach(n => {
+        if (n.id != null) return;
+        let id = makeId();
+        while (usedIds.has(id)) id++;
+        usedIds.add(id);
+        n.id = id;
+        const freeColor = colors.find(c => !usedColors.has(c));
+        if (freeColor) n.color = freeColor;
+        usedColors.add(n.color);
+        added++;
+      });
+      const removed = nurses.filter(n => !usedIds.has(n.id)).length;
+      return { nurses: merged, kept, added, removed };
+    };
+    /*__PURE_HELPERS_END__*/
 
     const useDragScroll = () => {
       const ref = useRef(null);
@@ -339,6 +619,11 @@
       }, [selectedNurseId]);
 
       const [isOptimizing, setIsOptimizing] = useState(false);
+      // 自動編成で「過去の担当実績」を考慮するか（端末ごとに記憶）
+      const [useHistoryAssign, setUseHistoryAssign] = useState(() => localStorage.getItem('careRoute_useHistoryAssign') !== 'off');
+      useEffect(() => {
+        localStorage.setItem('careRoute_useHistoryAssign', useHistoryAssign ? 'on' : 'off');
+      }, [useHistoryAssign]);
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       const [visitSortConfig, setVisitSortConfig] = useState({ key: 'startTime', direction: 'asc' });
@@ -362,6 +647,15 @@
       const [memoInputValue, setMemoInputValue] = useState("");
 
       const addEventTitleInputRef = useRef(null);
+      const timelineScrollRef = useRef(null);
+
+      // 現在時刻（分）。全体スケジュールに「いま」の線を引くために1分ごとに更新する
+      const getNowMinutes = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+      const [nowMinutes, setNowMinutes] = useState(getNowMinutes);
+      useEffect(() => {
+        const timer = setInterval(() => setNowMinutes(getNowMinutes()), 60000);
+        return () => clearInterval(timer);
+      }, []);
       const migratedRef = useRef(false); // 旧データの圧縮移行を一度だけ実行するためのフラグ
 
       // 設定のアコーディオン用の状態
@@ -370,10 +664,10 @@
 
       useEffect(() => {
         if (showToast) {
-          const timer = setTimeout(() => setShowToast(false), 4000);
+          const timer = setTimeout(() => setShowToast(false), Math.min(12000, Math.max(4000, (toastMessage || "").length * 130)));
           return () => clearTimeout(timer);
         }
-      }, [showToast]);
+      }, [showToast, toastMessage]);
 
       useEffect(() => {
         if (showAddEventModal) {
@@ -668,11 +962,13 @@
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const selectedNurseOffType = selectedNurse ? getIsNurseOffType(selectedNurse, selectedDate, nurseStatuses) : 'work';
 
-      const unassignedCount = visits.filter(v => v.date === selectedDate && v.nurseId === null).length;
+      const nurseIdSet = useMemo(() => new Set(nurses.map(n => n.id)), [nurses]);
+
+      const unassignedCount = visits.filter(v => v.date === selectedDate && isVisitUnassigned(v, nurseIdSet)).length;
       
       const hasAssignedVisits = useMemo(() => {
-        return visits.some(v => v.date === selectedDate && v.nurseId !== null);
-      }, [visits, selectedDate]);
+        return visits.some(v => v.date === selectedDate && !isVisitUnassigned(v, nurseIdSet));
+      }, [visits, selectedDate, nurseIdSet]);
 
       const latestSyncedDate = useMemo(() => {
         if (!visits || visits.length === 0) return null;
@@ -755,6 +1051,22 @@
         return schedules;
       }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses]);
 
+      const firstVisitMinutes = useMemo(() => {
+        const starts = visits.filter(v => v.date === selectedDate).map(v => parseTime(v.startTime));
+        return starts.length > 0 ? Math.min(...starts) : null;
+      }, [visits, selectedDate]);
+      const hasDayVisits = firstVisitMinutes !== null;
+
+      useEffect(() => {
+        if (activeTab !== 'overview') return;
+        const el = timelineScrollRef.current;
+        if (!el || typeof window === 'undefined' || window.innerWidth >= 768) return;
+        let target = firstVisitMinutes ?? 8 * 60 + 30;
+        if (selectedDate === getTodayStr()) target = Math.max(target, getNowMinutes() - 60);
+        target = Math.min(target, (END_HOUR - 2) * 60);
+        el.scrollTop = Math.max(0, getTop(target - 20));
+      }, [activeTab, selectedDate, hasDayVisits]);
+
       const stats = useMemo(() => {
         const sch = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
         let tt = 0, tv = 0, lc = 0;
@@ -764,7 +1076,7 @@
       }, [allSchedules, selectedNurse, selectedNurseOffType]);
 
       const unassignedVisitsWithLayout = useMemo(() => {
-        const filtered = visits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+        const filtered = visits.filter(v => v.date === selectedDate && isVisitUnassigned(v, nurseIdSet)).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
         
         const groups = [];
         let currentGroup = [];
@@ -818,7 +1130,7 @@
         });
         
         return layouted;
-      }, [visits, selectedDate]);
+      }, [visits, selectedDate, nurseIdSet]);
 
       const handlePrevReportMonth = () => {
         const [y, m] = reportMonth.split('-').map(Number);
@@ -872,7 +1184,7 @@
             dailyTotalDuration += dur;
             monthlyTotalDuration += dur;
 
-            if (v.nurseId) {
+            if (!isVisitUnassigned(v, nurseIdSet)) {
               nurseCounts[v.nurseId] = (nurseCounts[v.nurseId] || 0) + 1;
               monthlyNurseTotals[v.nurseId] = (monthlyNurseTotals[v.nurseId] || 0) + 1;
               
@@ -910,7 +1222,46 @@
           monthlyUnassigned,
           monthlyUnassignedDuration
         };
-      }, [reportMonth, visits, nurses]);
+      }, [reportMonth, visits, nurses, nurseIdSet]);
+
+      // 保存データ量（集計レポートを開いたときだけ計算する）
+      const storageInfo = useMemo(() => {
+        if (activeTab !== 'report') return null;
+        const LIMIT = 1048576; // Firestoreの1ドキュメント上限（約1MB）
+        const bytes = estimateDocSize();
+        const dates = visits.map(v => v.date).filter(Boolean).sort();
+        const oldest = dates[0] || null;
+        const newest = dates[dates.length - 1] || null;
+        let monthsLeft = null;
+        if (oldest && newest) {
+          const spanDays = (new Date(newest) - new Date(oldest)) / 86400000 + 1;
+          if (spanDays >= 28 && bytes > 0) monthsLeft = Math.max(0, Math.floor(((LIMIT - bytes) / (bytes / spanDays)) / 30));
+        }
+        const unknownNurse = visits.filter(v => v.nurseId != null && !nurseIdSet.has(v.nurseId)).length;
+        return { bytes, limit: LIMIT, percent: Math.min(100, Math.round((bytes / LIMIT) * 100)), oldest, newest, count: visits.length, monthsLeft, unknownNurse };
+      }, [activeTab, visits, nurses, nurseStatuses, savedPatterns, dailyMemos, nurseIdSet]);
+
+      // 全データをJSONファイルとして端末に保存する（万一に備えたバックアップ）
+      const handleDownloadBackup = () => {
+        if (!isAdmin) return;
+        try {
+          const payload = { app: 'CareRoute', exportedAt: new Date().toISOString(), nurses, visits, nurseStatuses, savedPatterns, dailyMemos, baseTravelTime, sheetUrl, nurseSheetUrl };
+          const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `careroute-backup-${getTodayStr()}.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          setToastMessage("バックアップを保存しました（利用者の個人情報を含むため、取り扱いにご注意ください）");
+        } catch (e) {
+          console.error(e);
+          setToastMessage("バックアップの保存に失敗しました");
+        }
+        setShowToast(true);
+      };
 
       const handleContextMenu = (e, visit) => {
         if (e.preventDefault) e.preventDefault();
@@ -924,10 +1275,12 @@
             y = e.touches[0].clientY;
         }
 
-        const menuWidth = 160;
-        const menuHeight = 300; 
+        const menuWidth = 240;
+        const menuHeight = isAdmin ? 420 : 240; 
         if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
         if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
+        x = Math.max(8, x);
+        y = Math.max(8, y);
 
         setContextMenu({ mouseX: x, mouseY: y, visit });
         setActiveCardId(null);
@@ -1285,245 +1638,36 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
       const handleAutoAssign = () => {
         if (!isAdmin) return;
-        const availableStates = [];
-        nurses.forEach(n => {
-            const offType = getIsNurseOffType(n, selectedDate, nurseStatuses);
-            if (offType !== 'full') {
-                availableStates.push({ nurse: n, offType });
-            }
-        });
-
-        if (availableStates.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
+        const hasWorker = nurses.some(n => getIsNurseOffType(n, selectedDate, nurseStatuses) !== 'full');
+        if (!hasWorker) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         
         saveHistory();
         setIsOptimizing(true);
         
         setTimeout(() => {
           try {
-            const newVisits = [...visits];
-            const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
-            
-            const states = availableStates.map(({nurse: n, offType}) => {
-              const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
-              const last = mine.length > 0 ? mine[mine.length - 1] : null;
-              
-              let totalDuration = 0;
-              let amDuration = 0;
-              let pmDuration = 0;
-              mine.forEach(v => {
-                  const dur = v.duration || 30;
-                  totalDuration += dur;
-                  if (parseTime(v.startTime) < 12 * 60) {
-                      amDuration += dur;
-                  } else {
-                      pmDuration += dur;
-                  }
-              });
-              
-              let startTimeMin = parseTime(n.startTime);
-              let endTimeMin = parseTime(n.endTime || '17:30');
-
-              if (offType === 'AM') {
-                  startTimeMin = parseTime('13:30');
-                  endTimeMin = parseTime('17:30');
-              } else if (offType === 'PM') {
-                  startTimeMin = parseTime('08:00');
-                  endTimeMin = parseTime('12:30');
-              }
-
-              let time = last ? parseTime(last.startTime) + (last.duration || 30) : startTimeMin;
-
-              return { 
-                  id: n.id, 
-                  offType,
-                  time, 
-                  loc: last && last.location ? last.location : (n.startLocation || {x: 50, y: 50}),
-                  totalDuration,
-                  amDuration,
-                  pmDuration,
-                  visitCount: mine.length,
-                  startTimeMin,
-                  endTimeMin
-              };
+            const history = useHistoryAssign ? buildAssignHistory(visits, nurseIdSet, selectedDate) : null;
+            const result = planAutoAssign({
+              visits,
+              nurses,
+              date: selectedDate,
+              offTypeOf: (n) => getIsNurseOffType(n, selectedDate, nurseStatuses),
+              baseTravelTime,
+              history
             });
             
-            let assignedCount = 0;
-
-            todayUnassigned.forEach(visit => {
-              let best = null;
-              
-              const requiresFemale = visit.requiresFemaleNurse;
-              const preferredNurseNames = visit.preferredNurseNames || [];
-              const excludedNurseNames = visit.excludedNurseNames || [];
-              const targetStart = parseTime(visit.startTime);
-              const isAM = targetStart < 12 * 60;
-              const dur = visit.duration || 30;
-
-              const isExcluded = (nurseName) => {
-                  if (!nurseName || excludedNurseNames.length === 0) return false;
-                  return excludedNurseNames.some(ex => nurseName.includes(ex) || ex.includes(nurseName));
-              };
-              
-              for (const prefName of preferredNurseNames) {
-                  if (!prefName) continue;
-                  const prefNurseObj = availableStates.find(({nurse: n}) => (n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name)) && !isExcluded(n.name));
-                  if (prefNurseObj) {
-                      const s = states.find(st => st.id === prefNurseObj.nurse.id);
-                      if (s && targetStart >= s.startTimeMin && (targetStart + dur) <= s.endTimeMin) {
-                          best = s;
-                          break;
-                      }
-                  }
-              }
-              
-              if (!best) {
-                let minTravel = Infinity;
-                let minTotalDur = Infinity;
-                let minBalance = Infinity;
-                states.forEach(s => {
-                  const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                  if (!nDef) return;
-                  if (isExcluded(nDef.name)) return;
-                  if (nDef.isLowPriority) return; 
-                  if (requiresFemale && !nDef.isFemale) return; 
-                  
-                  const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  const expectedEnd = Math.max(s.time + travel, targetStart) + dur;
-                  
-                  if (targetStart >= s.startTimeMin && s.time + travel <= targetStart && expectedEnd <= s.endTimeMin) {
-                      const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                      if (s.totalDuration < minTotalDur || 
-                         (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
-                         (s.totalDuration === minTotalDur && balanceScore === minBalance && travel < minTravel)) {
-                          minTotalDur = s.totalDuration;
-                          minBalance = balanceScore;
-                          minTravel = travel;
-                          best = s;
-                      }
-                  }
-                });
-              }
-              
-              if (!best) {
-                let minTravel = Infinity;
-                let minTotalDur = Infinity;
-                let minBalance = Infinity;
-                states.forEach(s => {
-                  const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                  if (!nDef) return;
-                  if (isExcluded(nDef.name)) return;
-                  if (!nDef.isLowPriority) return; 
-                  if (requiresFemale && !nDef.isFemale) return; 
-                  
-                  const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  const expectedEnd = Math.max(s.time + travel, targetStart) + dur;
-                  
-                  if (targetStart >= s.startTimeMin && s.time + travel <= targetStart && expectedEnd <= s.endTimeMin) {
-                      const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                      if (s.totalDuration < minTotalDur || 
-                         (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
-                         (s.totalDuration === minTotalDur && balanceScore === minBalance && travel < minTravel)) {
-                          minTotalDur = s.totalDuration;
-                          minBalance = balanceScore;
-                          minTravel = travel;
-                          best = s;
-                      }
-                  }
-                });
-              }
-              
-              if (!best) {
-                 let earliest = Infinity;
-                 let isBestLow = true;
-                 let minTotalDur = Infinity;
-                 let minBalance = Infinity;
-                 states.forEach(s => {
-                   const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                   if (!nDef) return;
-                   if (isExcluded(nDef.name)) return;
-                   if (requiresFemale && !nDef.isFemale) return; 
-                   const isLow = !!nDef.isLowPriority;
-                   
-                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                   const arrival = s.time + travel;
-                   const expectedEnd = Math.max(arrival, targetStart) + dur;
-                   const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                   
-                   if (targetStart >= s.startTimeMin && expectedEnd <= s.endTimeMin) {
-                       if (arrival < earliest || 
-                          (arrival === earliest && isBestLow && !isLow) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
-                           earliest = arrival; 
-                           best = s; 
-                           isBestLow = isLow;
-                           minTotalDur = s.totalDuration;
-                           minBalance = balanceScore;
-                       }
-                   }
-                 });
-              }
-              
-              if (!best) {
-                 let earliest = Infinity;
-                 let isBestLow = true;
-                 let minTotalDur = Infinity;
-                 let minBalance = Infinity;
-                 states.forEach(s => {
-                   const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                   if (!nDef) return;
-                   if (isExcluded(nDef.name)) return;
-                   if (requiresFemale && !nDef.isFemale) return; 
-                   const isLow = !!nDef.isLowPriority;
-                   
-                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                   const arrival = s.time + travel;
-                   const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                   
-                   if (targetStart >= s.startTimeMin) {
-                       if (arrival < earliest || 
-                          (arrival === earliest && isBestLow && !isLow) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
-                           earliest = arrival; 
-                           best = s; 
-                           isBestLow = isLow;
-                           minTotalDur = s.totalDuration;
-                           minBalance = balanceScore;
-                       }
-                   }
-                 });
-              }
-
-              if (best) {
-                const vIdx = newVisits.findIndex(v => v.id === visit.id);
-                newVisits[vIdx].nurseId = best.id;
-                const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - best.loc.x, 2) + Math.pow((visit.location?.y || 50) - best.loc.y, 2));
-                const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                
-                best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + dur;
-                best.loc = visit.location || {x: 50, y: 50};
-                best.totalDuration += dur;
-                if (isAM) {
-                    best.amDuration += dur;
-                } else {
-                    best.pmDuration += dur;
-                }
-                best.visitCount++;
-                assignedCount++;
-              }
-            });
-            
-            handleSetVisits(newVisits); 
             setIsOptimizing(false); 
-            if(assignedCount === 0) {
-              setToastMessage("自動編成できる対象がありませんでした");
+            if (result.assignedCount === 0) {
+              setToastMessage(result.failed.length > 0
+                ? `空いている担当者が見つからず、${result.failed.length}件は未割り当てのままです`
+                : "自動編成できる対象がありませんでした");
             } else {
-              setToastMessage("自動編成完了"); 
+              handleSetVisits(result.visits); 
+              const parts = [`自動編成完了: ${result.assignedCount}件を割り当て`];
+              if (result.historyHits > 0) parts.push(`うち${result.historyHits}件は過去の担当実績を反映`);
+              if (result.overtimeCount > 0) parts.push(`${result.overtimeCount}件は時間外`);
+              if (result.failed.length > 0) parts.push(`${result.failed.length}件は空きがなく未割り当てのまま`);
+              setToastMessage(parts.join(" / ")); 
             }
             setShowToast(true);
           } catch (error) {
@@ -1532,7 +1676,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             setToastMessage("自動編成中にエラーが発生しました。");
             setShowToast(true);
           }
-        }, 800);
+        }, 400);
       };
 
       const executeResetAssignments = () => {
@@ -1745,7 +1889,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         setIsLoadingSheet(true);
         try {
           const res = await fetch(sheetUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const txt = await res.text();
+          // 週の基準は必ず「表示中の週の月曜日」にする（開始日が月曜以外でも日付がずれないように）
+          const weekMonday = displayDates[0] || getMondayStr(startDate || getTodayStr());
           const rows = txt.split(/\r\n|\n/);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
@@ -1771,19 +1918,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
               let visitDate = '';
               if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
-                visitDate = dateOrDay.replace(/\//g, '-');
+                visitDate = normalizeDateStr(dateOrDay);
               } else {
                 const targetDay = dayMap[dateOrDay];
-                if (targetDay !== undefined && startDate) {
-                  const start = new Date(startDate);
-                  const startDay = start.getDay();
-                  let diff = targetDay - startDay;
-                  if (diff < 0) diff += 7;
-                  start.setDate(start.getDate() + diff);
-                  visitDate = start.toISOString().split('T')[0];
-                } else {
-                  visitDate = startDate || new Date().toISOString().split('T')[0];
-                }
+                const start = new Date(weekMonday);
+                // 月=0 … 日=6 日分だけ月曜から進める（曜日が読み取れない行は従来どおり月曜に置く）
+                if (targetDay !== undefined) start.setDate(start.getDate() + ((targetDay + 6) % 7));
+                visitDate = start.toISOString().split('T')[0];
               }
 
               result.push({ 
@@ -1806,61 +1947,25 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             }
           }
           
-          const nextVisits = [];
-          let addedCount = 0;
-          let updatedCount = 0;
-          let deletedCount = 0;
+          // 取得結果が空のときは、通信エラーやURL間違いの可能性が高いので何も変更しない
+          if (result.length === 0) {
+            setToastMessage("同期を中止しました：スプレッドシートから利用者を1件も読み取れませんでした（URLや公開設定をご確認ください）。予定は変更していません。");
+            setShowToast(true);
+            return;
+          }
 
-          visits.forEach(v => {
-            if (v.type === 'other' || v.isAccompany) {
-              nextVisits.push(v);
-              return;
-            }
-
-            if (!displayDates.includes(v.date)) {
-              nextVisits.push(v);
-              return;
-            }
-
-            const sheetData = result.find(nv => 
-              normalizeName(v.userName) === normalizeName(nv.userName) && 
-              v.date === nv.date && 
-              v.originalStartTime === nv.originalStartTime
-            );
-
-            if (sheetData) {
-              nextVisits.push({ 
-                ...sheetData, 
-                id: v.id, 
-                nurseId: v.nurseId, 
-                startTime: v.startTime, 
-                customTravelTime: v.customTravelTime,
-                isExcludedFromAutoAssign: v.isExcludedFromAutoAssign 
-              });
-              updatedCount++;
-            } else {
-              deletedCount++;
-            }
-          });
-
-          result.forEach(nv => {
-            const isExisting = visits.some(v => 
-              v.type !== 'other' && !v.isAccompany &&
-              normalizeName(v.userName) === normalizeName(nv.userName) && 
-              v.date === nv.date && 
-              v.originalStartTime === nv.originalStartTime
-            );
-            
-            if (!isExisting) {
-              nextVisits.push(nv);
-              addedCount++;
-            }
-          });
+          const merged = mergeSheetVisits({ visits, sheetRows: result, weekDates: displayDates });
           
-          handleSetVisits(nextVisits); 
-          setToastMessage(`同期完了: 新規追加 ${addedCount}件 / 更新 ${updatedCount}件 / 削除 ${deletedCount}件`); 
+          saveHistory(); // 「元に戻す」で同期前の状態に戻せるようにする
+          handleSetVisits(merged.visits); 
+          const parts = [`新規 ${merged.added}件`, `更新 ${merged.updated}件`];
+          if (merged.retimed > 0) parts.push(`時間変更 ${merged.retimed}件（担当者は引き継ぎ）`);
+          parts.push(`削除 ${merged.deleted}件`);
+          let msg = `同期完了: ${parts.join(" / ")}`;
+          if (merged.deletedAssigned > 0) msg += `。担当者が決まっていた予定が${merged.deletedAssigned}件削除されました（「元に戻す」で復元できます）`;
+          setToastMessage(msg); 
           setShowToast(true);
-        } catch (e) { setToastMessage("データの同期に失敗"); setShowToast(true); } 
+        } catch (e) { console.error(e); setToastMessage("データの同期に失敗しました。予定は変更していません。"); setShowToast(true); } 
         finally { setIsLoadingSheet(false); }
       };
 
@@ -1869,6 +1974,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         setIsLoadingNurseSheet(true);
         try {
           const res = await fetch(nurseSheetUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const txt = await res.text();
           const rows = txt.split(/\r\n|\n/);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
@@ -1907,15 +2013,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                      let dateStr = rawSpec;
                      if (rawSpec.includes('(午前)') || rawSpec.includes('(AM)')) { type = 'AM'; dateStr = rawSpec.replace(/\(午前\)/g, '').replace(/\(AM\)/g, ''); }
                      else if (rawSpec.includes('(午後)') || rawSpec.includes('(PM)')) { type = 'PM'; dateStr = rawSpec.replace(/\(午後\)/g, '').replace(/\(PM\)/g, ''); }
-                     dateStr = dateStr.replace(/\//g, '-'); 
-                     
-                     const dateParts = dateStr.split('-');
-                     if(dateParts.length === 3) {
-                         const y = dateParts[0];
-                         const m = dateParts[1].padStart(2, '0');
-                         const d = dateParts[2].padStart(2, '0');
-                         dateStr = `${y}-${m}-${d}`;
-                     }
+                     dateStr = normalizeDateStr(dateStr);
 
                      if (dateStr) {
                          specificOffDays.push({ date: dateStr, type });
@@ -1940,10 +2038,23 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             }
           }
           
-          handleSetNurses(result); 
-          setToastMessage("看護師名簿の同期成功"); 
+          // 取得結果が空のときは、名簿を空で上書きしない
+          if (result.length === 0) {
+            setToastMessage("更新を中止しました：スプレッドシートから看護師を1名も読み取れませんでした（URLや公開設定をご確認ください）。名簿は変更していません。");
+            setShowToast(true);
+            return;
+          }
+
+          // 同じ名前の看護師はIDを引き継ぐ（＝作成済みのスケジュールがそのまま残る）
+          let seq = 0;
+          const merged = mergeNurseSheet({ nurses, sheetNurses: result, makeId: () => Date.now() + (++seq) });
+          handleSetNurses(merged.nurses); 
+          let msg = `看護師名簿を更新しました（${merged.nurses.length}名）`;
+          if (merged.added > 0) msg += ` / 追加 ${merged.added}名`;
+          if (merged.removed > 0) msg += ` / 名簿から外れた ${merged.removed}名の予定は「未割り当て」に戻ります`;
+          setToastMessage(msg); 
           setShowToast(true);
-        } catch (e) { setToastMessage("名簿の同期に失敗"); setShowToast(true); } 
+        } catch (e) { console.error(e); setToastMessage("名簿の同期に失敗しました。名簿は変更していません。"); setShowToast(true); } 
         finally { setIsLoadingNurseSheet(false); }
       };
 
@@ -2052,7 +2163,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
       };
 
       return (
-        <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden" onClick={() => setContextMenu(null)} onContextMenu={() => setContextMenu(null)}>
+        <div className="flex flex-col md:flex-row app-shell bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden" onClick={() => setContextMenu(null)} onContextMenu={() => setContextMenu(null)}>
           <aside className={`bg-slate-900 text-slate-300 hidden md:flex flex-col shrink-0 border-r border-slate-800 transition-all duration-300 relative ${isSidebarOpen ? 'w-72' : 'w-20'}`}>
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -2156,7 +2267,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             )}
           </aside>
 
-          <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
+          <header className="md:hidden bg-slate-900 text-white px-4 py-2 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
             <div className="flex items-center gap-2 font-black text-lg">
               <div 
                 className="flex items-center gap-2 select-none"
@@ -2178,18 +2289,46 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 <span className="bg-slate-700 text-slate-400 border border-slate-600 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">閲覧</span>
               )}
             </div>
-            <div className="flex gap-0.5">
-              <button onClick={() => setActiveTab('overview')} className={`p-2 rounded-xl ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Columns size={20} /></button>
-              <button onClick={() => setActiveTab('schedule')} className={`p-2 rounded-xl ${activeTab === 'schedule' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Calendar size={20} /></button>
-              <button onClick={() => setActiveTab('visits')} className={`p-2 rounded-xl ${activeTab === 'visits' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Users size={20} /></button>
-              <button onClick={() => setActiveTab('nurses')} className={`p-2 rounded-xl ${activeTab === 'nurses' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><UserCog size={20} /></button>
-              <button onClick={() => setActiveTab('report')} className={`p-2 rounded-xl ${activeTab === 'report' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><BarChart3 size={20} /></button>
+            <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400">
+              <div className={`w-2 h-2 rounded-full ${db && user ? 'bg-emerald-400' : 'bg-slate-500'}`}></div>
+              <span>{db && user ? (isSyncing ? '読込中' : '同期中') : '接続中...'}</span>
             </div>
           </header>
 
           <main className="flex-1 flex flex-col overflow-hidden relative">
+            {activeTab !== 'report' && (
+              <div className="md:hidden bg-white border-b border-slate-200 px-2 pt-2 pb-1.5 z-40 shrink-0">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1">
+                    <button onClick={handlePrevWeek} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="前週"><ChevronsLeft size={18} /></button>
+                    <button onClick={handlePrevDay} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="前日"><ChevronLeft size={18} /></button>
+                    <button onClick={handleGoToToday} className="px-3 h-9 rounded-lg flex items-center justify-center text-teal-700 bg-teal-50 border border-teal-200 font-black text-xs" aria-label="今日">今日</button>
+                    <button onClick={handleNextDay} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="翌日"><ChevronRight size={18} /></button>
+                    <button onClick={handleNextWeek} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="次週"><ChevronsRight size={18} /></button>
+                  </div>
+                  <span className="text-[11px] font-black text-slate-500 pr-1">
+                    {displayDates.length > 0 ? `${displayDates[0].slice(5).replace('-', '/')}〜${displayDates[6].slice(5).replace('-', '/')}` : ''}
+                  </span>
+                </div>
+                <div className="grid grid-cols-7 gap-1">
+                  {displayDates.map((dateStr) => {
+                    const d = new Date(dateStr);
+                    const dow = d.getDay();
+                    const isSelected = selectedDate === dateStr;
+                    const isToday = dateStr === getTodayStr();
+                    return (
+                      <button key={dateStr} onClick={() => handleDateChange(dateStr)} className={`h-11 rounded-xl flex flex-col items-center justify-center leading-none transition-colors ${isSelected ? 'bg-teal-600 text-white shadow-md shadow-teal-600/30' : isToday ? 'bg-teal-50 border border-teal-300 text-slate-700' : 'bg-white border border-slate-200 text-slate-600'}`}>
+                        <span className={`text-[10px] font-black mb-0.5 ${isSelected ? 'text-teal-100' : dow === 0 ? 'text-red-400' : dow === 6 ? 'text-blue-400' : 'text-slate-400'}`}>{JS_DAYS[dow]}</span>
+                        <span className="text-sm font-black">{d.getDate()}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {activeTab === 'schedule' ? (
-              <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center justify-between shrink-0 sticky top-0 md:relative">
+              <div className="hidden md:flex bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex-col md:flex-row md:items-center justify-between shrink-0 sticky top-0 md:relative">
                 <div className="flex items-center gap-2 pr-2">
                   <button onClick={handlePrevDay} className="w-10 h-10 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200"><ChevronLeft size={20} /></button>
                   <div className="px-4 h-10 bg-white rounded-xl border border-slate-200 font-black text-slate-700 text-sm shadow-sm flex items-center justify-center gap-2 min-w-[120px]">
@@ -2201,7 +2340,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 </div>
               </div>
             ) : activeTab !== 'report' ? (
-              <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
+              <div className="hidden md:flex bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
                 <div ref={scrollRefHeader1} className="flex items-center gap-3 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2 cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
                   <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 pointer-events-none">
                     <CalendarDays size={16} className="text-slate-500" />
@@ -2248,15 +2387,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             ) : null}
 
-            <div className="flex-1 overflow-auto p-4 md:p-10">
+            <div className="flex-1 overflow-auto p-2.5 md:p-10">
               {activeTab === 'overview' && (
-                <div className="flex flex-col h-full space-y-4 md:space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 text-sm">
+                <div className="flex flex-col h-full space-y-2 md:space-y-6">
+                  <div className={`${isAdmin ? 'flex' : 'hidden md:flex'} flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4 shrink-0 text-sm`}>
                     <div className="flex flex-wrap items-center gap-4">
-                      <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
+                      <h1 className="hidden md:block text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
                         {formatDateLabel(selectedDate)}
                       </h1>
-                      <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
+                      <div className={`${isAdmin ? 'flex' : 'hidden md:flex'} items-center gap-3 bg-white px-3 md:px-4 py-1 md:py-2 rounded-2xl border border-slate-200 shadow-sm`}>
                         <Clock size={16} className="text-slate-400" />
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
                         <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 disabled:bg-transparent read-only:focus:ring-0"/>
@@ -2327,6 +2466,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             リセット
                           </button>
                           <button 
+                            onClick={() => setUseHistoryAssign(v => !v)}
+                            className={`border px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${useHistoryAssign ? 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'}`}
+                            title="ONにすると、自動編成のときに「過去にその利用者を担当した看護師」を優先します"
+                          >
+                            <History size={16} />
+                            実績反映 {useHistoryAssign ? 'ON' : 'OFF'}
+                          </button>
+                          <button 
                             onClick={() => {
                               if (isOptimizing || unassignedCount === 0 || nurses.length === 0) return;
                               handleAutoAssign();
@@ -2343,14 +2490,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
                   {renderDailyMemo()}
 
-                  <div className="flex-1 bg-white rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
-                    <div className="overflow-auto relative flex-1 timeline-shadow">
+                  <div className="flex-1 bg-white rounded-2xl md:rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
+                    <div ref={timelineScrollRef} className="overflow-auto relative flex-1 timeline-shadow">
                       <div className="min-w-max flex flex-col">
                         <div className="flex sticky top-0 z-[60] bg-slate-50/95 backdrop-blur-sm border-b border-slate-200">
                           <div className="w-10 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[9px] md:text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
-                          <div className="w-32 md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50">
-                             <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1">未割り当て</div>
-                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[10px] md:text-[11px] font-black px-2 md:px-3 py-0.5 md:py-1 rounded-full`}>{unassignedCount}件</div>
+                          <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50`}>
+                             <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1 text-center leading-tight">{unassignedCount > 0 ? '未割り当て' : <><span className="md:hidden">未割当</span><span className="hidden md:inline">未割り当て</span></>}</div>
+                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[10px] md:text-[11px] font-black px-1.5 md:px-3 py-0.5 md:py-1 rounded-full whitespace-nowrap`}>{unassignedCount}件</div>
                           </div>
                           {nurses.map(nurse => {
                             const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
@@ -2360,8 +2507,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             const assigned = allSchedules[nurse.id]?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-10 md:w-14 bg-slate-100/50' : 'w-36 md:w-48 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
-                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-2 md:px-3 mb-1'} `}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-10 md:w-14 bg-slate-100/50' : 'w-[6.75rem] md:w-48 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
+                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-1.5 md:px-3 mb-1'} `}>
                                    <button 
                                      type="button"
                                      onClick={() => toggleNurseLock(nurse.id, selectedDate)}
@@ -2375,7 +2522,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                      type="button"
                                      onClick={() => toggleNurseStatus(nurse.id, selectedDate, offType)}
                                      disabled={isLocked || !isAdmin}
-                                     className={`text-[8px] md:text-[9px] font-black px-1 md:px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
+                                     className={`text-[10px] md:text-[9px] font-black px-1 md:px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
                                      title={!isAdmin ? "閲覧モード" : isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
                                    >
                                      {offType === 'full' ? "全休" : offType === 'AM' ? "午前休" : offType === 'PM' ? "午後休" : "出勤"}
@@ -2387,12 +2534,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                   <div className="flex flex-col items-center">
                                     <div className="font-black text-slate-800 text-xs md:text-sm flex items-center gap-1 md:gap-2">
                                         <div className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
-                                        <span className="truncate max-w-[70px] md:max-w-[80px]" title={nurse.name}>{nurse.name}</span>
+                                        <span className="truncate max-w-[78px] md:max-w-[80px]" title={nurse.name}>{nurse.name}</span>
                                     </div>
                                     <div className="flex flex-wrap items-center justify-center gap-1 mt-1">
                                         {offType === 'AM' && <span className="text-[8px] md:text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1 md:px-1.5 rounded-full">午前休</span>}
                                         {offType === 'PM' && <span className="text-[8px] md:text-[9px] font-black text-orange-500 bg-orange-50 border border-orange-200 px-1 md:px-1.5 rounded-full">午後休</span>}
-                                        <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
+                                        <span className="text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
                                     </div>
                                   </div>
                                 )}
@@ -2406,12 +2553,18 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                               <div key={i} className="absolute w-full text-right pr-1 md:pr-3 text-[9px] md:text-[11px] font-black text-slate-300" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{(START_HOUR + i).toString().padStart(2, '0')}:00</div>
                             ))}
                           </div>
+                          {selectedDate === getTodayStr() && nowMinutes >= START_HOUR * 60 && nowMinutes <= END_HOUR * 60 && (
+                            <div className="absolute left-0 right-0 pointer-events-none z-[55]" style={{ top: `${getTop(nowMinutes)}px` }}>
+                              <div className="border-t-2 border-red-400/80"></div>
+                              <div className="sticky left-0 inline-block -translate-y-1/2 bg-red-500 text-white text-[9px] md:text-[10px] font-black px-1 py-0.5 rounded-r leading-none">{formatTime(nowMinutes)}</div>
+                            </div>
+                          )}
                           <div className="absolute left-10 md:left-20 right-0 inset-y-0 pointer-events-none z-0">
                             {Array.from({ length: (END_HOUR - START_HOUR) * 4 }).map((_, i) => (
                               <div key={i} className={`absolute w-full border-t ${i % 4 === 0 ? 'border-slate-200' : i % 2 === 0 ? 'border-slate-100' : 'border-slate-50 border-dashed'}`} style={{ top: i * 15 * PIXELS_PER_MINUTE }}></div>
                             ))}
                           </div>
-                          <div className="w-32 md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
+                          <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10`} onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {unassignedVisitsWithLayout.map(v => {
                                const top = getTop(parseTime(v.startTime)), h = v.duration * PIXELS_PER_MINUTE;
                                const leftOffset = v._col * 15; // スマホ時は重なり幅を狭く
@@ -2430,6 +2583,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                    onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
+                                   onClick={(e) => { if (!isAdmin) handleContextMenu(e, v); }}
                                    onContextMenu={(e) => handleContextMenu(e, v)}
                                    onTouchStart={(e) => handleTouchStart(e, v)}
                                    onTouchMove={handleTouchEndOrMove}
@@ -2464,9 +2618,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                    
                                    <div className="flex justify-between items-end mt-auto">
                                      <div className="flex flex-col gap-0.5">
-                                       <span className="text-[8px] md:text-[9px] text-slate-400 font-bold leading-none">{v.startTime}</span>
+                                       <span className="text-[10px] md:text-[9px] text-slate-500 font-bold leading-none">{v.startTime}</span>
                                      </div>
-                                     <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{v.duration}分</span>
+                                     <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{v.duration}分</span>
                                    </div>
 
                                    {(v.requiresFemaleNurse || v.comment || v.isAccompany) && (
@@ -2487,7 +2641,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             const assigned = sch?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-10 md:w-14 bg-slate-100/30' : 'w-36 md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-10 md:w-14 bg-slate-100/30' : 'w-[6.75rem] md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
                                   const top = getTop(parseTime(item.actualStartTime)), h = item.duration * PIXELS_PER_MINUTE;
                                   let prevDep = idx === 0 ? parseTime(sch.calculatedStartTime) : parseTime(assigned[idx-1].departureTime);
@@ -2515,6 +2669,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
+                                        onClick={(e) => { if (!isAdmin) handleContextMenu(e, item); }}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2523,7 +2678,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
 
-                                        <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                        <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: nurse.color }}>{idx + 1}</div>
                                         
                                         <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
@@ -2551,9 +2706,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         
                                         <div className="flex justify-between items-end mt-auto">
                                           <div className="flex flex-col gap-0">
-                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
+                                            <span className={`text-[11px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
                                           </div>
-                                          <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
+                                          <span className="flex items-center gap-0.5">
+                                            {item.comment && <MessageSquare size={10} className="md:hidden text-amber-500" />}
+                                            {item.isAccompany && <UserPlus size={10} className="md:hidden text-fuchsia-500" />}
+                                            <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
+                                          </span>
                                         </div>
                                       </div>
                                     </React.Fragment>
@@ -2572,12 +2731,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               {activeTab === 'schedule' && (
                 <div className="flex flex-col h-full max-w-full space-y-3 md:space-y-6 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
-                    <div className="flex items-end md:items-center gap-2 md:gap-3">
+                    <div className="hidden md:flex items-end md:items-center gap-2 md:gap-3">
                       <h1 className="text-xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認</h1>
                       <p className="text-xs md:text-sm font-bold text-slate-400 uppercase tracking-widest">{formatDateLabel(selectedDate)}</p>
                     </div>
                     <div ref={scrollRefSchedule} className="flex gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pc-scrollable bg-slate-200/50 p-1 md:p-2 md:pb-3 rounded-xl md:rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
-                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-3 md:px-6 py-1.5 md:py-3 rounded-lg md:rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-md md:shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
+                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-3 md:px-6 py-2 md:py-3 rounded-lg md:rounded-2xl text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurse?.id === n.id ? 'bg-white text-teal-700 shadow-md md:shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
                   
@@ -2613,6 +2772,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                 元に戻す
                               </button>
                            )}
+                           {isAdmin && (
                            <button 
                               onClick={() => {
                                 if (isOptimizing || unassignedCount === 0 || nurses.length === 0) return;
@@ -2623,9 +2783,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                               <RefreshCw size={14} className={`md:w-4 md:h-4 ${isOptimizing ? "animate-spin" : ""}`} />
                               {autoAssignFunnyMessage ? autoAssignFunnyMessage : (isOptimizing ? "編成中..." : "自動編成")}
                             </button>
+                           )}
                         </div>
                       </div>
 
+                      {selectedNurseOffType !== 'work' && (
+                        <div className={`mb-3 px-3 py-2 rounded-xl text-xs font-black border shrink-0 ${selectedNurseOffType === 'full' ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          {selectedNurse.name} さんはこの日 {selectedNurseOffType === 'full' ? 'お休み' : selectedNurseOffType === 'AM' ? '午前休（13:30〜）' : '午後休（〜12:30）'} です
+                        </div>
+                      )}
                       <div className="flex-1 overflow-y-auto hide-scrollbar">
                          <div className="flex flex-col md:flex-row md:flex-wrap items-stretch md:items-start gap-y-0 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-1 md:px-0">
                             
@@ -2703,8 +2869,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                     <div className="flex md:contents w-full">
                                       {/* スマホ用左側: 時刻 */}
                                       <div className="md:hidden flex flex-col items-end justify-between w-12 pr-2 relative z-10 py-1.5 shrink-0 mobile-dynamic-h">
-                                         <span className={`text-[11px] font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
-                                         <span className="text-[9px] text-slate-400 font-bold">{item.departureTime}</span>
+                                         <span className={`text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
+                                         <span className="text-[10px] text-slate-400 font-bold">{item.departureTime}</span>
                                       </div>
                                       
                                       {/* スマホ用: 丸い番号ピン */}
@@ -2715,6 +2881,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                       {/* カード本体 */}
                                       <div 
                                         className={`flex-1 flex flex-col justify-between p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 mobile-dynamic-h ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')} ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''}`}
+                                        onClick={(e) => { if (!isAdmin) handleContextMenu(e, item); }}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2769,12 +2936,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                           </div>
                                         )}
 
+                                        {/* スマホ用：所要時間・住所・コメント本文をカード内に表示 */}
+                                        <div className="md:hidden flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-bold text-slate-500">
+                                          <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-black leading-none">{item.duration}分</span>
+                                          {item.address && <span className="flex items-center gap-0.5 truncate max-w-full"><MapPin size={10} className="shrink-0 text-blue-400"/><span className="truncate">{item.address}</span></span>}
+                                        </div>
+                                        {item.comment && (
+                                          <p className="md:hidden mt-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 leading-snug whitespace-pre-wrap" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.comment}</p>
+                                        )}
+
                                         {/* タグ類 */}
                                         {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
-                                          <div className="hidden md:flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
-                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                            {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                            {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
+                                          <div className="flex flex-wrap gap-1 mt-1 md:mt-2 md:border-t border-slate-50 md:pt-1.5">
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[10px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.isAccompany && <span className="text-[10px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                            {item.comment && <span className="hidden md:flex text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
                                           </div>
                                         )}
                                       </div>
@@ -2888,21 +3064,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                           <span className="text-slate-400 uppercase font-black">{sortedVisits.length}件</span>
                         </div>
                         <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse min-w-[700px]">
+                          <table className="w-full text-left border-collapse min-w-[560px] md:min-w-[700px]">
                             <thead>
                               <tr className="bg-white text-slate-400 text-[11px] uppercase tracking-widest border-b border-slate-100">
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
-                                <th className="p-6">名称/氏名</th>
-                                <th className="p-6">所要時間</th>
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
-                                {isAdmin && <th className="p-6 text-right">操作</th>}
+                                <th className="p-3 md:p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                <th className="p-3 md:p-6">名称/氏名</th>
+                                <th className="p-3 md:p-6">所要時間</th>
+                                <th className="p-3 md:p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                {isAdmin && <th className="p-3 md:p-6 text-right">操作</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
                               {sortedVisits.map(v => (
                                 <tr key={v.id} className={`transition-colors group ${v.isAccompany ? 'bg-fuchsia-50/30 hover:bg-fuchsia-50/60' : 'hover:bg-slate-50/80'}`}>
-                                  <td className="p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
-                                  <td className="p-6 font-bold text-slate-700">
+                                  <td className="p-3 md:p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
+                                  <td className="p-3 md:p-6 font-bold text-slate-700">
                                     {v.type === 'other' && <Briefcase size={14} className="inline mr-1 text-indigo-500" />}
                                     {v.userName}
                                     <div className="flex flex-wrap gap-1 mt-1.5">
@@ -2912,15 +3088,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                       {v.excludedNurseNames && v.excludedNurseNames.length > 0 && <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap">除外: {v.excludedNurseNames.join(', ')}</span>}
                                     </div>
                                   </td>
-                                  <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
-                                  <td className="p-6">
-                                    <select disabled={!isAdmin} value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5 disabled:appearance-none disabled:bg-transparent disabled:border-none disabled:p-0 disabled:text-sm">
+                                  <td className="p-3 md:p-6 font-bold text-slate-400">{v.duration}分</td>
+                                  <td className="p-3 md:p-6">
+                                    <select disabled={!isAdmin} value={isVisitUnassigned(v, nurseIdSet) ? 'unassigned' : v.nurseId} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5 disabled:appearance-none disabled:bg-transparent disabled:border-none disabled:p-0 disabled:text-sm">
                                       <option value="unassigned">-- 未指定 --</option>
                                       {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
                                     </select>
                                   </td>
                                   {isAdmin && (
-                                    <td className="p-6 text-right">
+                                    <td className="p-3 md:p-6 text-right">
                                       <button onClick={(e) => handleDuplicateVisit(v, e)} className="text-slate-400 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
                                       <button onClick={(e) => handleDuplicateAccompany(v, e)} className="text-slate-400 hover:text-fuchsia-500 p-2 rounded-lg hover:bg-fuchsia-50 transition-colors" title="同行複製"><UserPlus size={18} /></button>
                                       <button onClick={() => setEditingVisit(v)} className="text-slate-400 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="編集"><Pencil size={18} /></button>
@@ -3040,6 +3216,37 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     </div>
                   </div>
 
+                  {storageInfo && (
+                    <div className="bg-white p-5 md:p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Database size={14}/> 保存データ量</p>
+                          <div className="flex items-end gap-2 mb-2">
+                            <span className={`text-2xl font-black ${storageInfo.percent >= 80 ? 'text-red-500' : 'text-slate-800'}`}>{Math.round(storageInfo.bytes / 1024).toLocaleString()}<span className="text-xs ml-0.5 text-slate-400">KB</span></span>
+                            <span className="text-xs font-bold text-slate-400 mb-1">/ 上限 約1,024KB（{storageInfo.percent}%）</span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${storageInfo.percent >= 80 ? 'bg-red-500' : storageInfo.percent >= 60 ? 'bg-amber-400' : 'bg-teal-500'}`} style={{ width: `${Math.max(1, storageInfo.percent)}%` }}></div>
+                          </div>
+                          <p className="text-[11px] font-bold text-slate-500 mt-2 leading-relaxed">
+                            保存中の予定: {storageInfo.count.toLocaleString()}件
+                            {storageInfo.oldest && <>（{storageInfo.oldest.replace(/-/g, '/')} 〜 {storageInfo.newest.replace(/-/g, '/')}）</>}
+                            {storageInfo.monthsLeft !== null && <> ／ 今のペースなら、あと約{storageInfo.monthsLeft >= 24 ? `${Math.floor(storageInfo.monthsLeft / 12)}年以上` : `${storageInfo.monthsLeft}か月`}保存できます</>}
+                          </p>
+                          {storageInfo.unknownNurse > 0 && (
+                            <p className="text-[11px] font-bold text-amber-600 mt-1 leading-relaxed">※ 担当者が現在の名簿に見つからない予定が {storageInfo.unknownNurse.toLocaleString()}件あります（過去の名簿更新で担当者との紐づけが外れたもの。「未割り当て」として表示されます）</p>
+                          )}
+                        </div>
+                        {isAdmin && (
+                          <button onClick={handleDownloadBackup} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0" title="全データをファイルとして端末に保存します">
+                            <Download size={16} />
+                            バックアップを保存
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                     <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
                       <span>日別訪問件数</span>
@@ -3128,6 +3335,22 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             </div>
           </main>
 
+          {/* スマホ用：下部のタブ切り替え（親指が届きやすく、名前も読める） */}
+          <nav className="md:hidden shrink-0 bg-white border-t border-slate-200 flex justify-around px-1 pt-1 z-50" style={{ paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))' }}>
+            {[
+              { key: 'overview', label: '全体', Icon: Columns },
+              { key: 'schedule', label: '個別', Icon: Calendar },
+              { key: 'visits', label: '利用者', Icon: Users },
+              { key: 'nurses', label: '看護師', Icon: UserCog },
+              { key: 'report', label: '集計', Icon: BarChart3 }
+            ].map(({ key, label, Icon }) => (
+              <button key={key} onClick={() => setActiveTab(key)} className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl transition-colors ${activeTab === key ? 'text-teal-600' : 'text-slate-400'}`}>
+                <Icon size={22} strokeWidth={activeTab === key ? 2.5 : 2} />
+                <span className="text-[10px] font-black leading-none">{label}</span>
+              </button>
+            ))}
+          </nav>
+
           {/* コンテキストメニュー（PC用・スマホ長押し用） */}
           {contextMenu && (
             <div 
@@ -3140,8 +3363,20 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 style={{ top: contextMenu.mouseY, left: contextMenu.mouseX }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="px-4 py-2 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">
-                  {contextMenu.visit.userName}
+                <div className="px-4 py-2.5 border-b border-slate-100">
+                  <div className="text-sm font-black text-slate-800 truncate">{contextMenu.visit.userName}</div>
+                  <div className="text-xs font-bold text-slate-500 mt-0.5">
+                    {contextMenu.visit.startTime}〜{formatTime(parseTime(contextMenu.visit.startTime) + (contextMenu.visit.duration || 0))}（{contextMenu.visit.duration}分）
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-400 mt-0.5 truncate">
+                    担当: {nurses.find(n => n.id === contextMenu.visit.nurseId)?.name || '未割り当て'}
+                  </div>
+                  {(contextMenu.visit.requiresFemaleNurse || contextMenu.visit.isAccompany) && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {contextMenu.visit.requiresFemaleNurse && <span className="text-[10px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                      {contextMenu.visit.isAccompany && <span className="text-[10px] bg-fuchsia-100 text-fuchsia-600 px-1.5 py-0.5 rounded font-black border border-fuchsia-200">同行</span>}
+                    </div>
+                  )}
                 </div>
                 
                 {contextMenu.visit.comment && (
@@ -3204,7 +3439,11 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     onClick={() => setContextMenu(null)}
                     className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-blue-50 flex items-center gap-3 text-blue-600 transition-colors ${isAdmin ? 'border-t border-slate-100' : ''}`}
                   >
-                    <MapPin size={16} className="text-blue-500" />マップで開く
+                    <MapPin size={16} className="text-blue-500 shrink-0" />
+                    <span className="flex flex-col min-w-0">
+                      <span>マップで開く</span>
+                      <span className="text-[10px] font-bold text-slate-400 truncate">{contextMenu.visit.address}</span>
+                    </span>
                   </a>
                 ) : (
                   <div className={`w-full text-left px-4 py-3 text-sm font-bold text-slate-400 flex items-center gap-3 ${isAdmin ? 'border-t border-slate-100' : ''}`}>
@@ -3383,16 +3622,16 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           )}
 
           {showToast && (
-            <div onClick={() => setShowToast(false)} className="fixed bottom-6 right-6 md:bottom-10 md:right-10 glass-effect text-slate-900 px-6 py-4 md:px-8 md:py-5 rounded-[1.5rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 animate-bounce z-[100] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]">
+            <div onClick={() => setShowToast(false)} className="fixed bottom-20 right-3 left-3 md:left-auto md:bottom-10 md:right-10 glass-effect text-slate-900 px-4 py-3 md:px-8 md:py-5 rounded-[1.25rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 z-[100] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]">
               <div className="bg-emerald-500 p-1.5 md:p-2 rounded-lg md:rounded-xl text-white shadow-lg shadow-emerald-200 shrink-0">
                 <CheckCircle2 size={20} className="md:w-6 md:h-6" />
               </div>
-              <span className="font-black text-xs md:text-sm tracking-tight">{toastMessage}</span>
+              <span className="font-black text-xs md:text-sm tracking-tight leading-relaxed">{toastMessage}</span>
             </div>
           )}
           
           {seasonalEffect && (
-            <div className="fixed bottom-24 right-6 md:bottom-28 md:right-10 z-[90] animate-[bounce_3s_infinite] pointer-events-none flex flex-col items-center transition-all duration-500 hover:scale-110">
+            <div className="fixed bottom-36 right-6 md:bottom-28 md:right-10 z-[90] animate-[bounce_3s_infinite] pointer-events-none flex flex-col items-center transition-all duration-500 hover:scale-110">
               <div className="text-4xl md:text-5xl drop-shadow-2xl">{seasonalEffect.icon}</div>
               <div className="text-[10px] font-black text-slate-600 bg-white/90 border border-slate-200 px-3 py-1 rounded-full mt-2 shadow-lg backdrop-blur-sm whitespace-nowrap">
                 {seasonalEffect.text}
