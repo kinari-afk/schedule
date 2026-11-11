@@ -502,6 +502,79 @@ const errs=[];
   errs.push(...r.errors); await r.browser.close();
 }
 
+// ===== J. キャンセルと臨時の訪問 =====
+{
+  const { seed } = mk();
+  let userCsvBody='';
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN, csv:{ 'users.csv': ()=>userCsvBody } });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  const menu = async (name, item) => { await page.locator('.visit-card:visible', { hasText:name }).first().click({ button:'right', position:{x:7,y:10} }); await page.waitForTimeout(200); await page.locator('div.fixed button', { hasText:item }).first().click(); await page.waitForTimeout(300); };
+  const badge = () => page.locator('button[title="未割り当ての一覧を開く"]').innerText();
+  assert((await badge()).includes('12件'));
+  // --- キャンセルにする（理由つき）
+  await menu('宇野','キャンセルにする');
+  await page.locator('form input[name=note]').fill('入院のため');
+  await page.locator('form button[type=submit]', { hasText:'キャンセルにする' }).click();
+  await page.waitForSelector('text=の予定をキャンセルにしました');
+  let vs = parse((await r.store()).visits);
+  const c = vs.find(v=>v.userName.startsWith('宇野') && v.date==='2026-11-11');
+  assert.equal(c.isCancelled,true); assert.equal(c.cancelNote,'入院のため'); assert.equal(c.nurseId,null);
+  assert((await badge()).includes('11件'),'未割り当ての件数にキャンセルが含まれている');
+  assert(await page.locator('button[title="キャンセルの一覧を開く"]').innerText().then(x=>x.includes('1件')));
+  assert.equal(await page.locator('.visit-card[data-cancelled=true]').count(),1);
+  // --- 自動編成：キャンセルの予定は割り振られない
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  const toast = await page.locator('text=自動編成完了').innerText();
+  vs = parse((await r.store()).visits);
+  assert.equal(vs.find(v=>v.id===c.id).nurseId,null,'キャンセルの予定が自動編成された');
+  assert.equal(vs.filter(v=>v.date==='2026-11-11' && v.nurseId==null).length,1);
+  assert(toast.includes('11件を割り当て'),toast);
+  await page.screenshot({ path: shot('cancelled.png') });
+  // --- 週まとめて編成の対象日からも外れる（今日は対象外になる）
+  assert(!(await page.locator('button', { hasText:'週まとめて編成' }).innerText()).includes('3日'));
+  // --- 同期してもキャンセルは保たれる
+  const dayName=['日','月','火','水','木','金','土'];
+  userCsvBody = ['氏名,曜日,開始,所要,限定,優先1,優先2,除外,住所,状態', ...vs.filter(v=>v.date>=MON && v.date<='2026-11-15').map(v=>[v.userName.replace(' 様',''),dayName[new Date(v.date).getDay()],v.originalStartTime,v.duration,v.requiresFemaleNurse?'女性':'',(v.preferredNurseNames||[])[0]||'','',(v.excludedNurseNames||[]).join('・'),v.address,''].join(','))].join('\n');
+  // --- 臨時の訪問を追加（登録済みの利用者 → 住所を引き継ぐ）
+  await side(page,'全体スケジュール'); await page.waitForTimeout(200);
+  await page.locator('button', { hasText:'予定を追加' }).click(); await page.waitForTimeout(300);
+  await page.locator('form button', { hasText:'臨時の訪問' }).click();
+  await page.locator('form input[name=title]').fill('根本 太郎 様');
+  await page.locator('form input[name=startTime]').fill('16:00');
+  await page.locator('form input[name=comment]').fill('発熱のため');
+  await page.screenshot({ path: shot('add-visit.png') });
+  await page.locator('form button[type=submit]', { hasText:'追加する' }).click();
+  await page.waitForSelector('text=臨時の訪問を追加しました');
+  vs = parse((await r.store()).visits);
+  const extra = vs.find(v=>v.isManual);
+  assert.equal(extra.type,undefined); assert.equal(extra.address,'東京都架空区24丁目'); assert.equal(extra.comment,'発熱のため'); assert.equal(extra.nurseId,null); assert.equal(extra.startTime,'16:00');
+  assert((await badge()).includes('1件'));
+  // 臨時の訪問は自動編成で割り振られる
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了: 1件');
+  // --- 同期：キャンセルは保たれ、臨時の訪問（シートに無い）は消えない
+  await side(page,'利用者管理'); await page.waitForTimeout(300);
+  await page.locator('button', { hasText:'同期を実行' }).click(); await page.waitForSelector('text=同期完了');
+  const sync = await page.locator('text=同期完了').innerText();
+  vs = parse((await r.store()).visits);
+  assert(sync.includes('削除 0件'),sync);
+  assert.equal(vs.find(v=>v.id===c.id).isCancelled,true); assert(vs.find(v=>v.id===extra.id)?.nurseId!=null,'臨時の訪問が同期で消えた、または担当が外れた');
+  // --- 集計：キャンセルは訪問件数に含めず別に数える。臨時の訪問は数える
+  await side(page,'集計レポート'); await page.waitForTimeout(500);
+  assert.equal((await page.locator('p:has-text("キャンセル件数") + p').innerText()).replace(/\s/g,''),'1件');
+  const total = parseInt((await page.locator('p:has-text("月間総訪問件数") + p').innerText()));
+  assert.equal(total, vs.filter(v=>v.date.startsWith('2026-11') && v.type!=='other' && !v.isCancelled).length);
+  // --- キャンセルを取り消す（一覧から）
+  await side(page,'全体スケジュール'); await page.waitForTimeout(300);
+  await page.locator('button[title="キャンセルの一覧を開く"]').click(); await page.waitForTimeout(300);
+  await page.locator('div.fixed button', { hasText:'取り消す' }).click();
+  await page.waitForSelector('text=のキャンセルを取り消しました');
+  vs = parse((await r.store()).visits);
+  assert.equal(vs.find(v=>v.id===c.id).isCancelled,undefined);
+  console.log('J OK: キャンセル（件数・自動編成の対象外・同期で保持・集計・取り消し）と臨時の訪問（引き継ぎ・同期で保持）');
+  errs.push(...r.errors); await r.browser.close();
+}
+
 const real = errs.filter(e=>!e.includes('cdn.tailwindcss.com should not be used')&&!e.includes('in-browser Babel')&&!e.includes('形式が違います')&&!e.includes('CSVではなくWebページ'));
 if (real.length) { console.error('画面でエラーが発生:', real); process.exit(1); }
 console.log('ALL PASS');
