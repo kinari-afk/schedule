@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>訪問看護ルート最適化アプリ</title>
   
   <!-- ファビコン（波形アイコンのSVGデータ） -->
@@ -39,6 +39,27 @@
       input, select, textarea { font-size: 16px !important; }
     }
     
+    /* 印刷・PDF用：画面用の表示を隠し、印刷専用の表だけを出す */
+    .print-only { display: none; }
+    @media print {
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { background: #fff !important; }
+      .app-shell { height: auto !important; overflow: visible !important; display: block !important; background: #fff !important; }
+      .app-shell > *:not(.print-only) { display: none !important; }
+      .print-only { display: block; color: #000; font-family: sans-serif; }
+      .print-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44mm, 1fr)); gap: 3mm; }
+      .print-box { border: 0.3mm solid #666; border-radius: 1.5mm; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
+      .print-box h3 { margin: 0; padding: 1mm 2mm; font-size: 10pt; font-weight: 700; background: #e5e7eb; border-bottom: 0.3mm solid #666; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .print-row { display: flex; gap: 2mm; padding: 1mm 2mm; font-size: 9pt; border-bottom: 0.2mm dotted #999; line-height: 1.35; }
+      .print-row:last-child { border-bottom: none; }
+      .print-time { white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .print-note { font-size: 7.5pt; color: #333; white-space: pre-wrap; }
+      .print-empty { padding: 1.5mm 2mm; font-size: 8pt; color: #666; }
+    }
+
+    /* スマホのアドレスバー分を除いた「実際に見えている高さ」に合わせる */
+    .app-shell { height: 100vh; height: 100dvh; }
+
     .glass-effect { backdrop-filter: blur(8px); background-color: rgba(255, 255, 255, 0.8); }
     .timeline-shadow { box-shadow: inset -10px 0 10px -10px rgba(0,0,0,0.1); }
     
@@ -76,11 +97,11 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
-    import { getFirestore, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+    import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
     import * as _LZ from 'https://esm.sh/lz-string@1.5.0';
     const LZString = (_LZ && _LZ.default && _LZ.default.compressToBase64) ? _LZ.default : _LZ;
 
@@ -132,10 +153,22 @@
       }
       if (app) {
         auth = getAuth(app);
-        db = getFirestore(app);
+        // 読み込んだデータを端末にも保存しておく（電波がない場所でも、最後に読み込んだ内容を表示できる）
+        try {
+          db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+        } catch (e) {
+          console.warn("端末への保存を有効にできなかったため、通常の方式で接続します", e);
+          db = getFirestore(app);
+        }
       }
     } catch (e) { console.error("Firebase init error", e); }
 
+    // アプリ本体（このページと、表示に必要な部品）を端末に保存する仕組みを登録する
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      navigator.serviceWorker.register('sw.js').catch(e => console.warn("オフライン用の保存を登録できませんでした", e));
+    }
+
+    /*__PURE_HELPERS_START__*/
     const START_HOUR = 7;
     const END_HOUR = 22;
     const PIXELS_PER_MINUTE = 2.0; 
@@ -166,8 +199,22 @@
 
     const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
 
-    const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
-    const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
+    // スプレッドシートのURLはコードに書かない（このファイルは誰でも見られるため）。
+    // 管理者が「接続設定」に入力したURLがデータベースに保存され、それを使う。
+    const DEFAULT_USER_SHEET_URL = "";
+    const DEFAULT_NURSE_SHEET_URL = "";
+
+    // ===== セキュリティ設定 =====
+    // false: URLを知っている人は誰でも閲覧できる（従来どおり）／ true: 閲覧にもログインが必要
+    const REQUIRE_LOGIN_TO_VIEW = false;
+    // 管理者として扱うメールアドレス（小文字）。空のときは「ログインした人は全員が管理者」。
+    // 閲覧専用の共有アカウントを作る場合は、ここに管理者のアドレスだけを書く。
+    const ADMIN_EMAILS = [];
+
+    // ===== データ保管の設定 =====
+    const ARCHIVE_KEEP_MONTHS = 6;        // 今月を含めて何か月分を「すぐ編集できる場所」に残すか
+    const DEFAULT_TRAVEL_SPEED_KMH = 20;  // 距離から移動時間を計算するときの平均時速
+    const ROAD_FACTOR = 1.3;              // 直線距離 → 道のりへの換算係数
 
     const formatDateLabel = (dateStr) => {
       if (!dateStr) return '';
@@ -201,6 +248,415 @@
       d.setDate(d.getDate() + diff);
       return d.toISOString().split('T')[0];
     };
+
+    // ============================================================
+    // ここから下は「画面の状態に依存しない純粋な計算」をまとめたもの。
+    // 入力が同じなら必ず同じ結果になるので、単体でテストできる。
+    // ============================================================
+    // --- CSVの読み取り ---
+    // 単純にカンマで区切ると、住所などにカンマが含まれるとき列がずれてしまう。
+    // CSVの決まり（"…" で囲まれた中のカンマ・改行は区切りではない、"" は " 1文字）に従って読む。
+    const parseCsv = (text) => {
+      const rows = [];
+      let row = [], field = '', inQuotes = false;
+      const src = String(text ?? '').replace(/^\uFEFF/, '');
+      for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (inQuotes) {
+          if (c === '"') {
+            if (src[i + 1] === '"') { field += '"'; i++; }
+            else inQuotes = false;
+          } else field += c;
+        } else if (c === '"' && field === '') {
+          inQuotes = true;
+        } else if (c === ',') {
+          row.push(field); field = '';
+        } else if (c === '\n' || c === '\r') {
+          if (c === '\r' && src[i + 1] === '\n') i++;
+          row.push(field); field = '';
+          rows.push(row); row = [];
+        } else field += c;
+      }
+      if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+      return rows;
+    };
+    // 取得した内容がCSVではなくWebページ（エラー画面やログイン画面）だった場合を見分ける
+    const looksLikeHtml = (text) => /^\s*<(!doctype|html|head|body)/i.test(String(text ?? ''));
+
+    // --- 割り当てできない理由 ---
+    // この予定をこの看護師に、この開始時刻で割り当てられない場合に、その理由を返す（問題なければ null）
+    const assignProblem = (visit, nurse, offType, startMin) => {
+      if (!nurse) return null;
+      if (visit.requiresFemaleNurse && !nurse.isFemale) return "この利用者は女性看護師限定です";
+      const excluded = visit.excludedNurseNames || [];
+      if (excluded.some(ex => ex && (nurse.name.includes(ex) || ex.includes(nurse.name)))) return "除外スタッフに設定されているため、割り当てできません";
+      if (offType === 'full') return `${nurse.name} は本日お休みです`;
+      if (offType === 'AM' && startMin < parseTime('13:30')) return `${nurse.name} は午前休（13:30以降出勤）です`;
+      if (offType === 'PM' && startMin >= parseTime('12:30')) return `${nurse.name} は午後休（12:30退勤）です`;
+      return null;
+    };
+    // 同じ看護師の、時間が重なる予定を探す
+    const findOverlap = (visits, visit, nurseId, date, startMin) => {
+      const endMin = startMin + (visit.duration || 30);
+      return visits.find(o => o.id !== visit.id && o.date === date && o.nurseId === nurseId
+        && parseTime(o.startTime) < endMin && startMin < parseTime(o.startTime) + (o.duration || 30)) || null;
+    };
+
+    // --- 同行訪問の連動 ---
+    // 同行用の予定（isAccompany）が、どの予定に付いているかを探す
+    const findAccompanyParent = (accompany, list) => {
+      if (accompany.accompanyOf != null) return list.find(v => v.id === accompany.accompanyOf) || null;
+      // 以前のバージョンで作った同行予定には紐づけ情報がないので、「同じ利用者・同じ日・同じ時刻」で探す
+      const name = normalizeName(accompany.userName);
+      return list.find(v => v.id !== accompany.id && !v.isAccompany && v.type !== 'other'
+        && v.date === accompany.date && v.startTime === accompany.startTime && normalizeName(v.userName) === name) || null;
+    };
+    // 予定の一覧が prev → next に変わるとき、元の予定の変更を同行予定にも反映する。
+    //  ・元の予定の時刻・日付・所要時間が変わった → 同行予定も同じだけ動かす
+    //  ・元の予定が削除された                     → 同行予定も削除する
+    //  ・同行予定そのものを同時に動かしている場合は、その操作を優先して何もしない
+    const syncAccompanyVisits = (prev, next) => {
+      if (!next.some(v => v.isAccompany)) return next;
+      const prevById = new Map(prev.map(v => [v.id, v]));
+      const nextById = new Map(next.map(v => [v.id, v]));
+      let changed = false;
+      const result = [];
+      next.forEach(a => {
+        if (!a.isAccompany) { result.push(a); return; }
+        const aPrev = prevById.get(a.id);
+        if (!aPrev) { result.push(a); return; }                       // いま作られたばかり
+        const parentPrev = findAccompanyParent(aPrev, prev);
+        if (!parentPrev) { result.push(a); return; }
+        const parentNext = nextById.get(parentPrev.id);
+        if (!parentNext) { changed = true; return; }                  // 元の予定が削除された
+        const selfMoved = a.startTime !== aPrev.startTime || a.date !== aPrev.date || a.duration !== aPrev.duration;
+        const parentMoved = parentNext.startTime !== parentPrev.startTime || parentNext.date !== parentPrev.date || parentNext.duration !== parentPrev.duration;
+        if (selfMoved || !parentMoved) {
+          // 紐づけ情報がまだ無ければ、この機会に記録しておく
+          if (a.accompanyOf == null) { changed = true; result.push({ ...a, accompanyOf: parentPrev.id }); } else result.push(a);
+          return;
+        }
+        const delta = parseTime(parentNext.startTime) - parseTime(parentPrev.startTime);
+        const newStart = formatTime(Math.max(0, Math.min(24 * 60 - 5, parseTime(a.startTime) + delta)));
+        changed = true;
+        result.push({
+          ...a,
+          accompanyOf: parentPrev.id,
+          date: parentNext.date,
+          startTime: newStart,
+          originalStartTime: parentNext.originalStartTime || a.originalStartTime,
+          duration: a.duration === parentPrev.duration ? parentNext.duration : a.duration
+        });
+      });
+      return changed ? result : next;
+    };
+
+    // --- 移動時間の計算 ---
+    // 住所の表記ゆれ（空白・全角数字・ハイフンの種類）をそろえる
+    const normalizeAddress = (addr) => (addr || '')
+      .replace(/[\s　]/g, '')
+      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[－‐−–—]/g, '-')
+      .replace(/(\d)ー(?=\d)/g, '$1-');
+    // 住所から「町名まで」を取り出す。 例: 東京都○○区緑町1-2-3 → 東京都○○区緑町
+    const areaKeyOf = (addr) => {
+      const key = normalizeAddress(addr).split(/[0-9]|[一二三四五六七八九十]+丁目/)[0];
+      return key || null;
+    };
+    const haversineKm = (a, b) => {
+      const rad = (d) => d * Math.PI / 180;
+      const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+      return 6371 * 2 * Math.asin(Math.sqrt(h));
+    };
+    const isValidLatLng = (lat, lng) => typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng) && lat >= 20 && lat <= 46 && lng >= 122 && lng <= 154;
+    // 予定や看護師（{location, address}）から「地点」を作る関数を返す。
+    // 優先順位: シートの緯度経度 → 住所から取得済みの緯度経度(geoCache) → 町名
+    const makePointOf = (geoCache) => (obj) => {
+      const loc = obj?.location;
+      const area = areaKeyOf(obj?.address);
+      if (loc && isValidLatLng(loc.lat, loc.lng)) return { lat: loc.lat, lng: loc.lng, area };
+      const hit = geoCache ? geoCache[normalizeAddress(obj?.address)] : null;
+      if (Array.isArray(hit) && isValidLatLng(hit[0], hit[1])) return { lat: hit[0], lng: hit[1], area };
+      return { area };
+    };
+    // 2地点間の移動時間（分）。基本の移動時間に、距離に応じた時間を足す。
+    //  ・両方の緯度経度が分かる → 直線距離×道のり係数÷時速
+    //  ・町名だけ分かる         → 同じ町名なら +0分、違えば +4分
+    //  ・どちらか不明           → +2分
+    const travelMinutes = (a, b, base, speedKmh) => {
+      if (a && b && a.lat != null && b.lat != null) return base + Math.round(haversineKm(a, b) * ROAD_FACTOR / (speedKmh || DEFAULT_TRAVEL_SPEED_KMH) * 60);
+      if (a && b && a.area && b.area) return base + (a.area === b.area ? 0 : 4);
+      return base + 2;
+    };
+    const monthOf = (dateStr) => (dateStr || '').slice(0, 7);
+
+    // 日付文字列を必ず YYYY-MM-DD（ゼロ埋め）にそろえる。 例: 2026/4/5 → 2026-04-05
+    const normalizeDateStr = (raw) => {
+      if (!raw) return '';
+      const parts = String(raw).trim().replace(/\//g, '-').split('-');
+      if (parts.length !== 3) return String(raw).trim().replace(/\//g, '-');
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    };
+
+    // 担当者が決まっていない予定か？（担当者が名簿から消えている場合も「未割り当て」とみなす）
+    const isVisitUnassigned = (v, nurseIdSet) => v.nurseId == null || !nurseIdSet.has(v.nurseId);
+
+    // 過去の担当実績を集計する。
+    // 利用者ごとに「どの看護師が何回訪問したか」を数え、同じ曜日の実績は2倍に重み付けする。
+    const HISTORY_WINDOW_DAYS = 120;
+    const buildAssignHistory = (visits, nurseIdSet, date) => {
+      const map = new Map();
+      const target = new Date(date);
+      if (isNaN(target.getTime())) return map;
+      const targetDow = target.getDay();
+      const from = new Date(date);
+      from.setDate(from.getDate() - HISTORY_WINDOW_DAYS);
+      const fromStr = from.toISOString().split('T')[0];
+      visits.forEach(v => {
+        if (!v.date || v.date >= date || v.date < fromStr) return;
+        if (v.nurseId == null || !nurseIdSet.has(v.nurseId)) return;
+        if (v.type === 'other' || v.isAccompany) return;
+        const key = normalizeName(v.userName);
+        if (!key) return;
+        const w = new Date(v.date).getDay() === targetDow ? 2 : 1;
+        let e = map.get(key);
+        if (!e) { e = { total: 0, byNurse: {} }; map.set(key, e); }
+        e.total += w;
+        e.byNurse[v.nurseId] = (e.byNurse[v.nurseId] || 0) + w;
+      });
+      return map;
+    };
+
+    // 自動編成の本体。
+    //  ・看護師ごとに「その日の予定の並び」を持ち、新しい訪問が「空き時間に収まるか」で判定する
+    //    （＝後ろの時間に予定が入っていても、その前の空き時間を使える／ダブルブッキングはしない）
+    //  ・収まる候補が複数いるときは「負担の少なさ・午前午後のバランス・移動の少なさ・過去の担当実績」の合計点で選ぶ
+    const planAutoAssign = ({ visits, nurses, date, offTypeOf, pointOf, travelBetween, history }) => {
+      const travelTo = (fromPt, v) => v.customTravelTime ?? travelBetween(fromPt, pointOf(v));
+      const nurseIdSet = new Set(nurses.map(n => n.id));
+
+      const states = [];
+      nurses.forEach(n => {
+        const offType = offTypeOf(n);
+        if (offType === 'full') return;
+        let startMin = parseTime(n.startTime);
+        let endMin = parseTime(n.endTime || '17:30');
+        if (offType === 'AM') { startMin = parseTime('13:30'); endMin = parseTime('17:30'); }
+        else if (offType === 'PM') { startMin = parseTime('08:00'); endMin = parseTime('12:30'); }
+
+        const s = { nurse: n, offType, startMin, endMin, items: [], total: 0, am: 0, pm: 0, home: pointOf({ location: n.startLocation, address: n.address }) };
+        visits.forEach(v => {
+          if (v.date !== date || v.nurseId !== n.id) return;
+          const start = parseTime(v.startTime), dur = v.duration || 30;
+          s.items.push({ start, end: start + dur, visit: v });
+          s.total += dur;
+          if (start < 12 * 60) s.am += dur; else s.pm += dur;
+        });
+        s.items.sort((a, b) => a.start - b.start);
+        states.push(s);
+      });
+
+      // level 1: 移動時間まで含めて無理なく収まる
+      // level 2: 移動時間の余裕はないが、時間は重ならず勤務時間内に収まる
+      // level 3: 時間は重ならないが、勤務終了時刻を超える（時間外）
+      const checkFit = (s, v, level) => {
+        const start = parseTime(v.startTime), dur = v.duration || 30, end = start + dur;
+        if (start < s.startMin) return null;
+        if (level < 3 && end > s.endMin) return null;
+        if (level === 3 && s.offType !== 'work') return null;
+        let prev = null, next = null;
+        for (const it of s.items) { if (it.start <= start) prev = it; else { next = it; break; } }
+        if (prev && prev.end > start) return null;
+        if (next && next.start < end) return null;
+        const prevLoc = prev ? pointOf(prev.visit) : s.home;
+        const prevEnd = prev ? prev.end : s.startMin;
+        const tIn = travelTo(prevLoc, v);
+        const tOut = next ? travelTo(pointOf(v), next.visit) : 0;
+        if (level === 1) {
+          if (prevEnd + tIn > start) return null;
+          if (next && end + tOut > next.start) return null;
+        }
+        return { detour: tIn + (next ? tOut - travelTo(prevLoc, next.visit) : 0) };
+      };
+
+      const nameMatches = (nurseName, target) => !!nurseName && !!target && (nurseName === target || nurseName.includes(target) || target.includes(nurseName));
+
+      const scoreOf = (s, v, fit) => {
+        const start = parseTime(v.startTime), dur = v.duration || 30;
+        const span = Math.max(60, s.endMin - s.startMin);
+        const isAM = start < 12 * 60;
+        let score = ((s.total + dur) / span) * 100;                       // 勤務時間に対する負担率
+        score += ((isAM ? s.am - s.pm : s.pm - s.am) / span) * 30;        // 午前・午後のかたより
+        score += fit.detour;                                               // 増える移動時間（分）
+        let usedHistory = false;
+        if (history && v.type !== 'other' && !v.isAccompany) {
+          const h = history.get(normalizeName(v.userName));
+          const cnt = h ? (h.byNurse[s.nurse.id] || 0) : 0;
+          if (cnt > 0) {
+            score -= (cnt / h.total) * Math.min(1, h.total / 3) * 30;     // なじみの看護師を優先
+            usedHistory = true;
+          }
+        }
+        return { score, usedHistory };
+      };
+
+      const targets = visits
+        .filter(v => v.date === date && isVisitUnassigned(v, nurseIdSet) && !v.isExcludedFromAutoAssign)
+        .map(v => {
+          const hasPref = (v.preferredNurseNames || []).some(Boolean);
+          const constrained = v.requiresFemaleNurse || (v.excludedNurseNames || []).length > 0;
+          return { v, rank: hasPref ? 0 : constrained ? 1 : 2 };
+        })
+        // 条件の厳しい予定（優先担当あり → 女性限定・除外あり → その他）から先に席を確保する
+        .sort((a, b) => a.rank - b.rank || parseTime(a.v.startTime) - parseTime(b.v.startTime) || (b.v.duration || 0) - (a.v.duration || 0));
+
+      const assignedTo = new Map();
+      const failed = [];
+      let historyHits = 0, overtimeCount = 0;
+
+      targets.forEach(({ v }) => {
+        const excludedNames = v.excludedNurseNames || [];
+        const isExcluded = (name) => excludedNames.some(ex => nameMatches(name, ex));
+        let best = null, bestUsedHistory = false, bestLevel = 0;
+
+        for (const prefName of (v.preferredNurseNames || [])) {
+          if (!prefName) continue;
+          const s = states.find(st => nameMatches(st.nurse.name, prefName) && !isExcluded(st.nurse.name));
+          if (s && (checkFit(s, v, 1) || checkFit(s, v, 2))) { best = s; break; }
+        }
+
+        if (!best) {
+          const candidates = states.filter(s => !isExcluded(s.nurse.name) && !(v.requiresFemaleNurse && !s.nurse.isFemale));
+          outer:
+          for (const level of [1, 2, 3]) {
+            for (const low of [false, true]) {
+              let bestScore = Infinity;
+              candidates.forEach(s => {
+                if (!!s.nurse.isLowPriority !== low) return;
+                const fit = checkFit(s, v, level);
+                if (!fit) return;
+                const { score, usedHistory } = scoreOf(s, v, fit);
+                if (score < bestScore) { bestScore = score; best = s; bestUsedHistory = usedHistory; bestLevel = level; }
+              });
+              if (best) break outer;
+            }
+          }
+        }
+
+        if (!best) { failed.push(v); return; }
+        const start = parseTime(v.startTime), dur = v.duration || 30;
+        best.items.push({ start, end: start + dur, visit: v });
+        best.items.sort((a, b) => a.start - b.start);
+        best.total += dur;
+        if (start < 12 * 60) best.am += dur; else best.pm += dur;
+        assignedTo.set(v.id, best.nurse.id);
+        if (bestUsedHistory) historyHits++;
+        if (bestLevel === 3) overtimeCount++;
+      });
+
+      return {
+        visits: visits.map(v => assignedTo.has(v.id) ? { ...v, nurseId: assignedTo.get(v.id) } : v),
+        assignedCount: assignedTo.size,
+        failed,
+        historyHits,
+        overtimeCount
+      };
+    };
+
+    // 利用者スプレッドシートの内容（sheetRows）を、今ある予定（visits）に突き合わせる。
+    // 表示中の1週間（weekDates）だけを対象にし、担当者の割り当て・固定・コメントはできるだけ引き継ぐ。
+    const mergeSheetVisits = ({ visits, sheetRows, weekDates }) => {
+      const keyOf = (v) => `${normalizeName(v.userName)}|${v.date}|${v.originalStartTime || v.startTime}`;
+      const dayKeyOf = (v) => `${normalizeName(v.userName)}|${v.date}`;
+      const isSheetManaged = (v) => v.type !== 'other' && !v.isAccompany;
+      const inWeek = (v) => weekDates.includes(v.date);
+
+      const sheetByKey = new Map();
+      sheetRows.forEach(r => { if (!sheetByKey.has(keyOf(r))) sheetByKey.set(keyOf(r), r); });
+      const existingKeys = new Set(visits.filter(isSheetManaged).map(keyOf));
+
+      const carryOver = (sheetRow, v, startTime) => ({
+        ...sheetRow,
+        id: v.id,
+        nurseId: v.nurseId ?? null,
+        startTime,
+        customTravelTime: v.customTravelTime ?? null,
+        isExcludedFromAutoAssign: !!v.isExcludedFromAutoAssign,
+        ...(v.comment ? { comment: v.comment } : {})
+      });
+
+      const next = [];
+      const leftovers = [];   // シートに同じ行が見つからなかった既存の予定
+      let updated = 0;
+      visits.forEach(v => {
+        if (!isSheetManaged(v) || !inWeek(v)) { next.push(v); return; }
+        const row = sheetByKey.get(keyOf(v));
+        if (row) { next.push(carryOver(row, v, v.startTime)); updated++; }
+        else leftovers.push(v);
+      });
+
+      // シートにしか無い行（＝新規）。ただし「時間だけ変わった」既存の予定があれば、担当者を引き継ぐ
+      const newRows = sheetRows.filter(r => !existingKeys.has(keyOf(r)));
+      const newByDay = new Map();
+      newRows.forEach(r => { const k = dayKeyOf(r); if (!newByDay.has(k)) newByDay.set(k, []); newByDay.get(k).push(r); });
+      newByDay.forEach(list => list.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime)));
+
+      let retimed = 0, deleted = 0, deletedAssigned = 0;
+      const usedRows = new Set();
+      leftovers.sort((a, b) => parseTime(a.originalStartTime || a.startTime) - parseTime(b.originalStartTime || b.startTime));
+      leftovers.forEach(v => {
+        const list = newByDay.get(dayKeyOf(v)) || [];
+        const row = list.find(r => !usedRows.has(r));
+        if (row) {
+          usedRows.add(row);
+          next.push(carryOver(row, v, row.startTime));
+          retimed++;
+        } else {
+          deleted++;
+          if (v.nurseId != null) deletedAssigned++;
+        }
+      });
+
+      let added = 0;
+      newRows.forEach(r => { if (!usedRows.has(r)) { next.push(r); added++; } });
+
+      return { visits: next, added, updated, retimed, deleted, deletedAssigned };
+    };
+
+    // 看護師スプレッドシートの内容を、今の名簿に突き合わせる。
+    // 同じ名前の看護師は「同じID」のまま更新する（IDが変わると、過去・未来の割り当てがすべて外れてしまうため）。
+    const mergeNurseSheet = ({ nurses, sheetNurses, makeId }) => {
+      const prevByName = new Map();
+      nurses.forEach(n => { const k = normalizeName(n.name); if (k && !prevByName.has(k)) prevByName.set(k, n); });
+      const usedIds = new Set();
+      const usedColors = new Set();
+      let kept = 0, added = 0;
+      const merged = sheetNurses.map(sn => {
+        const prev = prevByName.get(normalizeName(sn.name));
+        if (prev && !usedIds.has(prev.id)) {
+          usedIds.add(prev.id);
+          kept++;
+          if (prev.color) usedColors.add(prev.color);
+          return { ...sn, id: prev.id, color: prev.color || sn.color };
+        }
+        return { ...sn, id: null };
+      });
+      merged.forEach(n => {
+        if (n.id != null) return;
+        let id = makeId();
+        while (usedIds.has(id)) id++;
+        usedIds.add(id);
+        n.id = id;
+        const freeColor = colors.find(c => !usedColors.has(c));
+        if (freeColor) n.color = freeColor;
+        usedColors.add(n.color);
+        added++;
+      });
+      const removed = nurses.filter(n => !usedIds.has(n.id)).length;
+      return { nurses: merged, kept, added, removed };
+    };
+    /*__PURE_HELPERS_END__*/
 
     const useDragScroll = () => {
       const ref = useRef(null);
@@ -260,7 +716,8 @@
     };
 
     function App() {
-      const isAdmin = useMemo(() => {
+      // URLに ?mode=admin が付いているか（＝管理者としてログインしたい、という意思表示。これだけでは管理者にならない）
+      const wantsAdmin = useMemo(() => {
         if (typeof window === 'undefined') return false;
         const params = new URLSearchParams(window.location.search);
         return params.get('mode') === 'admin';
@@ -273,6 +730,14 @@
 
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
+      // 通信できる状態か
+      const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine !== false);
+      useEffect(() => {
+        const on = () => setIsOnline(true), off = () => setIsOnline(false);
+        window.addEventListener('online', on);
+        window.addEventListener('offline', off);
+        return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+      }, []);
       
       const [activeTab, setActiveTab] = useState(() => {
         return localStorage.getItem('careRoute_activeTab') || 'overview';
@@ -320,11 +785,71 @@
       });
       
       const [nurses, setNurses] = useState([]);
-      const [visits, setVisits] = useState([]);
+      // liveVisits = メインの保存場所にある予定（編集できる）。古い月は「保管庫」に移されている。
+      const [liveVisits, setVisits] = useState([]);
       const [nurseStatuses, setNurseStatuses] = useState([]); 
       const [savedPatterns, setSavedPatterns] = useState({});
       const [history, setHistory] = useState([]);
       const [dailyMemos, setDailyMemos] = useState({});
+
+      const displayDates = useMemo(() => {
+        if (!startDate) return [];
+        const dates = [];
+        const start = new Date(startDate);
+        
+        const startJsDay = start.getDay();
+        const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
+        start.setDate(start.getDate() + diffToMonday);
+
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(start);
+          d.setDate(d.getDate() + i);
+          dates.push(d.toISOString().split('T')[0]);
+        }
+        return dates;
+      }, [startDate]);
+
+      // ===== ログイン状態 =====
+      const [authReady, setAuthReady] = useState(false);
+      const [legacyAdmin, setLegacyAdmin] = useState(false);   // ログイン機能が未設定のときだけ使う、従来方式の管理者モード
+      const [showLogin, setShowLogin] = useState(false);
+      const [loginError, setLoginError] = useState("");
+      const [loginBusy, setLoginBusy] = useState(false);
+      const [loginNotConfigured, setLoginNotConfigured] = useState(false);
+      const usesEnvToken = typeof window !== 'undefined' && typeof window.__initial_auth_token !== 'undefined' && !!window.__initial_auth_token;
+      const isPasswordUser = !!user && !user.isAnonymous && !usesEnvToken;
+      const isAdminUser = legacyAdmin
+        || (usesEnvToken && wantsAdmin && !!user)
+        || (isPasswordUser && (ADMIN_EMAILS.length === 0 || ADMIN_EMAILS.includes((user.email || '').toLowerCase())));
+
+      // ===== 保管庫（古い月のデータ） =====
+      const [archivedMonths, setArchivedMonths] = useState([]);   // 保管庫に移した月（"2026-01" 形式）
+      const [archiveCache, setArchiveCache] = useState({});       // 読み込み済みの保管データ
+      const [archiveBusy, setArchiveBusy] = useState(false);
+      const archivedMonthSet = useMemo(() => new Set(archivedMonths), [archivedMonths]);
+      // いま表示に必要な「保管済みの月」
+      const neededArchiveMonths = useMemo(() => {
+        const months = new Set(displayDates.map(monthOf));
+        if (activeTab === 'report') months.add(reportMonth);
+        return [...months].filter(m => archivedMonthSet.has(m)).sort();
+      }, [displayDates, activeTab, reportMonth, archivedMonthSet]);
+      // 画面に出す予定 = 編集できる予定 + （必要なら）保管庫から読み込んだ予定
+      const visits = useMemo(() => {
+        const extra = neededArchiveMonths.flatMap(m => archiveCache[m]?.visits || []);
+        return extra.length > 0 ? [...extra, ...liveVisits] : liveVisits;
+      }, [liveVisits, archiveCache, neededArchiveMonths]);
+      // 保管済みの月を表示している間は「閲覧のみ」にする
+      const isArchivedView = archivedMonthSet.has(monthOf(selectedDate)) && ['overview', 'schedule', 'visits'].includes(activeTab);
+      // オフライン中も閲覧のみ（電波が戻ったときに、古い内容で上書きしてしまう事故を防ぐ）
+      const isAdmin = isAdminUser && !isArchivedView && isOnline;
+
+      // ===== 位置情報 =====
+      const [geoCache, setGeoCache] = useState({});              // 住所 → [緯度, 経度]
+      const [travelSpeedKmh, setTravelSpeedKmh] = useState(DEFAULT_TRAVEL_SPEED_KMH);
+      const [geoProgress, setGeoProgress] = useState(null);       // 取得中の進み具合
+      const pointOf = useMemo(() => makePointOf(geoCache), [geoCache]);
+      const [restoreCandidate, setRestoreCandidate] = useState(null);
+      const restoreInputRef = useRef(null);
       
       const [baseTravelTime, setBaseTravelTime] = useState(7);
       const [selectedNurseId, setSelectedNurseId] = useState(() => {
@@ -339,6 +864,11 @@
       }, [selectedNurseId]);
 
       const [isOptimizing, setIsOptimizing] = useState(false);
+      // 自動編成で「過去の担当実績」を考慮するか（端末ごとに記憶）
+      const [useHistoryAssign, setUseHistoryAssign] = useState(() => localStorage.getItem('careRoute_useHistoryAssign') !== 'off');
+      useEffect(() => {
+        localStorage.setItem('careRoute_useHistoryAssign', useHistoryAssign ? 'on' : 'off');
+      }, [useHistoryAssign]);
       const [showToast, setShowToast] = useState(false);
       const [toastMessage, setToastMessage] = useState("");
       const [visitSortConfig, setVisitSortConfig] = useState({ key: 'startTime', direction: 'asc' });
@@ -356,12 +886,29 @@
       const [activePatternSlot, setActivePatternSlot] = useState(null);
       
       const [editingVisit, setEditingVisit] = useState(null);
+      const [moveTarget, setMoveTarget] = useState(null);       // 担当者・時間を変更中の予定
+      const [moveDraft, setMoveDraft] = useState({ nurseId: 'unassigned', startTime: '09:00' });
+      // 指で操作する端末か（ドラッグが使えないので、タップでメニューを開く）
+      const isTouchDevice = useMemo(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches, []);
+      const openMoveDialog = (visit) => {
+        setMoveDraft({ nurseId: isVisitUnassigned(visit, nurseIdSet) ? 'unassigned' : String(visit.nurseId), startTime: visit.startTime });
+        setMoveTarget(visit);
+      };
       const [contextMenu, setContextMenu] = useState(null);
 
       const [editingMemoDate, setEditingMemoDate] = useState(null);
       const [memoInputValue, setMemoInputValue] = useState("");
 
       const addEventTitleInputRef = useRef(null);
+      const timelineScrollRef = useRef(null);
+
+      // 現在時刻（分）。全体スケジュールに「いま」の線を引くために1分ごとに更新する
+      const getNowMinutes = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+      const [nowMinutes, setNowMinutes] = useState(getNowMinutes);
+      useEffect(() => {
+        const timer = setInterval(() => setNowMinutes(getNowMinutes()), 60000);
+        return () => clearInterval(timer);
+      }, []);
       const migratedRef = useRef(false); // 旧データの圧縮移行を一度だけ実行するためのフラグ
 
       // 設定のアコーディオン用の状態
@@ -370,10 +917,10 @@
 
       useEffect(() => {
         if (showToast) {
-          const timer = setTimeout(() => setShowToast(false), 4000);
+          const timer = setTimeout(() => setShowToast(false), Math.min(12000, Math.max(4000, (toastMessage || "").length * 130)));
           return () => clearTimeout(timer);
         }
-      }, [showToast]);
+      }, [showToast, toastMessage]);
 
       useEffect(() => {
         if (showAddEventModal) {
@@ -386,17 +933,64 @@
 
       useEffect(() => {
         if (!auth) return;
-        const initAuth = async () => {
+        const initialToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
+        // まず「前回のログインが残っているか」を確認し、残っていなければ匿名（閲覧用）で入る。
+        // ※ 先に匿名ログインしてしまうと、管理者のログイン状態を上書きしてしまうため、この順番が大切。
+        const unsubscribe = onAuthStateChanged(auth, async (u) => {
+          setUser(u);
+          setAuthReady(true);
+          if (u) return;
           try {
-            const initialToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
-            if (initialToken) { await signInWithCustomToken(auth, initialToken); } 
-            else { await signInAnonymously(auth); }
+            if (initialToken) { await signInWithCustomToken(auth, initialToken); }
+            else if (!REQUIRE_LOGIN_TO_VIEW) { await signInAnonymously(auth); }
           } catch (e) { console.error("Auth error", e); }
-        };
-        initAuth();
-        const unsubscribe = onAuthStateChanged(auth, setUser);
+        });
         return () => unsubscribe();
       }, []);
+
+      // ログイン画面を出す条件：管理者用URLで開いたのに管理者でない／閲覧にもログインが必要な設定で未ログイン
+      useEffect(() => {
+        if (!authReady) return;
+        if ((wantsAdmin && !isAdminUser) || (REQUIRE_LOGIN_TO_VIEW && !user)) setShowLogin(true);
+        if (isAdminUser) setShowLogin(false);
+      }, [authReady, wantsAdmin, isAdminUser, user]);
+
+      const handleLogin = async (e) => {
+        e.preventDefault();
+        if (!auth) return;
+        const formData = new FormData(e.target);
+        setLoginBusy(true);
+        setLoginError("");
+        try {
+          await signInWithEmailAndPassword(auth, String(formData.get('email') || '').trim(), String(formData.get('password') || ''));
+          setShowLogin(false);
+        } catch (err) {
+          console.error("Login error", err);
+          const code = err?.code || '';
+          if (code === 'auth/operation-not-allowed') {
+            setLoginNotConfigured(true);
+            setLoginError("ログイン機能がまだ有効になっていません。Firebaseコンソールで「メール/パスワード」ログインを有効にしてください（手順はREADMEにあります）。");
+          } else if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email', 'auth/missing-password'].includes(code)) {
+            setLoginError("メールアドレスかパスワードが違います。");
+          } else if (code === 'auth/too-many-requests') {
+            setLoginError("試行回数が多すぎます。しばらく待ってからもう一度お試しください。");
+          } else if (code === 'auth/network-request-failed') {
+            setLoginError("ネットワークに接続できません。通信環境をご確認ください。");
+          } else {
+            setLoginError(`ログインできませんでした：${err?.message || code || "不明なエラー"}`);
+          }
+        } finally {
+          setLoginBusy(false);
+        }
+      };
+
+      const handleLogout = async () => {
+        setLegacyAdmin(false);
+        if (!auth) return;
+        try { await signOut(auth); } catch (e) { console.error(e); }
+        setToastMessage("ログアウトしました");
+        setShowToast(true);
+      };
 
       useEffect(() => {
         if (!user || !db) return;
@@ -413,6 +1007,9 @@
             if (data.sheetUrl) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
+            if (data.travelSpeedKmh !== undefined) setTravelSpeedKmh(data.travelSpeedKmh);
+            if (data.archivedMonths) { try { setArchivedMonths(JSON.parse(data.archivedMonths)); } catch (e) { console.error(e); } }
+            if (data.geoCache) { try { setGeoCache(JSON.parse(data.geoCache)); } catch (e) { console.error(e); } }
 
             // 旧形式（非圧縮）のデータを検出したら、圧縮形式へ一度だけ移行する
             const isRawJson = (s) => typeof s === 'string' && s.length > 0 && !s.startsWith(COMPRESS_PREFIX);
@@ -420,7 +1017,7 @@
             const patternsRaw = data.savedPatterns;
             const statusesRaw = data.nurseStatuses;
             const needsMigration = isRawJson(visitsRaw) || isRawJson(patternsRaw) || isRawJson(statusesRaw);
-            if (isAdmin && needsMigration && !migratedRef.current && LZString && typeof LZString.compressToBase64 === 'function') {
+            if (isAdminUser && needsMigration && !migratedRef.current && LZString && typeof LZString.compressToBase64 === 'function') {
               migratedRef.current = true;
               updateCloudData({
                 visits: encodeField(decodeField(visitsRaw, [])),
@@ -428,22 +1025,51 @@
                 nurseStatuses: encodeField(decodeField(statusesRaw, []))
               });
             }
-          } else {
-            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", dailyMemos: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 });
+          } else if (isAdminUser) {
+            // 初回だけ、空のデータを作る（書き込めるのは管理者のみ）
+            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", dailyMemos: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 }).catch(e => console.error(e));
           }
           setIsSyncing(false);
-        }, (err) => { console.error(err); setIsSyncing(false); });
+        }, (err) => {
+          console.error(err);
+          setIsSyncing(false);
+          if (err?.code === 'permission-denied') {
+            setToastMessage("データを読み込めません：閲覧が許可されていません（ログインが必要な設定になっている可能性があります）。");
+            setShowToast(true);
+          }
+        });
         return () => unsubscribe();
-      }, [user]);
+      }, [user, legacyAdmin]);
+
+      const mainDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
+      const archiveDocRef = (month) => doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_archive', month);
+
+      // 表示に必要な保管データを、必要になったときだけ読み込む
+      useEffect(() => {
+        if (!user || !db) return;
+        neededArchiveMonths.forEach(month => {
+          if (archiveCache[month]) return;
+          setArchiveCache(prev => ({ ...prev, [month]: { loading: true, visits: [] } }));
+          getDoc(archiveDocRef(month)).then(snap => {
+            const d = snap.exists() ? snap.data() : {};
+            setArchiveCache(prev => ({ ...prev, [month]: { visits: decodeField(d.visits, []), savedPatterns: decodeField(d.savedPatterns, {}) } }));
+          }).catch(e => {
+            console.error("archive load failed:", e);
+            setArchiveCache(prev => ({ ...prev, [month]: { error: true, visits: [] } }));
+          });
+        });
+      }, [neededArchiveMonths, user]);
 
       // ドキュメント全体のおおよそのバイト数を見積もる（Firestoreの上限は1ドキュメント約1MB）
       const estimateDocSize = (override = {}) => {
         const fields = {
           nurses: JSON.stringify(nurses),
-          visits: encodeField(visits),
+          visits: encodeField(liveVisits),
           nurseStatuses: encodeField(nurseStatuses),
           savedPatterns: encodeField(savedPatterns),
           dailyMemos: JSON.stringify(dailyMemos),
+          archivedMonths: JSON.stringify(archivedMonths),
+          geoCache: JSON.stringify(geoCache),
           sheetUrl: sheetUrl,
           nurseSheetUrl: nurseSheetUrl,
           baseTravelTime: String(baseTravelTime),
@@ -459,9 +1085,9 @@
       };
 
       const updateCloudData = (newData) => {
-        if (!isAdmin) return;
+        if (!isAdminUser || !isOnline) return;
         if (user && db) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
+          const docRef = mainDocRef();
           setDoc(docRef, newData, { merge: true }).catch(e => {
             console.error("Firestore write failed:", e);
             const size = estimateDocSize(newData);
@@ -470,7 +1096,7 @@
             if (e.code === 'resource-exhausted' || e.code === 'invalid-argument' || e.code === 'out-of-range' || overLimit) {
               msg = `保存できませんでした：データ量が上限（約1MB）に達しています（現在 約${Math.round(size / 1024)}KB）。過去の予定やメモリ保存の整理が必要です。`;
             } else if (e.code === 'permission-denied') {
-              msg = "保存できませんでした：データベースへの書き込みが許可されていません（Firestoreのセキュリティルールをご確認ください）。";
+              msg = "保存できませんでした：書き込みが許可されていません。管理者としてログインしているかご確認ください。";
             } else if (e.code === 'unavailable' || e.code === 'deadline-exceeded') {
               msg = "保存できませんでした：ネットワークに接続できません。通信環境をご確認ください。";
             } else {
@@ -485,14 +1111,17 @@
       const handleSetVisits = (newVal) => {
         if (!isAdmin) return;
         setVisits(prev => {
-          const next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          let next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          next = syncAccompanyVisits(prev, next);   // 同行予定を元の予定に連動させる
+          // 保管済みの月の予定は保管庫が正なので、メイン側には書き戻さない
+          if (archivedMonthSet.size > 0) next = next.filter(v => !archivedMonthSet.has(monthOf(v.date)));
           updateCloudData({ visits: encodeField(next) });
           return next;
         });
       };
 
       const handleSetNurses = (newVal) => {
-        if (!isAdmin) return;
+        if (!isAdminUser) return;
         setNurses(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ nurses: JSON.stringify(next) });
@@ -553,30 +1182,15 @@
         });
       };
 
-      const handleSetBaseTravelTime = (v) => { if(!isAdmin) return; setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
-      const handleSheetUrlChange = (e) => { if(!isAdmin) return; setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
-      const handleNurseSheetUrlChange = (e) => { if(!isAdmin) return; setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
+      const handleSetBaseTravelTime = (v) => { if(!isAdminUser) return; setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
+      const handleSetTravelSpeed = (v) => { if(!isAdminUser) return; setTravelSpeedKmh(v); updateCloudData({ travelSpeedKmh: v }); };
+      const handleSheetUrlChange = (e) => { if(!isAdminUser) return; setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
+      const handleNurseSheetUrlChange = (e) => { if(!isAdminUser) return; setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
       
       const handleSetStartDate = (dateStr) => {
         setStartDate(dateStr);
       };
 
-      const displayDates = useMemo(() => {
-        if (!startDate) return [];
-        const dates = [];
-        const start = new Date(startDate);
-        
-        const startJsDay = start.getDay();
-        const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
-        start.setDate(start.getDate() + diffToMonday);
-
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(start);
-          d.setDate(d.getDate() + i);
-          dates.push(d.toISOString().split('T')[0]);
-        }
-        return dates;
-      }, [startDate]);
 
       const handlePrevWeek = () => {
         if (!startDate) return;
@@ -668,11 +1282,13 @@
       const selectedNurse = useMemo(() => nurses.find(n => n.id === selectedNurseId) || nurses[0], [nurses, selectedNurseId]);
       const selectedNurseOffType = selectedNurse ? getIsNurseOffType(selectedNurse, selectedDate, nurseStatuses) : 'work';
 
-      const unassignedCount = visits.filter(v => v.date === selectedDate && v.nurseId === null).length;
+      const nurseIdSet = useMemo(() => new Set(nurses.map(n => n.id)), [nurses]);
+
+      const unassignedCount = visits.filter(v => v.date === selectedDate && isVisitUnassigned(v, nurseIdSet)).length;
       
       const hasAssignedVisits = useMemo(() => {
-        return visits.some(v => v.date === selectedDate && v.nurseId !== null);
-      }, [visits, selectedDate]);
+        return visits.some(v => v.date === selectedDate && !isVisitUnassigned(v, nurseIdSet));
+      }, [visits, selectedDate, nurseIdSet]);
 
       const latestSyncedDate = useMemo(() => {
         if (!visits || visits.length === 0) return null;
@@ -704,11 +1320,12 @@
           let currentTime = workStartTimeMin;
           let calculatedStartTime = currentTime;
           let calcVisits = [];
-          let currentLoc = nurse.startLocation || {x:50, y:50};
+          const homePoint = pointOf({ location: nurse.startLocation, address: nurse.address });
+          let currentLoc = homePoint;
           
           sorted.forEach((visit, idx) => {
-            const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - currentLoc.x, 2) + Math.pow((visit.location?.y || 50) - currentLoc.y, 2));
-            const travelTime = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+            const visitPoint = pointOf(visit);
+            const travelTime = visit.customTravelTime ?? travelMinutes(currentLoc, visitPoint, baseTravelTime, travelSpeedKmh);
             
             if (idx === 0) {
               const targetStart = parseTime(visit.startTime);
@@ -731,12 +1348,12 @@
               departureTime: formatTime(actualStart + visit.duration) 
             });
             currentTime = actualStart + visit.duration; 
-            currentLoc = visit.location || {x: 50, y: 50};
+            currentLoc = visitPoint;
           });
           
           let finalTravelTime = 0, returnTime = null;
           if (calcVisits.length > 0) {
-            finalTravelTime = baseTravelTime + Math.round(Math.sqrt(Math.pow(currentLoc.x - (nurse.startLocation?.x || 50), 2) + Math.pow(currentLoc.y - (nurse.startLocation?.y || 50), 2)) * 0.05);
+            finalTravelTime = travelMinutes(currentLoc, homePoint, baseTravelTime, travelSpeedKmh);
             returnTime = formatTime(currentTime + finalTravelTime);
           } else {
             returnTime = formatTime(workStartTimeMin);
@@ -753,7 +1370,23 @@
           };
         });
         return schedules;
-      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses]);
+      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses, pointOf, travelSpeedKmh]);
+
+      const firstVisitMinutes = useMemo(() => {
+        const starts = visits.filter(v => v.date === selectedDate).map(v => parseTime(v.startTime));
+        return starts.length > 0 ? Math.min(...starts) : null;
+      }, [visits, selectedDate]);
+      const hasDayVisits = firstVisitMinutes !== null;
+
+      useEffect(() => {
+        if (activeTab !== 'overview') return;
+        const el = timelineScrollRef.current;
+        if (!el || typeof window === 'undefined' || window.innerWidth >= 768) return;
+        let target = firstVisitMinutes ?? 8 * 60 + 30;
+        if (selectedDate === getTodayStr()) target = Math.max(target, getNowMinutes() - 60);
+        target = Math.min(target, (END_HOUR - 2) * 60);
+        el.scrollTop = Math.max(0, getTop(target - 20));
+      }, [activeTab, selectedDate, hasDayVisits]);
 
       const stats = useMemo(() => {
         const sch = selectedNurse ? allSchedules[selectedNurse.id]?.visits || [] : [];
@@ -764,7 +1397,7 @@
       }, [allSchedules, selectedNurse, selectedNurseOffType]);
 
       const unassignedVisitsWithLayout = useMemo(() => {
-        const filtered = visits.filter(v => v.date === selectedDate && v.nurseId === null).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+        const filtered = visits.filter(v => v.date === selectedDate && isVisitUnassigned(v, nurseIdSet)).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
         
         const groups = [];
         let currentGroup = [];
@@ -818,7 +1451,7 @@
         });
         
         return layouted;
-      }, [visits, selectedDate]);
+      }, [visits, selectedDate, nurseIdSet]);
 
       const handlePrevReportMonth = () => {
         const [y, m] = reportMonth.split('-').map(Number);
@@ -872,7 +1505,7 @@
             dailyTotalDuration += dur;
             monthlyTotalDuration += dur;
 
-            if (v.nurseId) {
+            if (!isVisitUnassigned(v, nurseIdSet)) {
               nurseCounts[v.nurseId] = (nurseCounts[v.nurseId] || 0) + 1;
               monthlyNurseTotals[v.nurseId] = (monthlyNurseTotals[v.nurseId] || 0) + 1;
               
@@ -910,7 +1543,248 @@
           monthlyUnassigned,
           monthlyUnassignedDuration
         };
-      }, [reportMonth, visits, nurses]);
+      }, [reportMonth, visits, nurses, nurseIdSet]);
+
+      // 保存データ量（集計レポートを開いたときだけ計算する）
+      const storageInfo = useMemo(() => {
+        if (activeTab !== 'report') return null;
+        const LIMIT = 1048576; // Firestoreの1ドキュメント上限（約1MB）
+        const bytes = estimateDocSize();
+        const dates = liveVisits.map(v => v.date).filter(Boolean).sort();
+        const oldest = dates[0] || null;
+        const newest = dates[dates.length - 1] || null;
+        let monthsLeft = null;
+        if (oldest && newest) {
+          const spanDays = (new Date(newest) - new Date(oldest)) / 86400000 + 1;
+          if (spanDays >= 28 && bytes > 0) monthsLeft = Math.max(0, Math.floor(((LIMIT - bytes) / (bytes / spanDays)) / 30));
+        }
+        const unknownNurse = liveVisits.filter(v => v.nurseId != null && !nurseIdSet.has(v.nurseId)).length;
+        // 保管庫へ移せる対象（今月を含めて ARCHIVE_KEEP_MONTHS か月より前）
+        const now = new Date();
+        const cutoffDate = new Date(now.getFullYear(), now.getMonth() - (ARCHIVE_KEEP_MONTHS - 1), 1);
+        const cutoffMonth = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, '0')}`;
+        const archivable = liveVisits.filter(v => v.date && monthOf(v.date) < cutoffMonth).length;
+        return { bytes, limit: LIMIT, percent: Math.min(100, Math.round((bytes / LIMIT) * 100)), oldest, newest, count: liveVisits.length, monthsLeft, unknownNurse, cutoffMonth, archivable };
+      }, [activeTab, liveVisits, nurses, nurseStatuses, savedPatterns, dailyMemos, nurseIdSet, archivedMonths, geoCache]);
+
+      const downloadJson = (payload, filename) => {
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
+      // 保管庫の全データを読み込む（バックアップ用）
+      const loadAllArchives = async () => {
+        const archives = {};
+        for (const month of archivedMonths) {
+          const snap = await getDoc(archiveDocRef(month));
+          const d = snap.exists() ? snap.data() : {};
+          archives[month] = { visits: decodeField(d.visits, []), savedPatterns: decodeField(d.savedPatterns, {}) };
+        }
+        return archives;
+      };
+
+      // 全データ（保管庫も含む）をJSONファイルとして端末に保存する
+      const handleDownloadBackup = async (silent = false) => {
+        if (!isAdminUser) return false;
+        try {
+          const archives = await loadAllArchives();
+          const payload = { app: 'CareRoute', version: 2, exportedAt: new Date().toISOString(), nurses, visits: liveVisits, nurseStatuses, savedPatterns, dailyMemos, baseTravelTime, travelSpeedKmh, sheetUrl, nurseSheetUrl, geoCache, archivedMonths, archives };
+          const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+          downloadJson(payload, `careroute-backup-${getTodayStr()}-${stamp}.json`);
+          if (!silent) { setToastMessage("バックアップを保存しました（利用者の個人情報を含むため、取り扱いにご注意ください）"); setShowToast(true); }
+          return true;
+        } catch (e) {
+          console.error(e);
+          setToastMessage("バックアップの保存に失敗しました");
+          setShowToast(true);
+          return false;
+        }
+      };
+
+      // バックアップファイルを選んだとき：中身を確かめて、確認画面を出す（この時点ではまだ何も書き換えない）
+      const handleRestoreFileChosen = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file || !isAdminUser) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const data = JSON.parse(String(reader.result));
+            if (data?.app !== 'CareRoute' || !Array.isArray(data.visits) || !Array.isArray(data.nurses)) throw new Error("形式が違います");
+            const archives = (data.archives && typeof data.archives === 'object') ? data.archives : {};
+            const archivedCount = Object.values(archives).reduce((sum, a) => sum + (Array.isArray(a?.visits) ? a.visits.length : 0), 0);
+            setRestoreCandidate({ data, fileName: file.name, archivedCount });
+          } catch (err) {
+            console.error(err);
+            setToastMessage("このファイルはCareRouteのバックアップとして読み込めませんでした。何も変更していません。");
+            setShowToast(true);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      // 復元の実行：①いまの状態を自動でバックアップ → ②保管庫 → ③メインの順に書き込む
+      const executeRestore = async () => {
+        if (!isAdminUser || !isOnline || !restoreCandidate || !db) return;
+        const { data } = restoreCandidate;
+        setArchiveBusy(true);
+        try {
+          const saved = await handleDownloadBackup(true);
+          if (!saved) throw new Error("復元前のバックアップに失敗したため中止しました");
+          const archives = (data.archives && typeof data.archives === 'object') ? data.archives : {};
+          const months = Object.keys(archives).filter(m => /^\d{4}-\d{2}$/.test(m)).sort();
+          for (const month of months) {
+            await setDoc(archiveDocRef(month), { month, visits: encodeField(archives[month].visits || []), savedPatterns: encodeField(archives[month].savedPatterns || {}), updatedAt: new Date().toISOString() });
+          }
+          await setDoc(mainDocRef(), {
+            nurses: JSON.stringify(data.nurses),
+            visits: encodeField(data.visits),
+            nurseStatuses: encodeField(data.nurseStatuses || []),
+            savedPatterns: encodeField(data.savedPatterns || {}),
+            dailyMemos: JSON.stringify(data.dailyMemos || {}),
+            baseTravelTime: data.baseTravelTime ?? 7,
+            travelSpeedKmh: data.travelSpeedKmh ?? DEFAULT_TRAVEL_SPEED_KMH,
+            sheetUrl: data.sheetUrl || sheetUrl || "",
+            nurseSheetUrl: data.nurseSheetUrl || nurseSheetUrl || "",
+            geoCache: JSON.stringify(data.geoCache || {}),
+            archivedMonths: JSON.stringify(months)
+          }, { merge: true });
+          setArchiveCache({});
+          setHistory([]);
+          setRestoreCandidate(null);
+          setToastMessage("バックアップから復元しました（復元前の状態も、いま端末に保存したファイルから戻せます）");
+        } catch (e) {
+          console.error(e);
+          setToastMessage(`復元に失敗しました：${e?.message || e?.code || "不明なエラー"}`);
+        } finally {
+          setArchiveBusy(false);
+          setShowToast(true);
+        }
+      };
+
+      // 古い月のデータを「保管庫」（月ごとの別の保存場所）へ移す。
+      // 安全のため「先に保管庫へ書く → 成功を確認 → メイン側から外す」の順で行う。
+      const handleArchiveOldData = async () => {
+        if (!isAdminUser || !isOnline || !db || !storageInfo || storageInfo.archivable === 0) return;
+        const cutoff = storageInfo.cutoffMonth;
+        setArchiveBusy(true);
+        try {
+          const byMonth = {};
+          liveVisits.forEach(v => {
+            const m = monthOf(v.date);
+            if (v.date && m < cutoff) (byMonth[m] = byMonth[m] || { visits: [], savedPatterns: {} }).visits.push(v);
+          });
+          Object.keys(savedPatterns).forEach(date => {
+            const m = monthOf(date);
+            if (m < cutoff) (byMonth[m] = byMonth[m] || { visits: [], savedPatterns: {} }).savedPatterns[date] = savedPatterns[date];
+          });
+          const months = Object.keys(byMonth).sort();
+          for (const month of months) {
+            let mergedVisits = byMonth[month].visits;
+            let mergedPatterns = byMonth[month].savedPatterns;
+            if (archivedMonthSet.has(month)) {
+              // すでに保管済みの月に追加する場合は、中身を合体させる
+              const snap = await getDoc(archiveDocRef(month));
+              const d = snap.exists() ? snap.data() : {};
+              const ids = new Set(mergedVisits.map(v => v.id));
+              mergedVisits = [...decodeField(d.visits, []).filter(v => !ids.has(v.id)), ...mergedVisits];
+              mergedPatterns = { ...decodeField(d.savedPatterns, {}), ...mergedPatterns };
+            }
+            await setDoc(archiveDocRef(month), { month, visits: encodeField(mergedVisits), savedPatterns: encodeField(mergedPatterns), updatedAt: new Date().toISOString() });
+          }
+          const nextVisits = liveVisits.filter(v => !(v.date && monthOf(v.date) < cutoff));
+          const nextPatterns = {};
+          Object.keys(savedPatterns).forEach(date => { if (monthOf(date) >= cutoff) nextPatterns[date] = savedPatterns[date]; });
+          const nextMonths = [...new Set([...archivedMonths, ...months])].sort();
+          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths) }, { merge: true });
+          setArchiveCache({});
+          setHistory([]);
+          setToastMessage(`${months.length}か月分（${liveVisits.length - nextVisits.length}件）を保管庫へ移しました。保管した月も、その日付を開けばこれまでどおり閲覧できます。`);
+        } catch (e) {
+          console.error(e);
+          setToastMessage(`保管に失敗しました：${e?.message || e?.code || "不明なエラー"}（データは失われていません）`);
+        } finally {
+          setArchiveBusy(false);
+          setShowToast(true);
+        }
+      };
+
+      // 保管済みの月を、編集できる場所へ戻す
+      const handleUnarchiveMonth = async (month) => {
+        if (!isAdminUser || !isOnline || !db || !archivedMonthSet.has(month)) return;
+        setArchiveBusy(true);
+        try {
+          const snap = await getDoc(archiveDocRef(month));
+          const d = snap.exists() ? snap.data() : {};
+          const back = decodeField(d.visits, []);
+          const ids = new Set(liveVisits.map(v => v.id));
+          const nextVisits = [...liveVisits, ...back.filter(v => !ids.has(v.id))];
+          const nextPatterns = { ...decodeField(d.savedPatterns, {}), ...savedPatterns };
+          const nextMonths = archivedMonths.filter(m => m !== month);
+          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths) }, { merge: true });
+          setArchiveCache({});
+          setToastMessage(`${month.replace('-', '年')}月のデータを編集できる状態に戻しました`);
+        } catch (e) {
+          console.error(e);
+          const tooBig = e?.code === 'resource-exhausted' || e?.code === 'invalid-argument';
+          setToastMessage(tooBig ? "戻せませんでした：データ量が上限を超えます。先にほかの古い月を保管庫へ移してください。" : `戻せませんでした：${e?.message || e?.code || "不明なエラー"}`);
+        } finally {
+          setArchiveBusy(false);
+          setShowToast(true);
+        }
+      };
+
+      // 位置情報の状況（住所のうち、緯度経度が分かっているものの数）
+      const geoStatus = useMemo(() => {
+        if (activeTab !== 'visits') return null;
+        const known = new Set(), missing = new Set();
+        const check = (obj) => {
+          const key = normalizeAddress(obj.address);
+          if (!key) return;
+          if (pointOf(obj).lat != null) known.add(key); else missing.add(key);
+        };
+        const today = getTodayStr();
+        liveVisits.forEach(v => { if (v.type !== 'other' && v.date >= today) check(v); });
+        nurses.forEach(n => check({ location: n.startLocation, address: n.address }));
+        return { known: known.size, missing: [...missing] };
+      }, [activeTab, liveVisits, nurses, pointOf]);
+
+      // 住所から緯度経度を調べる（国土地理院の住所検索を利用。送るのは住所だけで、氏名は送らない）
+      const handleGeocode = async () => {
+        if (!isAdminUser || !geoStatus || geoStatus.missing.length === 0 || geoProgress) return;
+        const targets = geoStatus.missing;
+        if (!window.confirm(`住所 ${targets.length}件の位置（緯度・経度）を調べます。\n\n・国土地理院の住所検索サービスに「住所」を送信します（氏名は送信しません）\n・結果は移動時間の計算だけに使います\n\n実行しますか？`)) return;
+        const nextCache = { ...geoCache };
+        let ok = 0, ng = 0;
+        setGeoProgress({ done: 0, total: targets.length });
+        try {
+          for (let i = 0; i < targets.length; i++) {
+            try {
+              const res = await fetch(`https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(targets[i])}`);
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              const list = await res.json();
+              const c = Array.isArray(list) && list[0]?.geometry?.coordinates;
+              const lat = c ? Number(c[1]) : NaN, lng = c ? Number(c[0]) : NaN;
+              if (isValidLatLng(lat, lng)) { nextCache[targets[i]] = [Math.round(lat * 1e5) / 1e5, Math.round(lng * 1e5) / 1e5]; ok++; }
+              else ng++;
+            } catch (err) { console.error("geocode failed:", err); ng++; }
+            setGeoProgress({ done: i + 1, total: targets.length });
+            await new Promise(r => setTimeout(r, 250)); // 相手のサーバーに負荷をかけないよう間隔をあける
+          }
+          if (ok > 0) { setGeoCache(nextCache); updateCloudData({ geoCache: JSON.stringify(nextCache) }); }
+          setToastMessage(`位置情報を取得しました：成功 ${ok}件 / 見つからず ${ng}件${ng > 0 ? "（見つからない住所は、都道府県から書くと見つかりやすくなります）" : ""}`);
+        } finally {
+          setGeoProgress(null);
+          setShowToast(true);
+        }
+      };
 
       const handleContextMenu = (e, visit) => {
         if (e.preventDefault) e.preventDefault();
@@ -924,10 +1798,12 @@
             y = e.touches[0].clientY;
         }
 
-        const menuWidth = 160;
-        const menuHeight = 300; 
+        const menuWidth = 240;
+        const menuHeight = isAdmin ? 470 : 240; 
         if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
         if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
+        x = Math.max(8, x);
+        y = Math.max(8, y);
 
         setContextMenu({ mouseX: x, mouseY: y, visit });
         setActiveCardId(null);
@@ -1117,7 +1993,8 @@
           id: Date.now() + Math.floor(Math.random() * 1000),
           isExcludedFromAutoAssign: false, 
           nurseId: null, 
-          isAccompany: true
+          isAccompany: true,
+          accompanyOf: visit.isAccompany ? (visit.accompanyOf ?? null) : visit.id   // どの予定の同行かを記録
         };
         saveHistory();
         handleSetVisits(prev => [...prev, newVisit]);
@@ -1285,245 +2162,37 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
       const handleAutoAssign = () => {
         if (!isAdmin) return;
-        const availableStates = [];
-        nurses.forEach(n => {
-            const offType = getIsNurseOffType(n, selectedDate, nurseStatuses);
-            if (offType !== 'full') {
-                availableStates.push({ nurse: n, offType });
-            }
-        });
-
-        if (availableStates.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
+        const hasWorker = nurses.some(n => getIsNurseOffType(n, selectedDate, nurseStatuses) !== 'full');
+        if (!hasWorker) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         
         saveHistory();
         setIsOptimizing(true);
         
         setTimeout(() => {
           try {
-            const newVisits = [...visits];
-            const todayUnassigned = newVisits.filter(v => v.date === selectedDate && v.nurseId === null && !v.isExcludedFromAutoAssign).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
-            
-            const states = availableStates.map(({nurse: n, offType}) => {
-              const mine = newVisits.filter(v => v.date === selectedDate && v.nurseId === n.id).sort((a,b) => parseTime(a.startTime) - parseTime(b.startTime));
-              const last = mine.length > 0 ? mine[mine.length - 1] : null;
-              
-              let totalDuration = 0;
-              let amDuration = 0;
-              let pmDuration = 0;
-              mine.forEach(v => {
-                  const dur = v.duration || 30;
-                  totalDuration += dur;
-                  if (parseTime(v.startTime) < 12 * 60) {
-                      amDuration += dur;
-                  } else {
-                      pmDuration += dur;
-                  }
-              });
-              
-              let startTimeMin = parseTime(n.startTime);
-              let endTimeMin = parseTime(n.endTime || '17:30');
-
-              if (offType === 'AM') {
-                  startTimeMin = parseTime('13:30');
-                  endTimeMin = parseTime('17:30');
-              } else if (offType === 'PM') {
-                  startTimeMin = parseTime('08:00');
-                  endTimeMin = parseTime('12:30');
-              }
-
-              let time = last ? parseTime(last.startTime) + (last.duration || 30) : startTimeMin;
-
-              return { 
-                  id: n.id, 
-                  offType,
-                  time, 
-                  loc: last && last.location ? last.location : (n.startLocation || {x: 50, y: 50}),
-                  totalDuration,
-                  amDuration,
-                  pmDuration,
-                  visitCount: mine.length,
-                  startTimeMin,
-                  endTimeMin
-              };
+            const history = useHistoryAssign ? buildAssignHistory(visits, nurseIdSet, selectedDate) : null;
+            const result = planAutoAssign({
+              visits,
+              nurses,
+              date: selectedDate,
+              offTypeOf: (n) => getIsNurseOffType(n, selectedDate, nurseStatuses),
+              pointOf,
+              travelBetween: (a, b) => travelMinutes(a, b, baseTravelTime, travelSpeedKmh),
+              history
             });
             
-            let assignedCount = 0;
-
-            todayUnassigned.forEach(visit => {
-              let best = null;
-              
-              const requiresFemale = visit.requiresFemaleNurse;
-              const preferredNurseNames = visit.preferredNurseNames || [];
-              const excludedNurseNames = visit.excludedNurseNames || [];
-              const targetStart = parseTime(visit.startTime);
-              const isAM = targetStart < 12 * 60;
-              const dur = visit.duration || 30;
-
-              const isExcluded = (nurseName) => {
-                  if (!nurseName || excludedNurseNames.length === 0) return false;
-                  return excludedNurseNames.some(ex => nurseName.includes(ex) || ex.includes(nurseName));
-              };
-              
-              for (const prefName of preferredNurseNames) {
-                  if (!prefName) continue;
-                  const prefNurseObj = availableStates.find(({nurse: n}) => (n.name === prefName || n.name?.includes(prefName) || prefName.includes(n.name)) && !isExcluded(n.name));
-                  if (prefNurseObj) {
-                      const s = states.find(st => st.id === prefNurseObj.nurse.id);
-                      if (s && targetStart >= s.startTimeMin && (targetStart + dur) <= s.endTimeMin) {
-                          best = s;
-                          break;
-                      }
-                  }
-              }
-              
-              if (!best) {
-                let minTravel = Infinity;
-                let minTotalDur = Infinity;
-                let minBalance = Infinity;
-                states.forEach(s => {
-                  const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                  if (!nDef) return;
-                  if (isExcluded(nDef.name)) return;
-                  if (nDef.isLowPriority) return; 
-                  if (requiresFemale && !nDef.isFemale) return; 
-                  
-                  const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  const expectedEnd = Math.max(s.time + travel, targetStart) + dur;
-                  
-                  if (targetStart >= s.startTimeMin && s.time + travel <= targetStart && expectedEnd <= s.endTimeMin) {
-                      const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                      if (s.totalDuration < minTotalDur || 
-                         (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
-                         (s.totalDuration === minTotalDur && balanceScore === minBalance && travel < minTravel)) {
-                          minTotalDur = s.totalDuration;
-                          minBalance = balanceScore;
-                          minTravel = travel;
-                          best = s;
-                      }
-                  }
-                });
-              }
-              
-              if (!best) {
-                let minTravel = Infinity;
-                let minTotalDur = Infinity;
-                let minBalance = Infinity;
-                states.forEach(s => {
-                  const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                  if (!nDef) return;
-                  if (isExcluded(nDef.name)) return;
-                  if (!nDef.isLowPriority) return; 
-                  if (requiresFemale && !nDef.isFemale) return; 
-                  
-                  const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                  const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                  const expectedEnd = Math.max(s.time + travel, targetStart) + dur;
-                  
-                  if (targetStart >= s.startTimeMin && s.time + travel <= targetStart && expectedEnd <= s.endTimeMin) {
-                      const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                      if (s.totalDuration < minTotalDur || 
-                         (s.totalDuration === minTotalDur && balanceScore < minBalance) ||
-                         (s.totalDuration === minTotalDur && balanceScore === minBalance && travel < minTravel)) {
-                          minTotalDur = s.totalDuration;
-                          minBalance = balanceScore;
-                          minTravel = travel;
-                          best = s;
-                      }
-                  }
-                });
-              }
-              
-              if (!best) {
-                 let earliest = Infinity;
-                 let isBestLow = true;
-                 let minTotalDur = Infinity;
-                 let minBalance = Infinity;
-                 states.forEach(s => {
-                   const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                   if (!nDef) return;
-                   if (isExcluded(nDef.name)) return;
-                   if (requiresFemale && !nDef.isFemale) return; 
-                   const isLow = !!nDef.isLowPriority;
-                   
-                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                   const arrival = s.time + travel;
-                   const expectedEnd = Math.max(arrival, targetStart) + dur;
-                   const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                   
-                   if (targetStart >= s.startTimeMin && expectedEnd <= s.endTimeMin) {
-                       if (arrival < earliest || 
-                          (arrival === earliest && isBestLow && !isLow) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
-                           earliest = arrival; 
-                           best = s; 
-                           isBestLow = isLow;
-                           minTotalDur = s.totalDuration;
-                           minBalance = balanceScore;
-                       }
-                   }
-                 });
-              }
-              
-              if (!best) {
-                 let earliest = Infinity;
-                 let isBestLow = true;
-                 let minTotalDur = Infinity;
-                 let minBalance = Infinity;
-                 states.forEach(s => {
-                   const nDef = availableStates.find(av => av.nurse.id === s.id)?.nurse;
-                   if (!nDef) return;
-                   if (isExcluded(nDef.name)) return;
-                   if (requiresFemale && !nDef.isFemale) return; 
-                   const isLow = !!nDef.isLowPriority;
-                   
-                   const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - s.loc.x, 2) + Math.pow((visit.location?.y || 50) - s.loc.y, 2));
-                   const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                   const arrival = s.time + travel;
-                   const balanceScore = isAM ? (s.amDuration - s.pmDuration) : (s.pmDuration - s.amDuration);
-                   
-                   if (targetStart >= s.startTimeMin) {
-                       if (arrival < earliest || 
-                          (arrival === earliest && isBestLow && !isLow) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration < minTotalDur) ||
-                          (arrival === earliest && isBestLow === isLow && s.totalDuration === minTotalDur && balanceScore < minBalance)) { 
-                           earliest = arrival; 
-                           best = s; 
-                           isBestLow = isLow;
-                           minTotalDur = s.totalDuration;
-                           minBalance = balanceScore;
-                       }
-                   }
-                 });
-              }
-
-              if (best) {
-                const vIdx = newVisits.findIndex(v => v.id === visit.id);
-                newVisits[vIdx].nurseId = best.id;
-                const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - best.loc.x, 2) + Math.pow((visit.location?.y || 50) - best.loc.y, 2));
-                const travel = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
-                
-                best.time = Math.max(best.time + travel, parseTime(visit.startTime)) + dur;
-                best.loc = visit.location || {x: 50, y: 50};
-                best.totalDuration += dur;
-                if (isAM) {
-                    best.amDuration += dur;
-                } else {
-                    best.pmDuration += dur;
-                }
-                best.visitCount++;
-                assignedCount++;
-              }
-            });
-            
-            handleSetVisits(newVisits); 
             setIsOptimizing(false); 
-            if(assignedCount === 0) {
-              setToastMessage("自動編成できる対象がありませんでした");
+            if (result.assignedCount === 0) {
+              setToastMessage(result.failed.length > 0
+                ? `空いている担当者が見つからず、${result.failed.length}件は未割り当てのままです`
+                : "自動編成できる対象がありませんでした");
             } else {
-              setToastMessage("自動編成完了"); 
+              handleSetVisits(result.visits); 
+              const parts = [`自動編成完了: ${result.assignedCount}件を割り当て`];
+              if (result.historyHits > 0) parts.push(`うち${result.historyHits}件は過去の担当実績を反映`);
+              if (result.overtimeCount > 0) parts.push(`${result.overtimeCount}件は時間外`);
+              if (result.failed.length > 0) parts.push(`${result.failed.length}件は空きがなく未割り当てのまま`);
+              setToastMessage(parts.join(" / ")); 
             }
             setShowToast(true);
           } catch (error) {
@@ -1532,7 +2201,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             setToastMessage("自動編成中にエラーが発生しました。");
             setShowToast(true);
           }
-        }, 800);
+        }, 400);
       };
 
       const executeResetAssignments = () => {
@@ -1591,38 +2260,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
         if (targetNurseId) {
             const targetNurse = nurses.find(n => n.id === targetNurseId);
-            
-            if (targetVisit.requiresFemaleNurse && !targetNurse.isFemale) {
-                setToastMessage("この利用者は女性看護師限定です");
-                setShowToast(true);
-                return;
-            }
-
-            if (targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
-                const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
-                if (isExcluded) {
-                    setToastMessage("除外スタッフに設定されているため、割り当てできません");
-                    setShowToast(true);
-                    return;
-                }
-            }
-
-            const offType = getIsNurseOffType(targetNurse, selectedDate, nurseStatuses);
-            if (offType === 'full') {
-                setToastMessage(`${targetNurse.name} は本日お休みです`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'AM' && newStartMin < parseTime('13:30')) {
-                setToastMessage(`${targetNurse.name} は午前休（13:30以降出勤）です`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'PM' && newStartMin >= parseTime('12:30')) {
-                setToastMessage(`${targetNurse.name} は午後休（12:30退勤）です`);
-                setShowToast(true);
-                return;
-            }
+            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), newStartMin);
+            if (problem) { setToastMessage(problem); setShowToast(true); return; }
         }
         
         saveHistory();
@@ -1643,42 +2282,40 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         
         if (parsedNurseId) {
             const targetNurse = nurses.find(n => n.id === parsedNurseId);
-            
-            if (targetVisit.requiresFemaleNurse && !targetNurse.isFemale) {
-                setToastMessage("この利用者は女性看護師限定です");
-                setShowToast(true);
-                return;
-            }
-            
-            if (targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
-                const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
-                if (isExcluded) {
-                    setToastMessage("除外スタッフに設定されているため、割り当てできません");
-                    setShowToast(true);
-                    return;
-                }
-            }
-
-            const offType = getIsNurseOffType(targetNurse, selectedDate, nurseStatuses);
-            if (offType === 'full') {
-                setToastMessage(`${targetNurse.name} は本日お休みです`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'AM' && targetStart < parseTime('13:30')) {
-                setToastMessage(`${targetNurse.name} は午前休（13:30以降出勤）です`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'PM' && targetStart >= parseTime('12:30')) {
-                setToastMessage(`${targetNurse.name} は午後休（12:30退勤）です`);
-                setShowToast(true);
-                return;
-            }
+            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), targetStart);
+            if (problem) { setToastMessage(problem); setShowToast(true); return; }
         }
 
         saveHistory();
-        handleSetVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+        handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+      };
+
+      // スマホなど、ドラッグができない端末向け：メニューから担当者と開始時刻を変更する
+      const handleMoveSubmit = (e) => {
+        e.preventDefault();
+        if (!isAdmin || !moveTarget) return;
+        const formData = new FormData(e.target);
+        const nurseValue = formData.get('nurseId');
+        const newNurseId = nurseValue === 'unassigned' ? null : parseInt(nurseValue, 10);
+        const newStart = String(formData.get('startTime') || moveTarget.startTime);
+        const startMin = parseTime(newStart);
+        const target = visits.find(v => v.id === moveTarget.id);
+        if (!target || target.isExcludedFromAutoAssign) { setMoveTarget(null); return; }
+        let overlapNote = "";
+        if (newNurseId) {
+          const nurse = nurses.find(n => n.id === newNurseId);
+          const problem = assignProblem(target, nurse, getIsNurseOffType(nurse, target.date, nurseStatuses), startMin);
+          if (problem) { setToastMessage(problem); setShowToast(true); return; }
+          const overlap = findOverlap(visits, target, newNurseId, target.date, startMin);
+          if (overlap) overlapNote = `（※ ${overlap.userName} ${overlap.startTime}〜 と時間が重なっています）`;
+        }
+        saveHistory();
+        handleSetVisits(prev => prev.map(v => v.id === target.id
+          ? { ...v, nurseId: newNurseId, startTime: newStart, originalStartTime: v.originalStartTime || v.startTime }
+          : v));
+        setMoveTarget(null);
+        setToastMessage(`${target.userName} を ${newNurseId ? nurses.find(n => n.id === newNurseId).name : '未割り当て'}・${newStart} に変更しました${overlapNote}`);
+        setShowToast(true);
       };
 
       const updateCustomTravelTime = (visitId, newTime) => {
@@ -1742,16 +2379,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
       const handleFetchSheet = async () => {
         if (!isAdmin) return;
+        if (!sheetUrl) { setToastMessage("「接続設定」に利用者スプレッドシートのURLを入力してください"); setShowToast(true); return; }
         setIsLoadingSheet(true);
         try {
           const res = await fetch(sheetUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const txt = await res.text();
-          const rows = txt.split(/\r\n|\n/);
+          // 週の基準は必ず「表示中の週の月曜日」にする（開始日が月曜以外でも日付がずれないように）
+          const weekMonday = displayDates[0] || getMondayStr(startDate || getTodayStr());
+          if (looksLikeHtml(txt)) throw new Error("CSVではなくWebページが返されました（URLまたは公開設定の誤り）");
+          const rows = parseCsv(txt);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
           
           for (let i = 1; i < rows.length; i++) {
-            const p = rows[i].split(',');
+            const p = rows[i];
             if (p[9] && p[9].includes('休止')) continue; 
             if (p[0]?.trim()) {
               const nameStr = p[0].trim();
@@ -1768,28 +2410,25 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               const excludedNurseNames = excludedNursesStr ? excludedNursesStr.split(/[・,、]/).map(n => n.trim()).filter(Boolean) : [];
 
               const address = p[8]?.trim() || '';
+              // 任意の列：緯度(11列目)・経度(12列目)。入っていれば実際の距離で移動時間を計算する
+              const lat = parseFloat(p[10]), lng = parseFloat(p[11]);
+              const latLng = isValidLatLng(lat, lng) ? { lat, lng } : {};
 
               let visitDate = '';
               if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
-                visitDate = dateOrDay.replace(/\//g, '-');
+                visitDate = normalizeDateStr(dateOrDay);
               } else {
                 const targetDay = dayMap[dateOrDay];
-                if (targetDay !== undefined && startDate) {
-                  const start = new Date(startDate);
-                  const startDay = start.getDay();
-                  let diff = targetDay - startDay;
-                  if (diff < 0) diff += 7;
-                  start.setDate(start.getDate() + diff);
-                  visitDate = start.toISOString().split('T')[0];
-                } else {
-                  visitDate = startDate || new Date().toISOString().split('T')[0];
-                }
+                const start = new Date(weekMonday);
+                // 月=0 … 日=6 日分だけ月曜から進める（曜日が読み取れない行は従来どおり月曜に置く）
+                if (targetDay !== undefined) start.setDate(start.getDate() + ((targetDay + 6) % 7));
+                visitDate = start.toISOString().split('T')[0];
               }
 
               result.push({ 
                 id: Date.now() + i, 
                 userName: nameStr.includes('様') ? nameStr : nameStr + ' 様', 
-                location: getHashLoc(address || nameStr), 
+                location: { ...getHashLoc(address || nameStr), ...latLng }, 
                 duration: dur, 
                 date: visitDate, 
                 dayOfWeek: dayMap[dateOrDay] ?? 1, 
@@ -1806,76 +2445,43 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             }
           }
           
-          const nextVisits = [];
-          let addedCount = 0;
-          let updatedCount = 0;
-          let deletedCount = 0;
+          // 取得結果が空のときは、通信エラーやURL間違いの可能性が高いので何も変更しない
+          if (result.length === 0) {
+            setToastMessage("同期を中止しました：スプレッドシートから利用者を1件も読み取れませんでした（URLや公開設定をご確認ください）。予定は変更していません。");
+            setShowToast(true);
+            return;
+          }
 
-          visits.forEach(v => {
-            if (v.type === 'other' || v.isAccompany) {
-              nextVisits.push(v);
-              return;
-            }
-
-            if (!displayDates.includes(v.date)) {
-              nextVisits.push(v);
-              return;
-            }
-
-            const sheetData = result.find(nv => 
-              normalizeName(v.userName) === normalizeName(nv.userName) && 
-              v.date === nv.date && 
-              v.originalStartTime === nv.originalStartTime
-            );
-
-            if (sheetData) {
-              nextVisits.push({ 
-                ...sheetData, 
-                id: v.id, 
-                nurseId: v.nurseId, 
-                startTime: v.startTime, 
-                customTravelTime: v.customTravelTime,
-                isExcludedFromAutoAssign: v.isExcludedFromAutoAssign 
-              });
-              updatedCount++;
-            } else {
-              deletedCount++;
-            }
-          });
-
-          result.forEach(nv => {
-            const isExisting = visits.some(v => 
-              v.type !== 'other' && !v.isAccompany &&
-              normalizeName(v.userName) === normalizeName(nv.userName) && 
-              v.date === nv.date && 
-              v.originalStartTime === nv.originalStartTime
-            );
-            
-            if (!isExisting) {
-              nextVisits.push(nv);
-              addedCount++;
-            }
-          });
+          const merged = mergeSheetVisits({ visits, sheetRows: result, weekDates: displayDates });
           
-          handleSetVisits(nextVisits); 
-          setToastMessage(`同期完了: 新規追加 ${addedCount}件 / 更新 ${updatedCount}件 / 削除 ${deletedCount}件`); 
+          saveHistory(); // 「元に戻す」で同期前の状態に戻せるようにする
+          handleSetVisits(merged.visits); 
+          const parts = [`新規 ${merged.added}件`, `更新 ${merged.updated}件`];
+          if (merged.retimed > 0) parts.push(`時間変更 ${merged.retimed}件（担当者は引き継ぎ）`);
+          parts.push(`削除 ${merged.deleted}件`);
+          let msg = `同期完了: ${parts.join(" / ")}`;
+          if (merged.deletedAssigned > 0) msg += `。担当者が決まっていた予定が${merged.deletedAssigned}件削除されました（「元に戻す」で復元できます）`;
+          setToastMessage(msg); 
           setShowToast(true);
-        } catch (e) { setToastMessage("データの同期に失敗"); setShowToast(true); } 
+        } catch (e) { console.error(e); setToastMessage(`同期に失敗しました：${e?.message || "通信エラー"}。予定は変更していません。`); setShowToast(true); } 
         finally { setIsLoadingSheet(false); }
       };
 
       const handleFetchNurseSheet = async () => {
-        if (!isAdmin) return;
+        if (!isAdminUser) return;
+        if (!nurseSheetUrl) { setToastMessage("「接続設定」に看護師スプレッドシートのURLを入力してください"); setShowToast(true); return; }
         setIsLoadingNurseSheet(true);
         try {
           const res = await fetch(nurseSheetUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const txt = await res.text();
-          const rows = txt.split(/\r\n|\n/);
+          if (looksLikeHtml(txt)) throw new Error("CSVではなくWebページが返されました（URLまたは公開設定の誤り）");
+          const rows = parseCsv(txt);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
           
           for (let i = 1; i < rows.length; i++) {
-            const p = rows[i].split(',');
+            const p = rows[i];
             if (p[0]?.trim()) {
               const nameStr = p[0].trim();
               let st = p[1]?.trim() || '08:30'; if (st.length === 4) st = '0' + st;
@@ -1907,15 +2513,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                      let dateStr = rawSpec;
                      if (rawSpec.includes('(午前)') || rawSpec.includes('(AM)')) { type = 'AM'; dateStr = rawSpec.replace(/\(午前\)/g, '').replace(/\(AM\)/g, ''); }
                      else if (rawSpec.includes('(午後)') || rawSpec.includes('(PM)')) { type = 'PM'; dateStr = rawSpec.replace(/\(午後\)/g, '').replace(/\(PM\)/g, ''); }
-                     dateStr = dateStr.replace(/\//g, '-'); 
-                     
-                     const dateParts = dateStr.split('-');
-                     if(dateParts.length === 3) {
-                         const y = dateParts[0];
-                         const m = dateParts[1].padStart(2, '0');
-                         const d = dateParts[2].padStart(2, '0');
-                         dateStr = `${y}-${m}-${d}`;
-                     }
+                     dateStr = normalizeDateStr(dateStr);
 
                      if (dateStr) {
                          specificOffDays.push({ date: dateStr, type });
@@ -1924,11 +2522,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               }
 
               const address = p[7]?.trim() || '';
+              // 任意の列：緯度(9列目)・経度(10列目)
+              const lat = parseFloat(p[8]), lng = parseFloat(p[9]);
+              const latLng = isValidLatLng(lat, lng) ? { lat, lng } : {};
               
               result.push({ 
                 id: Date.now() + i, 
                 name: nameStr, 
-                startLocation: getHashLoc(address || nameStr), 
+                address: address,
+                startLocation: { ...getHashLoc(address || nameStr), ...latLng }, 
                 color: colors[result.length % colors.length], 
                 startTime: st, 
                 endTime: et,
@@ -1940,10 +2542,23 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             }
           }
           
-          handleSetNurses(result); 
-          setToastMessage("看護師名簿の同期成功"); 
+          // 取得結果が空のときは、名簿を空で上書きしない
+          if (result.length === 0) {
+            setToastMessage("更新を中止しました：スプレッドシートから看護師を1名も読み取れませんでした（URLや公開設定をご確認ください）。名簿は変更していません。");
+            setShowToast(true);
+            return;
+          }
+
+          // 同じ名前の看護師はIDを引き継ぐ（＝作成済みのスケジュールがそのまま残る）
+          let seq = 0;
+          const merged = mergeNurseSheet({ nurses, sheetNurses: result, makeId: () => Date.now() + (++seq) });
+          handleSetNurses(merged.nurses); 
+          let msg = `看護師名簿を更新しました（${merged.nurses.length}名）`;
+          if (merged.added > 0) msg += ` / 追加 ${merged.added}名`;
+          if (merged.removed > 0) msg += ` / 名簿から外れた ${merged.removed}名の予定は「未割り当て」に戻ります`;
+          setToastMessage(msg); 
           setShowToast(true);
-        } catch (e) { setToastMessage("名簿の同期に失敗"); setShowToast(true); } 
+        } catch (e) { console.error(e); setToastMessage(`名簿の更新に失敗しました：${e?.message || "通信エラー"}。名簿は変更していません。`); setShowToast(true); } 
         finally { setIsLoadingNurseSheet(false); }
       };
 
@@ -2052,7 +2667,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
       };
 
       return (
-        <div className="flex flex-col md:flex-row h-screen bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden" onClick={() => setContextMenu(null)} onContextMenu={() => setContextMenu(null)}>
+        <div className="flex flex-col md:flex-row app-shell bg-[#F8FAFC] text-slate-800 font-sans overflow-hidden" onClick={() => setContextMenu(null)} onContextMenu={() => setContextMenu(null)}>
           <aside className={`bg-slate-900 text-slate-300 hidden md:flex flex-col shrink-0 border-r border-slate-800 transition-all duration-300 relative ${isSidebarOpen ? 'w-72' : 'w-20'}`}>
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -2080,10 +2695,16 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               {isSidebarOpen && (
                 <div className="flex flex-col gap-1 items-start mt-1">
                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1 whitespace-nowrap overflow-hidden">Route Optimization v2.5</p>
-                  {isAdmin ? (
-                    <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] px-2 py-0.5 rounded font-black ml-1">管理者モード</span>
+                  {isAdminUser ? (
+                    <div className="flex items-center gap-1.5 ml-1">
+                      <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] px-2 py-0.5 rounded font-black">管理者モード</span>
+                      <button onClick={handleLogout} className="text-[10px] font-black text-slate-400 hover:text-white border border-slate-600 px-2 py-0.5 rounded flex items-center gap-1 transition-colors" title={user?.email || ''}><LogOut size={10}/>ログアウト</button>
+                    </div>
                   ) : (
-                    <span className="bg-slate-700 text-slate-400 text-[10px] px-2 py-0.5 rounded font-black ml-1 border border-slate-600">閲覧モード</span>
+                    <div className="flex items-center gap-1.5 ml-1">
+                      <span className="bg-slate-700 text-slate-400 text-[10px] px-2 py-0.5 rounded font-black border border-slate-600">閲覧モード</span>
+                      {wantsAdmin && <button onClick={() => { setLoginError(""); setShowLogin(true); }} className="text-[10px] font-black text-teal-300 hover:text-white border border-teal-700 px-2 py-0.5 rounded flex items-center gap-1 transition-colors"><LogIn size={10}/>ログイン</button>}
+                    </div>
                   )}
                 </div>
               )}
@@ -2156,7 +2777,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             )}
           </aside>
 
-          <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
+          <header className="md:hidden bg-slate-900 text-white px-4 py-2 flex justify-between items-center shrink-0 sticky top-0 z-50 shadow-lg shadow-slate-900/20">
             <div className="flex items-center gap-2 font-black text-lg">
               <div 
                 className="flex items-center gap-2 select-none"
@@ -2172,24 +2793,54 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 <Activity className="text-teal-400" size={20} />
                 <span>CareRoute</span>
               </div>
-              {isAdmin ? (
-                <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">管理者</span>
+              {isAdminUser ? (
+                <button onClick={handleLogout} className="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1.5 py-0.5 rounded font-black ml-1 flex items-center gap-1" title="タップでログアウト">管理者<LogOut size={9}/></button>
+              ) : wantsAdmin ? (
+                <button onClick={() => { setLoginError(""); setShowLogin(true); }} className="bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[9px] px-1.5 py-0.5 rounded font-black ml-1 flex items-center gap-1"><LogIn size={9}/>ログイン</button>
               ) : (
                 <span className="bg-slate-700 text-slate-400 border border-slate-600 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">閲覧</span>
               )}
             </div>
-            <div className="flex gap-0.5">
-              <button onClick={() => setActiveTab('overview')} className={`p-2 rounded-xl ${activeTab === 'overview' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Columns size={20} /></button>
-              <button onClick={() => setActiveTab('schedule')} className={`p-2 rounded-xl ${activeTab === 'schedule' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Calendar size={20} /></button>
-              <button onClick={() => setActiveTab('visits')} className={`p-2 rounded-xl ${activeTab === 'visits' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><Users size={20} /></button>
-              <button onClick={() => setActiveTab('nurses')} className={`p-2 rounded-xl ${activeTab === 'nurses' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><UserCog size={20} /></button>
-              <button onClick={() => setActiveTab('report')} className={`p-2 rounded-xl ${activeTab === 'report' ? 'bg-teal-600 text-white' : 'text-slate-400'}`}><BarChart3 size={20} /></button>
+            <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400">
+              <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-400' : db && user ? 'bg-emerald-400' : 'bg-slate-500'}`}></div>
+              <span>{!isOnline ? 'オフライン' : db && user ? (isSyncing ? '読込中' : '同期中') : '接続中...'}</span>
             </div>
           </header>
 
           <main className="flex-1 flex flex-col overflow-hidden relative">
+            {activeTab !== 'report' && (
+              <div className="md:hidden bg-white border-b border-slate-200 px-2 pt-2 pb-1.5 z-40 shrink-0">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1">
+                    <button onClick={handlePrevWeek} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="前週"><ChevronsLeft size={18} /></button>
+                    <button onClick={handlePrevDay} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="前日"><ChevronLeft size={18} /></button>
+                    <button onClick={handleGoToToday} className="px-3 h-9 rounded-lg flex items-center justify-center text-teal-700 bg-teal-50 border border-teal-200 font-black text-xs" aria-label="今日">今日</button>
+                    <button onClick={handleNextDay} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="翌日"><ChevronRight size={18} /></button>
+                    <button onClick={handleNextWeek} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 bg-slate-100 active:bg-slate-200" aria-label="次週"><ChevronsRight size={18} /></button>
+                  </div>
+                  <span className="text-[11px] font-black text-slate-500 pr-1">
+                    {displayDates.length > 0 ? `${displayDates[0].slice(5).replace('-', '/')}〜${displayDates[6].slice(5).replace('-', '/')}` : ''}
+                  </span>
+                </div>
+                <div className="grid grid-cols-7 gap-1">
+                  {displayDates.map((dateStr) => {
+                    const d = new Date(dateStr);
+                    const dow = d.getDay();
+                    const isSelected = selectedDate === dateStr;
+                    const isToday = dateStr === getTodayStr();
+                    return (
+                      <button key={dateStr} onClick={() => handleDateChange(dateStr)} className={`h-11 rounded-xl flex flex-col items-center justify-center leading-none transition-colors ${isSelected ? 'bg-teal-600 text-white shadow-md shadow-teal-600/30' : isToday ? 'bg-teal-50 border border-teal-300 text-slate-700' : 'bg-white border border-slate-200 text-slate-600'}`}>
+                        <span className={`text-[10px] font-black mb-0.5 ${isSelected ? 'text-teal-100' : dow === 0 ? 'text-red-400' : dow === 6 ? 'text-blue-400' : 'text-slate-400'}`}>{JS_DAYS[dow]}</span>
+                        <span className="text-sm font-black">{d.getDate()}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {activeTab === 'schedule' ? (
-              <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center justify-between shrink-0 sticky top-0 md:relative">
+              <div className="hidden md:flex bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex-col md:flex-row md:items-center justify-between shrink-0 sticky top-0 md:relative">
                 <div className="flex items-center gap-2 pr-2">
                   <button onClick={handlePrevDay} className="w-10 h-10 rounded-xl flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors shrink-0 shadow-sm border border-slate-200"><ChevronLeft size={20} /></button>
                   <div className="px-4 h-10 bg-white rounded-xl border border-slate-200 font-black text-slate-700 text-sm shadow-sm flex items-center justify-center gap-2 min-w-[120px]">
@@ -2201,7 +2852,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 </div>
               </div>
             ) : activeTab !== 'report' ? (
-              <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
+              <div className="hidden md:flex bg-white/80 backdrop-blur-md border-b border-slate-200 p-2 md:p-4 z-40 flex-col md:flex-row md:items-center gap-2 md:gap-8 shrink-0 sticky top-0 md:relative">
                 <div ref={scrollRefHeader1} className="flex items-center gap-3 overflow-x-auto hide-scrollbar pc-scrollable pr-4 pl-2 pb-1 md:pb-2 cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
                   <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 pointer-events-none">
                     <CalendarDays size={16} className="text-slate-500" />
@@ -2248,20 +2899,49 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             ) : null}
 
-            <div className="flex-1 overflow-auto p-4 md:p-10">
+            {!isOnline && (
+              <div className="bg-slate-700 text-white text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex items-center gap-2 shrink-0">
+                <WifiOff size={16} className="shrink-0" />
+                <span>オフラインです。最後に読み込んだ内容を表示しています{isAdminUser ? "（電波が戻るまで編集はできません）" : ""}</span>
+              </div>
+            )}
+            {legacyAdmin && (
+              <div className="bg-red-50 border-b border-red-200 text-red-700 text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex items-center gap-2 shrink-0">
+                <ShieldAlert size={16} className="shrink-0" />
+                <span>ログイン機能が未設定のため、従来の方式で管理者になっています（URLを知っている人は誰でも編集できる状態です）。READMEの手順で設定してください。</span>
+              </div>
+            )}
+            {isArchivedView && (
+              <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex flex-wrap items-center gap-2 shrink-0">
+                <Archive size={16} className="shrink-0" />
+                <span>{monthOf(selectedDate).replace('-', '年')}月は保管済みのため、閲覧のみです{archiveCache[monthOf(selectedDate)]?.loading ? "（読み込み中…）" : archiveCache[monthOf(selectedDate)]?.error ? "（読み込みに失敗しました）" : ""}</span>
+                {isAdminUser && (
+                  <button onClick={() => handleUnarchiveMonth(monthOf(selectedDate))} disabled={archiveBusy} className="ml-auto bg-white border border-amber-300 text-amber-700 px-3 py-1 rounded-lg hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap">編集できるように戻す</button>
+                )}
+              </div>
+            )}
+            <div className="flex-1 overflow-auto p-2.5 md:p-10">
               {activeTab === 'overview' && (
-                <div className="flex flex-col h-full space-y-4 md:space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 text-sm">
+                <div className="flex flex-col h-full space-y-2 md:space-y-6">
+                  <div className={`${isAdmin ? 'flex' : 'hidden md:flex'} flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4 shrink-0 text-sm`}>
                     <div className="flex flex-wrap items-center gap-4">
-                      <h1 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
+                      <h1 className="hidden md:block text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mb-2">
                         {formatDateLabel(selectedDate)}
                       </h1>
-                      <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
+                      <div className={`${isAdmin ? 'flex' : 'hidden md:flex'} items-center gap-3 bg-white px-3 md:px-4 py-1 md:py-2 rounded-2xl border border-slate-200 shadow-sm`}>
                         <Clock size={16} className="text-slate-400" />
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
                         <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 disabled:bg-transparent read-only:focus:ring-0"/>
                         <span className="text-xs text-slate-400 font-bold">分</span>
+                        <div className="w-px h-4 bg-slate-200"></div>
+                        <span className="text-xs font-black text-slate-500 tracking-tight whitespace-nowrap" title="住所の位置（緯度・経度）が分かっている区間は、距離÷時速 の時間を上の移動時間に足します">時速:</span>
+                        <input type="number" min="5" max="60" value={travelSpeedKmh} onChange={e => handleSetTravelSpeed(Math.min(60, Math.max(5, parseInt(e.target.value) || DEFAULT_TRAVEL_SPEED_KMH)))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 read-only:focus:ring-0"/>
+                        <span className="text-xs text-slate-400 font-bold">km</span>
                       </div>
+                      <button onClick={() => window.print()} className="hidden md:flex bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap" title="この日の担当表を印刷、またはPDFとして保存します">
+                        <Printer size={16} />
+                        印刷 / PDF
+                      </button>
                     </div>
                     <div ref={scrollRefOverview} className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pc-scrollable pb-2 md:pb-3 cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
                       
@@ -2327,6 +3007,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             リセット
                           </button>
                           <button 
+                            onClick={() => setUseHistoryAssign(v => !v)}
+                            className={`border px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${useHistoryAssign ? 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'}`}
+                            title="ONにすると、自動編成のときに「過去にその利用者を担当した看護師」を優先します"
+                          >
+                            <History size={16} />
+                            実績反映 {useHistoryAssign ? 'ON' : 'OFF'}
+                          </button>
+                          <button 
                             onClick={() => {
                               if (isOptimizing || unassignedCount === 0 || nurses.length === 0) return;
                               handleAutoAssign();
@@ -2343,14 +3031,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
                   {renderDailyMemo()}
 
-                  <div className="flex-1 bg-white rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
-                    <div className="overflow-auto relative flex-1 timeline-shadow">
+                  <div className="flex-1 bg-white rounded-2xl md:rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
+                    <div ref={timelineScrollRef} className="overflow-auto relative flex-1 timeline-shadow">
                       <div className="min-w-max flex flex-col">
                         <div className="flex sticky top-0 z-[60] bg-slate-50/95 backdrop-blur-sm border-b border-slate-200">
                           <div className="w-10 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[9px] md:text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
-                          <div className="w-32 md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50">
-                             <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1">未割り当て</div>
-                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[10px] md:text-[11px] font-black px-2 md:px-3 py-0.5 md:py-1 rounded-full`}>{unassignedCount}件</div>
+                          <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50`}>
+                             <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1 text-center leading-tight">{unassignedCount > 0 ? '未割り当て' : <><span className="md:hidden">未割当</span><span className="hidden md:inline">未割り当て</span></>}</div>
+                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[10px] md:text-[11px] font-black px-1.5 md:px-3 py-0.5 md:py-1 rounded-full whitespace-nowrap`}>{unassignedCount}件</div>
                           </div>
                           {nurses.map(nurse => {
                             const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
@@ -2360,8 +3048,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             const assigned = allSchedules[nurse.id]?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-10 md:w-14 bg-slate-100/50' : 'w-36 md:w-48 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
-                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-2 md:px-3 mb-1'} `}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 flex flex-col items-center py-2 ${isOff ? 'w-10 md:w-14 bg-slate-100/50' : 'w-[6.75rem] md:w-48 bg-white/50'}`} style={{ backgroundColor: isOff ? '' : nurse.color + '05' }}>
+                                <div className={`w-full flex ${isOff ? 'flex-col gap-2 items-center mb-3' : 'justify-between px-1.5 md:px-3 mb-1'} `}>
                                    <button 
                                      type="button"
                                      onClick={() => toggleNurseLock(nurse.id, selectedDate)}
@@ -2375,7 +3063,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                      type="button"
                                      onClick={() => toggleNurseStatus(nurse.id, selectedDate, offType)}
                                      disabled={isLocked || !isAdmin}
-                                     className={`text-[8px] md:text-[9px] font-black px-1 md:px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
+                                     className={`text-[10px] md:text-[9px] font-black px-1 md:px-1.5 py-0.5 rounded border transition-colors shadow-sm ${(isLocked || !isAdmin) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} ${offType === 'full' ? 'bg-slate-200 text-slate-500 border-slate-300' : offType === 'AM' ? 'bg-amber-100 text-amber-600 border-amber-200' : offType === 'PM' ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}
                                      title={!isAdmin ? "閲覧モード" : isLocked ? "固定されているため変更できません" : "出勤/休みを切り替える"}
                                    >
                                      {offType === 'full' ? "全休" : offType === 'AM' ? "午前休" : offType === 'PM' ? "午後休" : "出勤"}
@@ -2387,12 +3075,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                   <div className="flex flex-col items-center">
                                     <div className="font-black text-slate-800 text-xs md:text-sm flex items-center gap-1 md:gap-2">
                                         <div className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full shadow-sm" style={{ backgroundColor: nurse.color }}></div>
-                                        <span className="truncate max-w-[70px] md:max-w-[80px]" title={nurse.name}>{nurse.name}</span>
+                                        <span className="truncate max-w-[78px] md:max-w-[80px]" title={nurse.name}>{nurse.name}</span>
                                     </div>
                                     <div className="flex flex-wrap items-center justify-center gap-1 mt-1">
                                         {offType === 'AM' && <span className="text-[8px] md:text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1 md:px-1.5 rounded-full">午前休</span>}
                                         {offType === 'PM' && <span className="text-[8px] md:text-[9px] font-black text-orange-500 bg-orange-50 border border-orange-200 px-1 md:px-1.5 rounded-full">午後休</span>}
-                                        <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
+                                        <span className="text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
                                     </div>
                                   </div>
                                 )}
@@ -2406,12 +3094,18 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                               <div key={i} className="absolute w-full text-right pr-1 md:pr-3 text-[9px] md:text-[11px] font-black text-slate-300" style={{ top: i * 60 * PIXELS_PER_MINUTE - 8 }}>{(START_HOUR + i).toString().padStart(2, '0')}:00</div>
                             ))}
                           </div>
+                          {selectedDate === getTodayStr() && nowMinutes >= START_HOUR * 60 && nowMinutes <= END_HOUR * 60 && (
+                            <div className="absolute left-0 right-0 pointer-events-none z-[55]" style={{ top: `${getTop(nowMinutes)}px` }}>
+                              <div className="border-t-2 border-red-400/80"></div>
+                              <div className="sticky left-0 inline-block -translate-y-1/2 bg-red-500 text-white text-[9px] md:text-[10px] font-black px-1 py-0.5 rounded-r leading-none">{formatTime(nowMinutes)}</div>
+                            </div>
+                          )}
                           <div className="absolute left-10 md:left-20 right-0 inset-y-0 pointer-events-none z-0">
                             {Array.from({ length: (END_HOUR - START_HOUR) * 4 }).map((_, i) => (
                               <div key={i} className={`absolute w-full border-t ${i % 4 === 0 ? 'border-slate-200' : i % 2 === 0 ? 'border-slate-100' : 'border-slate-50 border-dashed'}`} style={{ top: i * 15 * PIXELS_PER_MINUTE }}></div>
                             ))}
                           </div>
-                          <div className="w-32 md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10" onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
+                          <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10`} onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {unassignedVisitsWithLayout.map(v => {
                                const top = getTop(parseTime(v.startTime)), h = v.duration * PIXELS_PER_MINUTE;
                                const leftOffset = v._col * 15; // スマホ時は重なり幅を狭く
@@ -2430,6 +3124,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                    onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
+                                   onClick={(e) => { if (!isAdmin || isTouchDevice) handleContextMenu(e, v); }}
                                    onContextMenu={(e) => handleContextMenu(e, v)}
                                    onTouchStart={(e) => handleTouchStart(e, v)}
                                    onTouchMove={handleTouchEndOrMove}
@@ -2464,9 +3159,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                    
                                    <div className="flex justify-between items-end mt-auto">
                                      <div className="flex flex-col gap-0.5">
-                                       <span className="text-[8px] md:text-[9px] text-slate-400 font-bold leading-none">{v.startTime}</span>
+                                       <span className="text-[10px] md:text-[9px] text-slate-500 font-bold leading-none">{v.startTime}</span>
                                      </div>
-                                     <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{v.duration}分</span>
+                                     <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{v.duration}分</span>
                                    </div>
 
                                    {(v.requiresFemaleNurse || v.comment || v.isAccompany) && (
@@ -2487,7 +3182,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             const assigned = sch?.visits || [];
                             
                             return (
-                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-10 md:w-14 bg-slate-100/30' : 'w-36 md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
+                              <div key={nurse.id} className={`shrink-0 border-r border-slate-200 relative z-10 ${isOff ? 'w-10 md:w-14 bg-slate-100/30' : 'w-[6.75rem] md:w-48'}`} onDragOver={(e) => isAdmin && !isOff && e.preventDefault()} onDrop={(e) => !isOff && handleDrop(e, nurse.id)}>
                                 {!isOff && assigned.map((item, idx) => {
                                   const top = getTop(parseTime(item.actualStartTime)), h = item.duration * PIXELS_PER_MINUTE;
                                   let prevDep = idx === 0 ? parseTime(sch.calculatedStartTime) : parseTime(assigned[idx-1].departureTime);
@@ -2515,6 +3210,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
+                                        onClick={(e) => { if (!isAdmin || isTouchDevice) handleContextMenu(e, item); }}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2523,7 +3219,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         className={`absolute left-1 right-1 md:left-2 md:right-2 group bg-white border-y border-r border-slate-100 rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} border-l-[4px] md:border-l-[6px] transition-all hover:shadow-lg visit-card hover:z-50 ${item.isLate ? 'border-l-red-500 bg-red-50/40' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : `border-l-teal-500`)} ${isOther ? 'bg-indigo-50' : item.isAccompany ? 'bg-fuchsia-50' : 'bg-white'} ${activeCardId === item.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                         style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, borderLeftColor: item.isLate ? '#ef4444' : (isOther ? '#6366f1' : nurse.color) }}>
 
-                                        <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: selectedNurse.color }}>{idx + 1}</div>
+                                        <div className="hidden md:flex absolute -top-3 -left-3 w-6 h-6 rounded-full text-white items-center justify-center text-xs font-black shadow-md z-20" style={{ backgroundColor: nurse.color }}>{idx + 1}</div>
                                         
                                         <div className="flex justify-between items-start gap-1 mb-1 md:mb-2">
                                            <div className="flex items-center gap-1 overflow-hidden flex-1">
@@ -2551,9 +3247,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         
                                         <div className="flex justify-between items-end mt-auto">
                                           <div className="flex flex-col gap-0">
-                                            <span className={`text-[9px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
+                                            <span className={`text-[11px] md:text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
                                           </div>
-                                          <span className="text-[8px] md:text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
+                                          <span className="flex items-center gap-0.5">
+                                            {item.comment && <MessageSquare size={10} className="md:hidden text-amber-500" />}
+                                            {item.isAccompany && <UserPlus size={10} className="md:hidden text-fuchsia-500" />}
+                                            <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1 md:px-2 py-0.5 md:py-1 rounded md:rounded-lg leading-none">{item.duration}分</span>
+                                          </span>
                                         </div>
                                       </div>
                                     </React.Fragment>
@@ -2572,12 +3272,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               {activeTab === 'schedule' && (
                 <div className="flex flex-col h-full max-w-full space-y-3 md:space-y-6 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
-                    <div className="flex items-end md:items-center gap-2 md:gap-3">
+                    <div className="hidden md:flex items-end md:items-center gap-2 md:gap-3">
                       <h1 className="text-xl md:text-3xl font-black text-slate-800 tracking-tighter leading-tight">ルートの確認</h1>
                       <p className="text-xs md:text-sm font-bold text-slate-400 uppercase tracking-widest">{formatDateLabel(selectedDate)}</p>
                     </div>
                     <div ref={scrollRefSchedule} className="flex gap-1.5 md:gap-2 overflow-x-auto hide-scrollbar pc-scrollable bg-slate-200/50 p-1 md:p-2 md:pb-3 rounded-xl md:rounded-[1.5rem] border border-slate-200 shadow-inner cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
-                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-3 md:px-6 py-1.5 md:py-3 rounded-lg md:rounded-2xl text-xs md:text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurseId === n.id ? 'bg-white text-teal-700 shadow-md md:shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
+                      {nurses.map(n => (<button key={n.id} onClick={() => setSelectedNurseId(n.id)} className={`px-3 md:px-6 py-2 md:py-3 rounded-lg md:rounded-2xl text-sm font-black whitespace-nowrap transition-all pointer-events-auto ${selectedNurse?.id === n.id ? 'bg-white text-teal-700 shadow-md md:shadow-lg scale-105' : 'text-slate-500 hover:text-slate-800'}`}>{n.name}</button>))}
                     </div>
                   </div>
                   
@@ -2602,6 +3302,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                         </div>
                         
                         <div className="flex items-center gap-2">
+                           <button onClick={() => window.print()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-1.5 md:py-3 rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0" title="この担当者のルートを印刷、またはPDFとして保存します">
+                             <Printer size={16} />
+                             <span className="hidden md:inline">印刷 / PDF</span>
+                           </button>
                            {isAdmin && (
                              <button 
                                 onClick={handleUndo}
@@ -2613,6 +3317,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                 元に戻す
                               </button>
                            )}
+                           {isAdmin && (
                            <button 
                               onClick={() => {
                                 if (isOptimizing || unassignedCount === 0 || nurses.length === 0) return;
@@ -2623,9 +3328,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                               <RefreshCw size={14} className={`md:w-4 md:h-4 ${isOptimizing ? "animate-spin" : ""}`} />
                               {autoAssignFunnyMessage ? autoAssignFunnyMessage : (isOptimizing ? "編成中..." : "自動編成")}
                             </button>
+                           )}
                         </div>
                       </div>
 
+                      {selectedNurseOffType !== 'work' && (
+                        <div className={`mb-3 px-3 py-2 rounded-xl text-xs font-black border shrink-0 ${selectedNurseOffType === 'full' ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          {selectedNurse.name} さんはこの日 {selectedNurseOffType === 'full' ? 'お休み' : selectedNurseOffType === 'AM' ? '午前休（13:30〜）' : '午後休（〜12:30）'} です
+                        </div>
+                      )}
                       <div className="flex-1 overflow-y-auto hide-scrollbar">
                          <div className="flex flex-col md:flex-row md:flex-wrap items-stretch md:items-start gap-y-0 md:gap-y-8 gap-x-2 md:gap-x-4 pb-10 w-full px-1 md:px-0">
                             
@@ -2703,8 +3414,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                     <div className="flex md:contents w-full">
                                       {/* スマホ用左側: 時刻 */}
                                       <div className="md:hidden flex flex-col items-end justify-between w-12 pr-2 relative z-10 py-1.5 shrink-0 mobile-dynamic-h">
-                                         <span className={`text-[11px] font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
-                                         <span className="text-[9px] text-slate-400 font-bold">{item.departureTime}</span>
+                                         <span className={`text-xs font-black leading-none ${item.isLate ? 'text-red-600' : 'text-slate-800'}`}>{item.actualStartTime}</span>
+                                         <span className="text-[10px] text-slate-400 font-bold">{item.departureTime}</span>
                                       </div>
                                       
                                       {/* スマホ用: 丸い番号ピン */}
@@ -2715,6 +3426,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                       {/* カード本体 */}
                                       <div 
                                         className={`flex-1 flex flex-col justify-between p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 mobile-dynamic-h ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')} ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''}`}
+                                        onClick={(e) => { if (!isAdmin || isTouchDevice) handleContextMenu(e, item); }}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -2769,12 +3481,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                           </div>
                                         )}
 
+                                        {/* スマホ用：所要時間・住所・コメント本文をカード内に表示 */}
+                                        <div className="md:hidden flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-bold text-slate-500">
+                                          <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-black leading-none">{item.duration}分</span>
+                                          {item.address && <span className="flex items-center gap-0.5 truncate max-w-full"><MapPin size={10} className="shrink-0 text-blue-400"/><span className="truncate">{item.address}</span></span>}
+                                        </div>
+                                        {item.comment && (
+                                          <p className="md:hidden mt-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 leading-snug whitespace-pre-wrap" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.comment}</p>
+                                        )}
+
                                         {/* タグ類 */}
                                         {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
-                                          <div className="hidden md:flex flex-wrap gap-1 mt-1.5 md:mt-2 border-t border-slate-50 pt-1.5">
-                                            {item.requiresFemaleNurse && !isOther && <span className="text-[8px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
-                                            {item.isAccompany && <span className="text-[7px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
-                                            {item.comment && <span className="text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 flex items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
+                                          <div className="flex flex-wrap gap-1 mt-1 md:mt-2 md:border-t border-slate-50 md:pt-1.5">
+                                            {item.requiresFemaleNurse && !isOther && <span className="text-[10px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                                            {item.isAccompany && <span className="text-[10px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
+                                            {item.comment && <span className="hidden md:flex text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
                                           </div>
                                         )}
                                       </div>
@@ -2872,14 +3593,28 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                           </button>
                           {showVisitSettings && (
                             <div className="mt-4 pt-4 border-t border-slate-100 animate-[fadeIn_0.2s_ease-out]">
-                              <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
+                              <input type={isAdminUser ? "text" : "password"} value={isAdminUser ? sheetUrl : (sheetUrl ? "********" : "")} onChange={handleSheetUrlChange} readOnly={!isAdminUser} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
                               <div className="mt-4 pt-4 border-t border-slate-100">
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等)</p>
+                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等), <br/>緯度(任意), 経度(任意)</p>
                               </div>
                             </div>
                           )}
                        </div>
+                       {geoStatus && (
+                         <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
+                           <p className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 mb-3"><Navigation size={16}/> 位置情報（移動時間の精度）</p>
+                           <p className="text-[11px] font-bold text-slate-500 leading-relaxed">
+                             位置が分かっている住所: <span className="text-teal-600 font-black">{geoStatus.known}件</span> ／ 未取得: <span className={`font-black ${geoStatus.missing.length > 0 ? 'text-amber-600' : 'text-slate-500'}`}>{geoStatus.missing.length}件</span>
+                           </p>
+                           <p className="text-[10px] font-bold text-slate-400 leading-relaxed mt-1">位置が分かる区間は実際の距離から、分からない区間は町名が同じかどうかで移動時間を見積もります。</p>
+                           {isAdminUser && geoStatus.missing.length > 0 && (
+                             <button onClick={handleGeocode} disabled={!!geoProgress} className="mt-3 w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-xl font-black text-xs shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                               <MapPin size={14}/>{geoProgress ? `取得中… ${geoProgress.done}/${geoProgress.total}` : "住所から位置を取得する"}
+                             </button>
+                           )}
+                         </div>
+                       )}
                     </div>
                     <div className="xl:col-span-3">
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
@@ -2888,21 +3623,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                           <span className="text-slate-400 uppercase font-black">{sortedVisits.length}件</span>
                         </div>
                         <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse min-w-[700px]">
+                          <table className="w-full text-left border-collapse min-w-[560px] md:min-w-[700px]">
                             <thead>
                               <tr className="bg-white text-slate-400 text-[11px] uppercase tracking-widest border-b border-slate-100">
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
-                                <th className="p-6">名称/氏名</th>
-                                <th className="p-6">所要時間</th>
-                                <th className="p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
-                                {isAdmin && <th className="p-6 text-right">操作</th>}
+                                <th className="p-3 md:p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('startTime')}>指定時間 {visitSortConfig.key === 'startTime' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                <th className="p-3 md:p-6">名称/氏名</th>
+                                <th className="p-3 md:p-6">所要時間</th>
+                                <th className="p-3 md:p-6 cursor-pointer hover:text-slate-800 transition-colors" onClick={() => requestVisitSort('nurseName')}>担当看護師 {visitSortConfig.key === 'nurseName' ? (visitSortConfig.direction === 'asc' ? '↓' : '↑') : '⇅'}</th>
+                                {isAdmin && <th className="p-3 md:p-6 text-right">操作</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
                               {sortedVisits.map(v => (
                                 <tr key={v.id} className={`transition-colors group ${v.isAccompany ? 'bg-fuchsia-50/30 hover:bg-fuchsia-50/60' : 'hover:bg-slate-50/80'}`}>
-                                  <td className="p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
-                                  <td className="p-6 font-bold text-slate-700">
+                                  <td className="p-3 md:p-6"><div className="font-black text-slate-800">{v.startTime}</div>{v.originalStartTime && v.originalStartTime !== v.startTime && (<div className="text-[10px] text-orange-600 font-black">元:{v.originalStartTime}</div>)}</td>
+                                  <td className="p-3 md:p-6 font-bold text-slate-700">
                                     {v.type === 'other' && <Briefcase size={14} className="inline mr-1 text-indigo-500" />}
                                     {v.userName}
                                     <div className="flex flex-wrap gap-1 mt-1.5">
@@ -2912,15 +3647,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                       {v.excludedNurseNames && v.excludedNurseNames.length > 0 && <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap">除外: {v.excludedNurseNames.join(', ')}</span>}
                                     </div>
                                   </td>
-                                  <td className="p-6 font-bold text-slate-400">{v.duration}分</td>
-                                  <td className="p-6">
-                                    <select disabled={!isAdmin} value={v.nurseId || 'unassigned'} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5 disabled:appearance-none disabled:bg-transparent disabled:border-none disabled:p-0 disabled:text-sm">
+                                  <td className="p-3 md:p-6 font-bold text-slate-400">{v.duration}分</td>
+                                  <td className="p-3 md:p-6">
+                                    <select disabled={!isAdmin} value={isVisitUnassigned(v, nurseIdSet) ? 'unassigned' : v.nurseId} onChange={e => updateVisitNurse(v.id, e.target.value)} className="w-full max-w-[200px] bg-slate-50 border-2 border-transparent group-hover:border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none font-black text-slate-600 focus:bg-white focus:ring-4 focus:ring-blue-500/5 disabled:appearance-none disabled:bg-transparent disabled:border-none disabled:p-0 disabled:text-sm">
                                       <option value="unassigned">-- 未指定 --</option>
                                       {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
                                     </select>
                                   </td>
                                   {isAdmin && (
-                                    <td className="p-6 text-right">
+                                    <td className="p-3 md:p-6 text-right">
                                       <button onClick={(e) => handleDuplicateVisit(v, e)} className="text-slate-400 hover:text-green-500 p-2 rounded-lg hover:bg-green-50 transition-colors" title="複製"><Copy size={18} /></button>
                                       <button onClick={(e) => handleDuplicateAccompany(v, e)} className="text-slate-400 hover:text-fuchsia-500 p-2 rounded-lg hover:bg-fuchsia-50 transition-colors" title="同行複製"><UserPlus size={18} /></button>
                                       <button onClick={() => setEditingVisit(v)} className="text-slate-400 hover:text-blue-500 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="編集"><Pencil size={18} /></button>
@@ -2955,7 +3690,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 <div className="max-w-7xl mx-auto space-y-8 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">看護師の管理</h1>
-                    {isAdmin && (
+                    {isAdminUser && (
                       <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50 text-sm">
                         {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}更新
                       </button>
@@ -2970,10 +3705,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                          </button>
                          {showNurseSettings && (
                            <div className="mt-4 pt-4 border-t border-slate-100 animate-[fadeIn_0.2s_ease-out]">
-                             <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
+                             <input type={isAdminUser ? "text" : "password"} value={isAdminUser ? nurseSheetUrl : (nurseSheetUrl ? "********" : "")} onChange={handleNurseSheetUrlChange} readOnly={!isAdminUser} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
                              <div className="mt-4 pt-4 border-t border-slate-100">
                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                               <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地</p>
+                               <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地, <br/>緯度(任意), 経度(任意)</p>
                              </div>
                            </div>
                          )}
@@ -3039,6 +3774,60 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                       <p className={`text-3xl font-black ${reportData.monthlyUnassigned > 0 ? 'text-red-500' : 'text-slate-800'}`}>{reportData.monthlyUnassigned}<span className="text-sm ml-1 text-slate-400">件</span></p>
                     </div>
                   </div>
+
+                  {storageInfo && (
+                    <div className="bg-white p-5 md:p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Database size={14}/> 保存データ量</p>
+                          <div className="flex items-end gap-2 mb-2">
+                            <span className={`text-2xl font-black ${storageInfo.percent >= 80 ? 'text-red-500' : 'text-slate-800'}`}>{Math.round(storageInfo.bytes / 1024).toLocaleString()}<span className="text-xs ml-0.5 text-slate-400">KB</span></span>
+                            <span className="text-xs font-bold text-slate-400 mb-1">/ 上限 約1,024KB（{storageInfo.percent}%）</span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${storageInfo.percent >= 80 ? 'bg-red-500' : storageInfo.percent >= 60 ? 'bg-amber-400' : 'bg-teal-500'}`} style={{ width: `${Math.max(1, storageInfo.percent)}%` }}></div>
+                          </div>
+                          <p className="text-[11px] font-bold text-slate-500 mt-2 leading-relaxed">
+                            保存中の予定: {storageInfo.count.toLocaleString()}件
+                            {storageInfo.oldest && <>（{storageInfo.oldest.replace(/-/g, '/')} 〜 {storageInfo.newest.replace(/-/g, '/')}）</>}
+                            {storageInfo.monthsLeft !== null && <> ／ 今のペースなら、あと約{storageInfo.monthsLeft >= 24 ? `${Math.floor(storageInfo.monthsLeft / 12)}年以上` : `${storageInfo.monthsLeft}か月`}保存できます</>}
+                          </p>
+                          {storageInfo.unknownNurse > 0 && (
+                            <p className="text-[11px] font-bold text-amber-600 mt-1 leading-relaxed">※ 担当者が現在の名簿に見つからない予定が {storageInfo.unknownNurse.toLocaleString()}件あります（過去の名簿更新で担当者との紐づけが外れたもの。「未割り当て」として表示されます）</p>
+                          )}
+                        </div>
+                        {isAdminUser && (
+                          <div className="flex flex-col gap-2 shrink-0">
+                            <button onClick={() => handleDownloadBackup()} disabled={archiveBusy} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50" title="全データ（保管庫を含む）をファイルとして端末に保存します">
+                              <Download size={16} />
+                              バックアップを保存
+                            </button>
+                            <button onClick={() => restoreInputRef.current?.click()} disabled={archiveBusy} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50" title="バックアップファイルの状態に戻します">
+                              <Upload size={16} />
+                              バックアップから復元
+                            </button>
+                            <input ref={restoreInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleRestoreFileChosen} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <p className="text-[11px] font-bold text-slate-500 leading-relaxed">
+                          <Archive size={12} className="inline mr-1 -mt-0.5 text-slate-400" />
+                          保管庫: {archivedMonths.length > 0 ? `${archivedMonths[0].replace('-', '/')} 〜 ${archivedMonths[archivedMonths.length - 1].replace('-', '/')} の ${archivedMonths.length}か月分` : 'まだありません'}
+                          {storageInfo.archivable > 0
+                            ? <> ／ {storageInfo.cutoffMonth.replace('-', '/')} より前の {storageInfo.archivable.toLocaleString()}件を保管庫へ移せます</>
+                            : <> ／ 直近{ARCHIVE_KEEP_MONTHS}か月より前のデータはありません</>}
+                          <br/><span className="text-slate-400">保管庫へ移した月は上限（約1MB）の対象から外れます。その日付を開けば閲覧でき、必要なら編集できる状態に戻せます。</span>
+                        </p>
+                        {isAdminUser && storageInfo.archivable > 0 && (
+                          <button onClick={handleArchiveOldData} disabled={archiveBusy} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50">
+                            <Archive size={16} />
+                            {archiveBusy ? "処理中…" : "古いデータを保管庫へ移す"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                     <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
@@ -3128,6 +3917,75 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             </div>
           </main>
 
+          {/* 印刷専用の表（画面には表示されない）。個別ルートのタブでは選択中の担当者だけ、それ以外は全員分 */}
+          <div className="print-only">
+            {(() => {
+              const onlyOne = activeTab === 'schedule' && selectedNurse;
+              const targets = onlyOne ? [selectedNurse] : nurses;
+              const working = targets.filter(n => !allSchedules[n.id]?.isOff);
+              const offNames = targets.filter(n => allSchedules[n.id]?.isOff).map(n => n.name);
+              const unassigned = onlyOne ? [] : unassignedVisitsWithLayout;
+              const memo = dailyMemos[selectedDate];
+              const row = (v, start, end) => (
+                <div className="print-row" key={v.id}>
+                  <span className="print-time">{start}–{end}</span>
+                  <span>
+                    {v.userName}
+                    {v.isAccompany ? '（同行）' : ''}{v.requiresFemaleNurse && v.type !== 'other' ? '（女性限定）' : ''}
+                    {onlyOne && v.address ? <div className="print-note">{v.address}</div> : null}
+                    {v.comment ? <div className="print-note">※ {v.comment}</div> : null}
+                  </span>
+                </div>
+              );
+              return (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '3mm' }}>
+                    <h1 style={{ fontSize: '15pt', fontWeight: 700, margin: 0 }}>
+                      訪問担当表　{selectedDate.replace(/-/g, '/')}（{JS_DAYS[new Date(selectedDate).getDay()]}）{onlyOne ? `　${selectedNurse.name}` : ''}
+                    </h1>
+                    <span style={{ fontSize: '8pt' }}>印刷: {new Date().toLocaleString('ja-JP')}</span>
+                  </div>
+                  {memo && <div style={{ fontSize: '9pt', border: '0.3mm solid #666', borderRadius: '1.5mm', padding: '1.5mm 2mm', marginBottom: '3mm', whiteSpace: 'pre-wrap' }}>【共有事項】{memo}</div>}
+                  <div className="print-grid" style={onlyOne ? { gridTemplateColumns: '1fr' } : undefined}>
+                    {working.map(n => {
+                      const sch = allSchedules[n.id];
+                      const list = sch?.visits || [];
+                      return (
+                        <div className="print-box" key={n.id}>
+                          <h3>{n.name}{sch?.offType === 'AM' ? '（午前休）' : sch?.offType === 'PM' ? '（午後休）' : ''}　{list.length}件</h3>
+                          {list.length === 0 ? <div className="print-empty">予定なし</div> : list.map(v => row(v, v.actualStartTime, v.departureTime))}
+                        </div>
+                      );
+                    })}
+                    {unassigned.length > 0 && (
+                      <div className="print-box">
+                        <h3>未割り当て　{unassigned.length}件</h3>
+                        {unassigned.map(v => row(v, v.startTime, formatTime(parseTime(v.startTime) + (v.duration || 0))))}
+                      </div>
+                    )}
+                  </div>
+                  {offNames.length > 0 && <div style={{ fontSize: '9pt', marginTop: '3mm' }}>お休み: {offNames.join('、')}</div>}
+                </>
+              );
+            })()}
+          </div>
+
+          {/* スマホ用：下部のタブ切り替え（親指が届きやすく、名前も読める） */}
+          <nav className="md:hidden shrink-0 bg-white border-t border-slate-200 flex justify-around px-1 pt-1 z-50" style={{ paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))' }}>
+            {[
+              { key: 'overview', label: '全体', Icon: Columns },
+              { key: 'schedule', label: '個別', Icon: Calendar },
+              { key: 'visits', label: '利用者', Icon: Users },
+              { key: 'nurses', label: '看護師', Icon: UserCog },
+              { key: 'report', label: '集計', Icon: BarChart3 }
+            ].map(({ key, label, Icon }) => (
+              <button key={key} onClick={() => setActiveTab(key)} className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl transition-colors ${activeTab === key ? 'text-teal-600' : 'text-slate-400'}`}>
+                <Icon size={22} strokeWidth={activeTab === key ? 2.5 : 2} />
+                <span className="text-[10px] font-black leading-none">{label}</span>
+              </button>
+            ))}
+          </nav>
+
           {/* コンテキストメニュー（PC用・スマホ長押し用） */}
           {contextMenu && (
             <div 
@@ -3140,8 +3998,29 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 style={{ top: contextMenu.mouseY, left: contextMenu.mouseX }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="px-4 py-2 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">
-                  {contextMenu.visit.userName}
+                <div className="px-4 py-2.5 border-b border-slate-100">
+                  <div className="text-sm font-black text-slate-800 truncate">{contextMenu.visit.userName}</div>
+                  <div className="text-xs font-bold text-slate-500 mt-0.5">
+                    {contextMenu.visit.startTime}〜{formatTime(parseTime(contextMenu.visit.startTime) + (contextMenu.visit.duration || 0))}（{contextMenu.visit.duration}分）
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-400 mt-0.5 truncate">
+                    担当: {nurses.find(n => n.id === contextMenu.visit.nurseId)?.name || '未割り当て'}
+                    {(() => {
+                      // 同行の相手（同行予定なら元の担当、元の予定なら同行者）を表示
+                      const cv = contextMenu.visit;
+                      const partners = cv.isAccompany
+                        ? [findAccompanyParent(cv, visits)].filter(Boolean)
+                        : visits.filter(a => a.isAccompany && a.date === cv.date && findAccompanyParent(a, visits)?.id === cv.id);
+                      if (partners.length === 0) return null;
+                      return <span className="text-fuchsia-600"> ／ {cv.isAccompany ? '主担当' : '同行'}: {partners.map(pv => nurses.find(n => n.id === pv.nurseId)?.name || '未割り当て').join('・')}</span>;
+                    })()}
+                  </div>
+                  {(contextMenu.visit.requiresFemaleNurse || contextMenu.visit.isAccompany) && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {contextMenu.visit.requiresFemaleNurse && <span className="text-[10px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                      {contextMenu.visit.isAccompany && <span className="text-[10px] bg-fuchsia-100 text-fuchsia-600 px-1.5 py-0.5 rounded font-black border border-fuchsia-200">同行</span>}
+                    </div>
+                  )}
                 </div>
                 
                 {contextMenu.visit.comment && (
@@ -3153,6 +4032,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
                 {isAdmin && (
                   <>
+                    <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-teal-50 flex items-center gap-3 text-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={contextMenu.visit.isExcludedFromAutoAssign}
+                      title={contextMenu.visit.isExcludedFromAutoAssign ? "固定を解除してから変更してください" : ""}
+                      onClick={() => { openMoveDialog(contextMenu.visit); setContextMenu(null); }}
+                    >
+                      <ArrowUpDown size={16} className="text-teal-500"/>担当者・時間を変更
+                    </button>
                     <button 
                       className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
                       onClick={() => { handleToggleExclude(contextMenu.visit.id); setContextMenu(null); }}
@@ -3204,7 +4091,11 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     onClick={() => setContextMenu(null)}
                     className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-blue-50 flex items-center gap-3 text-blue-600 transition-colors ${isAdmin ? 'border-t border-slate-100' : ''}`}
                   >
-                    <MapPin size={16} className="text-blue-500" />マップで開く
+                    <MapPin size={16} className="text-blue-500 shrink-0" />
+                    <span className="flex flex-col min-w-0">
+                      <span>マップで開く</span>
+                      <span className="text-[10px] font-bold text-slate-400 truncate">{contextMenu.visit.address}</span>
+                    </span>
                   </a>
                 ) : (
                   <div className={`w-full text-left px-4 py-3 text-sm font-bold text-slate-400 flex items-center gap-3 ${isAdmin ? 'border-t border-slate-100' : ''}`}>
@@ -3248,6 +4139,60 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             </div>
           )}
+
+          {moveTarget && (() => {
+            const draftStart = parseTime(moveDraft.startTime || moveTarget.startTime);
+            const candidates = nurses.map(n => {
+              const offType = getIsNurseOffType(n, moveTarget.date, nurseStatuses);
+              const problem = assignProblem(moveTarget, n, offType, draftStart);
+              const overlap = problem ? null : findOverlap(visits, moveTarget, n.id, moveTarget.date, draftStart);
+              const count = visits.filter(v => v.date === moveTarget.date && v.nurseId === n.id).length;
+              return { nurse: n, problem, overlap, count };
+            });
+            const pick = (value) => setMoveDraft(d => ({ ...d, nurseId: value }));
+            return (
+              <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setMoveTarget(null)}>
+                <form onSubmit={handleMoveSubmit} onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-md w-full shadow-2xl max-h-[88vh] flex flex-col">
+                  <div className="flex justify-between items-start mb-4 shrink-0">
+                    <div className="min-w-0">
+                      <h3 className="text-lg md:text-2xl font-black text-slate-800">担当者・時間を変更</h3>
+                      <p className="text-xs font-bold text-slate-500 mt-1 truncate">{moveTarget.userName}（{moveTarget.duration}分）</p>
+                    </div>
+                    <button type="button" onClick={() => setMoveTarget(null)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full shrink-0" aria-label="閉じる"><X size={20} /></button>
+                  </div>
+                  <div className="mb-4 shrink-0">
+                    <label className="block text-xs font-bold text-slate-500 mb-1">開始時間</label>
+                    <input required type="time" name="startTime" step="300" value={moveDraft.startTime} onChange={e => setMoveDraft(d => ({ ...d, startTime: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  <input type="hidden" name="nurseId" value={moveDraft.nurseId} />
+                  <label className="block text-xs font-bold text-slate-500 mb-1 shrink-0">担当者</label>
+                  <div className="overflow-y-auto space-y-1.5 pr-1 flex-1 min-h-0">
+                    <button type="button" onClick={() => pick('unassigned')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm font-black text-left transition-colors ${moveDraft.nurseId === 'unassigned' ? 'border-teal-500 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-600'}`}>
+                      <span>未割り当てに戻す</span>
+                    </button>
+                    {candidates.map(({ nurse, problem, overlap, count }) => {
+                      const selected = moveDraft.nurseId === String(nurse.id);
+                      return (
+                        <button type="button" key={nurse.id} disabled={!!problem} onClick={() => pick(String(nurse.id))} className={`w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl border text-sm font-black text-left transition-colors ${problem ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed' : selected ? 'border-teal-500 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: problem ? '#cbd5e1' : nurse.color }}></span>
+                            <span className="truncate">{nurse.name}</span>
+                            <span className="text-[10px] font-bold text-slate-400 shrink-0">{count}件</span>
+                          </span>
+                          <span className={`text-[10px] font-black shrink-0 text-right max-w-[50%] leading-tight ${problem ? 'text-slate-400' : overlap ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {problem ? (problem.includes('女性') ? '女性限定' : problem.includes('除外') ? '除外スタッフ' : problem.includes('午前休') ? '午前休' : problem.includes('午後休') ? '午後休' : 'お休み') : overlap ? `重複: ${overlap.userName}` : '空き'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button type="submit" className="w-full mt-4 py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30 shrink-0">
+                    変更する
+                  </button>
+                </form>
+              </div>
+            );
+          })()}
 
           {activePatternSlot && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4" onClick={() => setActivePatternSlot(null)}>
@@ -3382,17 +4327,74 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             </div>
           )}
 
+          {showLogin && (
+            <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-xl md:text-2xl font-black text-slate-800 flex items-center gap-2"><Lock size={22} className="text-teal-600"/>{REQUIRE_LOGIN_TO_VIEW && !user ? "ログイン" : "管理者ログイン"}</h3>
+                  {!(REQUIRE_LOGIN_TO_VIEW && !user) && (
+                    <button onClick={() => setShowLogin(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full" aria-label="閉じる"><X size={20} /></button>
+                  )}
+                </div>
+                <p className="text-xs font-bold text-slate-500 mb-5 leading-relaxed">{REQUIRE_LOGIN_TO_VIEW && !user ? "スケジュールを見るにはログインが必要です。" : "予定の編集にはログインが必要です。閉じると閲覧モードで開きます。"}</p>
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">メールアドレス</label>
+                    <input required type="email" name="email" autoComplete="username" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">パスワード</label>
+                    <input required type="password" name="password" autoComplete="current-password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  {loginError && <p className="text-xs font-black text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2 leading-relaxed">{loginError}</p>}
+                  <button type="submit" disabled={loginBusy} className="w-full py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30 disabled:opacity-50">
+                    {loginBusy ? "確認中…" : "ログイン"}
+                  </button>
+                  {loginNotConfigured && wantsAdmin && !REQUIRE_LOGIN_TO_VIEW && (
+                    <button type="button" onClick={() => { setLegacyAdmin(true); setShowLogin(false); }} className="w-full py-3 rounded-2xl font-black text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors">
+                      設定が終わるまで、従来の方式で管理者として開く
+                    </button>
+                  )}
+                </form>
+              </div>
+            </div>
+          )}
+
+          {restoreCandidate && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl">
+                <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-5 mx-auto">
+                  <AlertTriangle size={32} />
+                </div>
+                <h3 className="text-xl md:text-2xl font-black text-slate-800 text-center mb-3">バックアップから復元</h3>
+                <div className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 mb-3 leading-relaxed">
+                  <div className="truncate">ファイル: {restoreCandidate.fileName}</div>
+                  <div>保存日時: {restoreCandidate.data.exportedAt ? new Date(restoreCandidate.data.exportedAt).toLocaleString('ja-JP') : '不明'}</div>
+                  <div>予定: {restoreCandidate.data.visits.length.toLocaleString()}件{restoreCandidate.archivedCount > 0 ? ` ＋ 保管庫 ${restoreCandidate.archivedCount.toLocaleString()}件` : ''} ／ 看護師: {restoreCandidate.data.nurses.length}名</div>
+                </div>
+                <p className="text-xs font-bold text-slate-500 text-center mb-6 leading-relaxed">
+                  いまのデータを、このファイルの内容で<span className="text-red-500 font-black">すべて置き換えます</span>。<br/>
+                  実行前に、いまの状態を自動でファイルに保存します。
+                </p>
+                <div className="flex gap-3">
+                  <button onClick={() => setRestoreCandidate(null)} disabled={archiveBusy} className="flex-1 py-4 rounded-2xl font-black text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50">キャンセル</button>
+                  <button onClick={executeRestore} disabled={archiveBusy} className="flex-1 py-4 rounded-2xl font-black text-white bg-amber-500 hover:bg-amber-600 transition-colors shadow-lg shadow-amber-500/30 disabled:opacity-50">{archiveBusy ? "復元中…" : "復元する"}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {showToast && (
-            <div onClick={() => setShowToast(false)} className="fixed bottom-6 right-6 md:bottom-10 md:right-10 glass-effect text-slate-900 px-6 py-4 md:px-8 md:py-5 rounded-[1.5rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 animate-bounce z-[100] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]">
+            <div onClick={() => setShowToast(false)} className="fixed bottom-20 right-3 left-3 md:left-auto md:bottom-10 md:right-10 glass-effect text-slate-900 px-4 py-3 md:px-8 md:py-5 rounded-[1.25rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 z-[500] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]">
               <div className="bg-emerald-500 p-1.5 md:p-2 rounded-lg md:rounded-xl text-white shadow-lg shadow-emerald-200 shrink-0">
                 <CheckCircle2 size={20} className="md:w-6 md:h-6" />
               </div>
-              <span className="font-black text-xs md:text-sm tracking-tight">{toastMessage}</span>
+              <span className="font-black text-xs md:text-sm tracking-tight leading-relaxed">{toastMessage}</span>
             </div>
           )}
           
           {seasonalEffect && (
-            <div className="fixed bottom-24 right-6 md:bottom-28 md:right-10 z-[90] animate-[bounce_3s_infinite] pointer-events-none flex flex-col items-center transition-all duration-500 hover:scale-110">
+            <div className="fixed bottom-36 right-6 md:bottom-28 md:right-10 z-[90] animate-[bounce_3s_infinite] pointer-events-none flex flex-col items-center transition-all duration-500 hover:scale-110">
               <div className="text-4xl md:text-5xl drop-shadow-2xl">{seasonalEffect.icon}</div>
               <div className="text-[10px] font-black text-slate-600 bg-white/90 border border-slate-200 px-3 py-1 rounded-full mt-2 shadow-lg backdrop-blur-sm whitespace-nowrap">
                 {seasonalEffect.text}
