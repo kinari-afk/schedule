@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -307,5 +307,51 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.deepEqual([empty.totalMin,empty.travelMin,empty.overtimeMin],[0,0,0]);
   assert.equal(H.formatHM(168),'2:48'); assert.equal(H.formatHM(5),'0:05');
   console.log('WL OK: 負担の集計（訪問・会議・移動・時間外・割合）');
+}
+// ---- キャンセル ----
+{
+  const nurses=[nurse(1,'A'),nurse(2,'B')];
+  const p=visit('親 様','10:00',30,{nurseId:1});
+  const acc={...visit('親 様','10:00',30,{nurseId:2}), isAccompany:true, accompanyOf:p.id};
+  const other=visit('他 様','11:00',30,{nurseId:1});
+  const free=visit('未定 様','13:00',30);
+  const list=[p,acc,other,free];
+  // キャンセル：担当が外れ、元の担当を覚える。同行も一緒に
+  let r=H.setVisitCancelled(list,p.id,true,{note:'入院'});
+  const pc=r.visits.find(v=>v.id===p.id), ac=r.visits.find(v=>v.id===acc.id);
+  assert.equal(r.changed,2); assert.equal(pc.isCancelled,true); assert.equal(pc.nurseId,null); assert.equal(pc.cancelledFromNurseId,1); assert.equal(pc.cancelNote,'入院');
+  assert.equal(ac.isCancelled,true); assert.equal(ac.cancelledFromNurseId,2);
+  assert.equal(r.visits.find(v=>v.id===other.id),other);                // 関係ない予定はそのまま
+  // 「未割り当て」には数えない／自動編成の対象にもならない
+  const set=new Set([1,2]);
+  assert.equal(H.needsAssignment(pc,set),false); assert.equal(H.needsAssignment(free,set),true);
+  const plan=run(r.visits,nurses);
+  assert.equal(plan.visits.find(v=>v.id===p.id).nurseId,null,'キャンセルの予定が自動編成された');
+  assert.equal(plan.visits.find(v=>v.id===free.id).nurseId!=null,true); assert.equal(plan.assignedCount,1);
+  // 取り消し：元の担当に戻る。記録用の項目は消える
+  let u2=H.setVisitCancelled(r.visits,p.id,false);
+  const pb=u2.visits.find(v=>v.id===p.id);
+  assert.equal(pb.nurseId,1); assert.equal(pb.isCancelled,undefined); assert.equal(pb.cancelNote,undefined); assert.equal('cancelledFromNurseId' in pb,false);
+  assert.equal(u2.visits.find(v=>v.id===acc.id).nurseId,2); assert.equal(u2.restored,2);
+  // 元の担当が埋まっているときは未割り当てに
+  u2=H.setVisitCancelled(r.visits,p.id,false,{canRestore:()=>false});
+  assert.equal(u2.visits.find(v=>v.id===p.id).nurseId,null); assert.equal(u2.restored,0); assert.equal(H.needsAssignment(u2.visits.find(v=>v.id===p.id),set),true);
+  // すでにキャンセルの予定をもう一度キャンセルしても変わらない
+  assert.equal(H.setVisitCancelled(r.visits,p.id,true).changed,0);
+  console.log('CN OK: キャンセル（同行も連動・自動編成の対象外・取り消しで元の担当へ）');
+}
+// ---- 同期：キャンセルの状態と、臨時の訪問を保つ ----
+{
+  const week=['2026-11-09','2026-11-10','2026-11-11','2026-11-12','2026-11-13','2026-11-14','2026-11-15'];
+  const row=(userName,date,t)=>({id:Math.random(),userName,date,startTime:t,originalStartTime:t,duration:30,nurseId:null,isExcludedFromAutoAssign:false,isAccompany:false});
+  const cur=[
+    {id:1,userName:'休み 様',date:'2026-11-11',startTime:'10:00',originalStartTime:'10:00',duration:30,nurseId:null,isCancelled:true,cancelledFromNurseId:7,cancelNote:'入院'},
+    {id:2,userName:'臨時 様',date:'2026-11-11',startTime:'15:00',originalStartTime:'15:00',duration:30,nurseId:8,isManual:true},   // シートに無い
+  ];
+  const m=H.mergeSheetVisits({visits:cur,sheetRows:[row('休み 様','2026-11-11','10:00')],weekDates:week});
+  const c=m.visits.find(v=>v.id===1);
+  assert.equal(c.isCancelled,true); assert.equal(c.cancelledFromNurseId,7); assert.equal(c.cancelNote,'入院'); assert.equal(c.nurseId,null);
+  assert(m.visits.find(v=>v.id===2),'臨時の訪問が同期で消えた'); assert.equal(m.deleted,0); assert.equal(m.added,0);
+  console.log('CS OK: 同期してもキャンセルと臨時の訪問は残る');
 }
 console.log('ALL PASS');

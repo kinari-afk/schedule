@@ -97,7 +97,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer, HelpCircle, ListChecks, Coffee } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer, HelpCircle, ListChecks, Coffee, Ban, Undo2 } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -466,6 +466,34 @@
 
     // 担当者が決まっていない予定か？（担当者が名簿から消えている場合も「未割り当て」とみなす）
     const isVisitUnassigned = (v, nurseIdSet) => v.nurseId == null || !nurseIdSet.has(v.nurseId);
+    // 「これから担当者を決める必要がある予定」か。キャンセルになった予定は含めない
+    const needsAssignment = (v, nurseIdSet) => !v.isCancelled && isVisitUnassigned(v, nurseIdSet);
+
+    // 予定をキャンセルにする／キャンセルを取り消す（同行予定も一緒に）
+    //  ・キャンセル：担当者を外し、元の担当者を覚えておく
+    //  ・取り消し  ：元の担当者に戻せるなら戻す（canRestore が true を返したとき）。だめなら未割り当て
+    const setVisitCancelled = (visits, visitId, cancelled, { note = '', canRestore = () => true } = {}) => {
+      const target = visits.find(v => v.id === visitId);
+      if (!target) return { visits, changed: 0, restored: 0 };
+      const linkedIds = new Set([visitId]);
+      if (!target.isAccompany) {
+        visits.forEach(a => { if (a.isAccompany && a.date === target.date && findAccompanyParent(a, visits)?.id === visitId) linkedIds.add(a.id); });
+      }
+      let changed = 0, restored = 0;
+      const next = visits.map(v => {
+        if (!linkedIds.has(v.id) || !!v.isCancelled === cancelled) return v;
+        changed++;
+        if (cancelled) {
+          const { nurseId, ...rest } = v;
+          return { ...rest, nurseId: null, isCancelled: true, cancelledFromNurseId: nurseId ?? null, ...(note ? { cancelNote: note } : {}) };
+        }
+        const { isCancelled, cancelNote, cancelledFromNurseId, ...rest } = v;
+        const back = cancelledFromNurseId != null && canRestore(rest, cancelledFromNurseId) ? cancelledFromNurseId : null;
+        if (back != null) restored++;
+        return { ...rest, nurseId: back };
+      });
+      return { visits: next, changed, restored };
+    };
 
     // 過去の担当実績を集計する。
     // 利用者ごとに「どの看護師が何回訪問したか」を数え、同じ曜日の実績は2倍に重み付けする。
@@ -614,7 +642,7 @@
       };
 
       const targets = visits
-        .filter(v => v.date === date && isVisitUnassigned(v, nurseIdSet) && !v.isExcludedFromAutoAssign)
+        .filter(v => v.date === date && needsAssignment(v, nurseIdSet) && !v.isExcludedFromAutoAssign)
         .map(v => {
           const hasPref = (v.preferredNurseNames || []).some(Boolean);
           const constrained = v.requiresFemaleNurse || (v.excludedNurseNames || []).length > 0;
@@ -698,7 +726,8 @@
     const mergeSheetVisits = ({ visits, sheetRows, weekDates }) => {
       const keyOf = (v) => `${normalizeName(v.userName)}|${v.date}|${v.originalStartTime || v.startTime}`;
       const dayKeyOf = (v) => `${normalizeName(v.userName)}|${v.date}`;
-      const isSheetManaged = (v) => v.type !== 'other' && !v.isAccompany;
+      // シートから作られた予定だけを突き合わせる（会議・同行・画面から追加した臨時の訪問は対象外＝同期で消えない）
+      const isSheetManaged = (v) => v.type !== 'other' && !v.isAccompany && !v.isManual;
       const inWeek = (v) => weekDates.includes(v.date);
 
       const sheetByKey = new Map();
@@ -712,7 +741,9 @@
         startTime,
         customTravelTime: v.customTravelTime ?? null,
         isExcludedFromAutoAssign: !!v.isExcludedFromAutoAssign,
-        ...(v.comment ? { comment: v.comment } : {})
+        ...(v.comment ? { comment: v.comment } : {}),
+        // キャンセルの状態は、同期しても保つ
+        ...(v.isCancelled ? { isCancelled: true, cancelledFromNurseId: v.cancelledFromNurseId ?? null, ...(v.cancelNote ? { cancelNote: v.cancelNote } : {}) } : {})
       });
 
       const next = [];
@@ -982,6 +1013,8 @@
       const [showSettings, setShowSettings] = useState(false);
       const [assignReasons, setAssignReasons] = useState({});      // 予定ID → 自動編成の理由（この画面を開いている間だけ保持）
       const [showUnassignedList, setShowUnassignedList] = useState(false);
+      const [cancelTarget, setCancelTarget] = useState(null);       // キャンセルにしようとしている予定
+      const [addKind, setAddKind] = useState('other');               // 予定を追加：'other'=会議など ／ 'visit'=臨時の訪問
       // 負担の一覧を開いているか（端末ごとに記憶）
       const [showWorkload, setShowWorkload] = useState(() => localStorage.getItem('careRoute_showWorkload') === 'on');
       useEffect(() => { localStorage.setItem('careRoute_showWorkload', showWorkload ? 'on' : 'off'); }, [showWorkload]);
@@ -1443,7 +1476,9 @@
 
       const nurseIdSet = useMemo(() => new Set(nurses.map(n => n.id)), [nurses]);
 
-      const unassignedCount = visits.filter(v => v.date === selectedDate && isVisitUnassigned(v, nurseIdSet)).length;
+      // 未割り当て＝これから担当者を決める予定。キャンセルになった予定は別に数える
+      const unassignedCount = visits.filter(v => v.date === selectedDate && needsAssignment(v, nurseIdSet)).length;
+      const cancelledCount = visits.filter(v => v.date === selectedDate && v.isCancelled).length;
       
       const hasAssignedVisits = useMemo(() => {
         return visits.some(v => v.date === selectedDate && !isVisitUnassigned(v, nurseIdSet));
@@ -1530,6 +1565,18 @@
         return starts.length > 0 ? Math.min(...starts) : null;
       }, [visits, selectedDate]);
       const hasDayVisits = firstVisitMinutes !== null;
+
+      // これまでに登録された利用者（名前ごとに最新の予定の情報を使う）
+      const knownUsers = useMemo(() => {
+        const map = new Map();
+        liveVisits.forEach(v => {
+          if (v.type === 'other' || !v.userName) return;
+          const key = normalizeName(v.userName);
+          const cur = map.get(key);
+          if (!cur || (v.date || '') > (cur.date || '')) map.set(key, v);
+        });
+        return [...map.values()].sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
+      }, [liveVisits]);
 
       // 担当者ごとの負担（その日の内訳と、表示中の週の合計）
       const workloadRows = useMemo(() => {
@@ -1649,13 +1696,17 @@
            monthlyNurseDurations[n.id] = 0;
         });
         let monthlyUnassigned = 0;
+        let monthlyCancelled = 0;
         let monthlyUnassignedDuration = 0;
 
         for (let d = 1; d <= daysInMonth; d++) {
           const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
           const dayVisits = visits.filter(v => v.date === dateStr);
           
-          const realVisits = dayVisits.filter(v => v.type !== 'other');
+          // 会議などの予定と、キャンセルになった予定は訪問件数に含めない
+          const realVisits = dayVisits.filter(v => v.type !== 'other' && !v.isCancelled);
+          const dayCancelled = dayVisits.filter(v => v.type !== 'other' && v.isCancelled).length;
+          monthlyCancelled += dayCancelled;
           
           const dailyTotal = realVisits.length;
           let dailyTotalDuration = 0;
@@ -1698,6 +1749,7 @@
             total: dailyTotal,
             totalDuration: dailyTotalDuration,
             unassigned,
+            cancelled: dayCancelled,
             unassignedDuration,
             nurseCounts,
             nurseDurations
@@ -1711,7 +1763,8 @@
           monthlyNurseTotals,
           monthlyNurseDurations,
           monthlyUnassigned,
-          monthlyUnassignedDuration
+          monthlyUnassignedDuration,
+          monthlyCancelled
         };
       }, [reportMonth, visits, nurses, nurseIdSet]);
 
@@ -1969,7 +2022,7 @@
         }
 
         const menuWidth = 290;
-        const menuHeight = isAdmin ? 560 : 240; 
+        const menuHeight = isAdmin ? 610 : 240; 
         if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
         if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
         x = Math.max(8, x);
@@ -2145,6 +2198,7 @@
           ...visit,
           id: Date.now() + Math.floor(Math.random() * 1000),
           isExcludedFromAutoAssign: false, 
+          isCancelled: false, cancelNote: undefined, cancelledFromNurseId: undefined,
         };
         saveHistory();
         handleSetVisits(prev => [...prev, newVisit]);
@@ -2164,6 +2218,7 @@
           isExcludedFromAutoAssign: false, 
           nurseId: null, 
           isAccompany: true,
+          isCancelled: false, cancelNote: undefined, cancelledFromNurseId: undefined,
           accompanyOf: visit.isAccompany ? (visit.accompanyOf ?? null) : visit.id   // どの予定の同行かを記録
         };
         saveHistory();
@@ -2401,7 +2456,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
       const weekAssignDates = useMemo(() => {
         const today = getTodayStr();
         return displayDates.filter(d => d >= today && !archivedMonthSet.has(monthOf(d))
-          && visits.some(v => v.date === d && isVisitUnassigned(v, nurseIdSet) && !v.isExcludedFromAutoAssign));
+          && visits.some(v => v.date === d && needsAssignment(v, nurseIdSet) && !v.isExcludedFromAutoAssign));
       }, [displayDates, visits, nurseIdSet, archivedMonthSet]);
       const handleAutoAssignWeek = () => {
         if (isOptimizing || weekAssignDates.length === 0) return;
@@ -2450,6 +2505,11 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         
         const targetVisit = visits.find(v => v.id === visitId);
         
+        if (targetVisit && targetVisit.isCancelled) {
+            setToastMessage("キャンセルの予定です。割り当てるには、先にメニューから「キャンセルを取り消す」を選んでください");
+            setShowToast(true);
+            return;
+        }
         if (targetVisit && targetVisit.isExcludedFromAutoAssign) {
             return;
         }
@@ -2486,6 +2546,11 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         const parsedNurseId = newNurseId === 'unassigned' ? null : parseInt(newNurseId);
         const targetVisit = visits.find(v => v.id === visitId);
         const targetStart = parseTime(targetVisit.startTime);
+        if (targetVisit.isCancelled) {
+            setToastMessage("キャンセルの予定です。割り当てるには、先に「キャンセルを取り消す」を選んでください");
+            setShowToast(true);
+            return;
+        }
         
         if (parsedNurseId) {
             const targetNurse = nurses.find(n => n.id === parsedNurseId);
@@ -2495,6 +2560,35 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
         saveHistory();
         handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+      };
+
+      // 予定をキャンセルにする（削除はせず、記録として残す。自動編成の対象から外れる）
+      const handleCancelSubmit = (e) => {
+        e.preventDefault();
+        if (!isAdmin || !cancelTarget) return;
+        const note = String(new FormData(e.target).get('note') || '').trim();
+        const result = setVisitCancelled(visits, cancelTarget.id, true, { note });
+        saveHistory();
+        handleSetVisits(prev => setVisitCancelled(prev, cancelTarget.id, true, { note }).visits);
+        setCancelTarget(null);
+        setToastMessage(`${cancelTarget.userName} の予定をキャンセルにしました${result.changed > 1 ? "（同行の予定も一緒に）" : ""}`);
+        setShowToast(true);
+      };
+      // キャンセルを取り消す。元の担当者が空いていれば戻し、そうでなければ未割り当てにする
+      const handleUncancel = (visit) => {
+        if (!isAdmin) return;
+        const canRestore = (v, nurseId) => {
+          const nurse = nurses.find(n => n.id === nurseId);
+          if (!nurse) return false;
+          const startMin = parseTime(v.startTime);
+          return !assignProblem(v, nurse, getIsNurseOffType(nurse, v.date, nurseStatuses), startMin, settings)
+            && !findOverlap(visits, v, nurseId, v.date, startMin);
+        };
+        const result = setVisitCancelled(visits, visit.id, false, { canRestore });
+        saveHistory();
+        handleSetVisits(prev => setVisitCancelled(prev, visit.id, false, { canRestore }).visits);
+        setToastMessage(`${visit.userName} のキャンセルを取り消しました${result.restored > 0 ? "（元の担当者に戻しました）" : "（未割り当てです。担当者を決めてください）"}`);
+        setShowToast(true);
       };
 
       // スマホなど、ドラッグができない端末向け：メニューから担当者と開始時刻を変更する
@@ -2540,7 +2634,27 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         const nurseIdStr = formData.get('nurseId');
         const isLocked = formData.get('isLocked') === 'on';
         
-        const baseEvent = {
+        const isVisit = addKind === 'visit';
+        // 臨時の訪問：登録済みの利用者なら、住所や条件（女性限定・優先担当など）を引き継ぐ
+        const known = isVisit ? knownUsers.find(u => normalizeName(u.userName) === normalizeName(title)) : null;
+        const comment = String(formData.get('comment') || '').trim();
+        const baseEvent = isVisit ? {
+          userName: known ? known.userName : (String(title).includes('様') ? title : `${title} 様`),
+          isManual: true,          // 画面から追加した訪問（スプレッドシートの同期で消さない）
+          date: selectedDate,
+          dayOfWeek: new Date(selectedDate).getDay(),
+          startTime: startTime,
+          originalStartTime: startTime,
+          duration: duration,
+          requiresFemaleNurse: !!known?.requiresFemaleNurse,
+          preferredNurseNames: known?.preferredNurseNames || [],
+          excludedNurseNames: known?.excludedNurseNames || [],
+          address: known?.address || '',
+          isExcludedFromAutoAssign: isLocked,
+          isAccompany: false,
+          location: known?.location || getHashLoc(String(title)),
+          ...(comment ? { comment } : {})
+        } : {
           userName: title,
           type: 'other',
           date: selectedDate,
@@ -2556,7 +2670,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         };
 
         const newEvents = [];
-        if (nurseIdStr === 'all') {
+        if (nurseIdStr === 'all' && !isVisit) {
           const availableNurses = nurses.filter(n => getIsNurseOffType(n, selectedDate, nurseStatuses) !== 'full');
           availableNurses.forEach((n, idx) => {
             newEvents.push({
@@ -2567,20 +2681,26 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             });
           });
         } else {
-          const nId = nurseIdStr === 'unassigned' ? null : parseInt(nurseIdStr, 10);
+          const nId = (nurseIdStr === 'unassigned' || nurseIdStr === 'all') ? null : parseInt(nurseIdStr, 10);
           const targetNurse = nurses.find(n => n.id === nId);
+          if (isVisit && targetNurse) {
+            const problem = assignProblem(baseEvent, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), parseTime(startTime), settings);
+            if (problem) { setToastMessage(problem); setShowToast(true); return; }
+          }
           newEvents.push({
             ...baseEvent,
             id: Date.now(),
             nurseId: nId,
-            location: targetNurse?.startLocation || { x: 50, y: 50 }
+            ...(isVisit ? {} : { location: targetNurse?.startLocation || { x: 50, y: 50 } })
           });
         }
         
         saveHistory();
-        handleSetVisits([...visits, ...newEvents]);
+        handleSetVisits(prev => [...prev, ...newEvents]);
         setShowAddEventModal(false);
-        setToastMessage("予定を追加しました");
+        setToastMessage(isVisit
+          ? `臨時の訪問を追加しました${known ? "（住所などは登録済みの内容を引き継ぎました）" : ""}${newEvents[0].nurseId == null ? "。担当者は未割り当てです" : ""}`
+          : "予定を追加しました");
         setShowToast(true);
       };
 
@@ -3325,9 +3445,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                       <div className="min-w-max flex flex-col">
                         <div className="flex sticky top-0 z-[60] bg-slate-50/95 backdrop-blur-sm border-b border-slate-200">
                           <div className="w-10 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[9px] md:text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
-                          <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50`}>
+                          <div className={`${(unassignedCount + cancelledCount) > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50`}>
                              <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1 text-center leading-tight">{unassignedCount > 0 ? '未割り当て' : <><span className="md:hidden">未割当</span><span className="hidden md:inline">未割り当て</span></>}</div>
                              <button type="button" onClick={() => unassignedCount > 0 && setShowUnassignedList(true)} disabled={unassignedCount === 0} title={unassignedCount > 0 ? "未割り当ての一覧を開く" : ""} className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200 hover:bg-red-600 cursor-pointer' : 'bg-slate-200 text-slate-600 cursor-default'} text-[10px] md:text-[11px] font-black px-1.5 md:px-3 py-0.5 md:py-1 rounded-full whitespace-nowrap flex items-center gap-1`}>{unassignedCount}件{unassignedCount > 0 && <ListChecks size={11} />}</button>
+                             {cancelledCount > 0 && <button type="button" onClick={() => setShowUnassignedList(true)} className="mt-1 text-[9px] md:text-[10px] font-black text-slate-500 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full whitespace-nowrap hover:bg-slate-200" title="キャンセルの一覧を開く"><span className="hidden md:inline">キャンセル </span>{cancelledCount}件</button>}
                           </div>
                           {nurses.map(nurse => {
                             const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
@@ -3395,7 +3516,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                               <div key={i} className={`absolute w-full border-t ${i % 4 === 0 ? 'border-slate-200' : i % 2 === 0 ? 'border-slate-100' : 'border-slate-50 border-dashed'}`} style={{ top: i * 15 * PIXELS_PER_MINUTE }}></div>
                             ))}
                           </div>
-                          <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10`} onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
+                          <div className={`${(unassignedCount + cancelledCount) > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 relative z-10 bg-slate-50/10`} onDragOver={(e) => isAdmin && e.preventDefault()} onDrop={(e) => handleDrop(e, null)}>
                              {unassignedVisitsWithLayout.map(v => {
                                const top = getTop(parseTime(v.startTime)), h = v.duration * PIXELS_PER_MINUTE;
                                const leftOffset = v._col * 15; // スマホ時は重なり幅を狭く
@@ -3404,8 +3525,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                const isOther = v.type === 'other';
                                
                                return (
-                                 <div key={v.id} draggable={isAdmin && !v.isExcludedFromAutoAssign} onDragStart={(e) => { 
-                                     if(!isAdmin || v.isExcludedFromAutoAssign) { e.preventDefault(); return; }
+                                 <div key={v.id} data-cancelled={v.isCancelled ? 'true' : undefined} draggable={isAdmin && !v.isExcludedFromAutoAssign && !v.isCancelled} onDragStart={(e) => { 
+                                     if(!isAdmin || v.isExcludedFromAutoAssign || v.isCancelled) { e.preventDefault(); return; }
                                      e.dataTransfer.setData('text/plain', v.id); 
                                      const rect = e.currentTarget.getBoundingClientRect(); 
                                      e.dataTransfer.setData('offsetY', e.clientY - rect.top); 
@@ -3420,7 +3541,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                    onTouchMove={handleTouchEndOrMove}
                                    onTouchEnd={handleTouchEndOrMove}
                                    onTouchCancel={handleTouchEndOrMove}
-                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
+                                   className={`absolute border border-slate-200 border-l-[4px] md:border-l-[6px] rounded-lg md:rounded-xl shadow-sm md:shadow-md p-1 md:p-1.5 overflow-hidden md:overflow-visible flex flex-col ${(isAdmin && !v.isExcludedFromAutoAssign && !v.isCancelled) ? 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5' : ''} transition-all group visit-card ${(v.requiresFemaleNurse) ? 'ring-1 ring-slate-200' : ''} ${v.isCancelled ? 'bg-slate-100 border-dashed border-l-slate-300 opacity-70' : v.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : v.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : v.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${activeCardId === v.id ? 'z-[60] scale-[1.02]' : 'z-10'}`} 
                                    style={{ top: `${top}px`, height: `${Math.max(h, 32)}px`, left: leftStyle, width: widthStyle }}>
 
                                    <div className="flex justify-between items-start gap-1">
@@ -3430,10 +3551,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                             <Lock size={10} strokeWidth={3} className="md:w-3 md:h-3" />
                                           </button>
                                         )}
-                                        <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600'}`}>
+                                        <h4 className={`font-black text-xs md:text-sm truncate flex-1 leading-tight ${v.isCancelled ? 'text-slate-400 line-through' : isOther ? 'text-indigo-800' : 'text-slate-800 group-hover:text-teal-600'}`}>
                                           {isOther && <Briefcase size={10} className="inline mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                           {v.userName}
                                         </h4>
+                                        {v.isCancelled && <span className="shrink-0 text-[9px] font-black text-slate-500 bg-white border border-slate-300 px-1 rounded leading-tight">キャンセル</span>}
+                                        {v.isManual && !v.isCancelled && <span className="shrink-0 text-[9px] font-black text-orange-600 bg-orange-50 border border-orange-200 px-1 rounded leading-tight">臨時</span>}
                                      </div>
                                      {isAdmin && (
                                        <button 
@@ -3522,6 +3645,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                                  {isOther && <Briefcase size={10} className="inline mr-0.5 md:mr-1 text-indigo-500 md:w-3 md:h-3" />}
                                                  {item.userName}
                                               </h4>
+                                              {item.isManual && <span className="shrink-0 text-[9px] font-black text-orange-600 bg-orange-50 border border-orange-200 px-1 rounded leading-tight">臨時</span>}
                                            </div>
                                            {isAdmin && (
                                              <button 
@@ -3781,8 +3905,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         )}
 
                                         {/* タグ類 */}
-                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany) && (
+                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany || item.isManual) && (
                                           <div className="flex flex-wrap gap-1 mt-1 md:mt-2 md:border-t border-slate-50 md:pt-1.5">
+                                            {item.isManual && <span className="text-[10px] md:text-[9px] bg-orange-50 text-orange-600 px-1 md:px-1.5 py-0.5 rounded font-black border border-orange-200">臨時</span>}
                                             {item.requiresFemaleNurse && !isOther && <span className="text-[10px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                             {item.isAccompany && <span className="text-[10px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
                                             {item.comment && <span className="hidden md:flex text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
@@ -3931,6 +4056,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                     {v.type === 'other' && <Briefcase size={14} className="inline mr-1 text-indigo-500" />}
                                     {v.userName}
                                     <div className="flex flex-wrap gap-1 mt-1.5">
+                                      {v.isCancelled && <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-300 whitespace-nowrap font-black"><Ban size={10} className="inline mr-0.5"/>キャンセル{v.cancelNote ? `：${v.cancelNote}` : ''}</span>}
+                                      {v.isManual && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md border border-orange-200 whitespace-nowrap font-black">臨時</span>}
                                       {v.isAccompany && <span className="text-[10px] text-fuchsia-600 bg-fuchsia-50 px-2 py-0.5 rounded-md border border-fuchsia-100 whitespace-nowrap"><UserPlus size={10} className="inline mr-0.5"/>同行</span>}
                                       {v.requiresFemaleNurse && <span className="text-[10px] text-pink-600 bg-pink-50 px-2 py-0.5 rounded-md border border-pink-100 whitespace-nowrap">女性限定</span>}
                                       {v.preferredNurseNames && v.preferredNurseNames.length > 0 && <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 whitespace-nowrap">優先: {v.preferredNurseNames.join(', ')}</span>}
@@ -4063,6 +4190,11 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">未割り当て件数</p>
                       <p className={`text-3xl font-black ${reportData.monthlyUnassigned > 0 ? 'text-red-500' : 'text-slate-800'}`}>{reportData.monthlyUnassigned}<span className="text-sm ml-1 text-slate-400">件</span></p>
                     </div>
+                    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">キャンセル件数</p>
+                      <p className="text-3xl font-black text-slate-500">{reportData.monthlyCancelled}<span className="text-sm ml-1 text-slate-400">件</span></p>
+                      <p className="text-[10px] font-bold text-slate-400 mt-1">訪問件数には含みません</p>
+                    </div>
                   </div>
 
                   {storageInfo && (
@@ -4131,6 +4263,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             <th className="p-4 border-r border-slate-100">日付</th>
                             <th className="p-4 border-r border-slate-100 text-teal-600 font-black">全体</th>
                             <th className="p-4 border-r border-slate-100 text-red-400 font-black">未割当</th>
+                            <th className="p-4 border-r border-slate-100 text-slate-400 font-black">キャンセル</th>
                             {nurses.map(n => (
                               <th key={n.id} className="p-4 border-r border-slate-100">
                                 <div className="flex flex-col items-center gap-1">
@@ -4168,6 +4301,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                     </div>
                                   ) : <span className="text-slate-300">-</span>}
                                 </td>
+                                <td className="p-3 border-r border-slate-100">
+                                  {stat.cancelled > 0 ? <div className="font-black text-slate-400 text-lg leading-tight">{stat.cancelled}</div> : <span className="text-slate-300">-</span>}
+                                </td>
                                 {nurses.map(n => (
                                   <td key={n.id} className="p-3 border-r border-slate-100">
                                     {stat.nurseCounts[n.id] > 0 ? (
@@ -4190,6 +4326,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             <td className="p-4">
                                <div className="font-black text-red-500 text-xl leading-none">{reportData.monthlyUnassigned}<span className="text-xs font-normal text-slate-500 ml-1">件</span></div>
                                <div className="text-xs font-bold text-slate-500 mt-1">{Math.floor(reportData.monthlyUnassignedDuration / 60)}h {reportData.monthlyUnassignedDuration % 60}m</div>
+                            </td>
+                            <td className="p-4">
+                               <div className="font-black text-slate-500 text-xl leading-none">{reportData.monthlyCancelled}<span className="text-xs font-normal text-slate-500 ml-1">件</span></div>
                             </td>
                             {nurses.map(n => (
                               <td key={n.id} className="p-4">
@@ -4214,14 +4353,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               const targets = onlyOne ? [selectedNurse] : nurses;
               const working = targets.filter(n => !allSchedules[n.id]?.isOff);
               const offNames = targets.filter(n => allSchedules[n.id]?.isOff).map(n => n.name);
-              const unassigned = onlyOne ? [] : unassignedVisitsWithLayout;
+              const unassigned = onlyOne ? [] : unassignedVisitsWithLayout.filter(v => !v.isCancelled);
+              const cancelledList = onlyOne ? [] : unassignedVisitsWithLayout.filter(v => v.isCancelled);
               const memo = dailyMemos[selectedDate];
               const row = (v, start, end) => (
                 <div className="print-row" key={v.id}>
                   <span className="print-time">{start}–{end}</span>
                   <span>
                     {v.userName}
-                    {v.isAccompany ? '（同行）' : ''}{v.requiresFemaleNurse && v.type !== 'other' ? '（女性限定）' : ''}
+                    {v.isManual ? '（臨時）' : ''}{v.isAccompany ? '（同行）' : ''}{v.requiresFemaleNurse && v.type !== 'other' ? '（女性限定）' : ''}
                     {onlyOne && v.address ? <div className="print-note">{v.address}</div> : null}
                     {v.comment ? <div className="print-note">※ {v.comment}</div> : null}
                   </span>
@@ -4255,6 +4395,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     )}
                   </div>
                   {offNames.length > 0 && <div style={{ fontSize: '9pt', marginTop: '3mm' }}>お休み: {offNames.join('、')}</div>}
+                  {cancelledList.length > 0 && <div style={{ fontSize: '9pt', marginTop: '2mm' }}>キャンセル: {cancelledList.map(v => `${v.startTime} ${v.userName}`).join('、')}</div>}
                 </>
               );
             })()}
@@ -4313,7 +4454,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   )}
                 </div>
                 
-                {isAdmin && contextMenu.visit.type !== 'other' && (() => {
+                {contextMenu.visit.isCancelled && (
+                  <div className="px-4 py-2.5 bg-slate-100 border-b border-slate-200 text-[11px] text-slate-600 leading-relaxed max-w-[280px]">
+                    <div className="font-black text-slate-700 flex items-center gap-1"><Ban size={12}/>キャンセルの予定です</div>
+                    {contextMenu.visit.cancelNote && <div className="mt-0.5 whitespace-pre-wrap">{contextMenu.visit.cancelNote}</div>}
+                  </div>
+                )}
+                {isAdmin && contextMenu.visit.type !== 'other' && !contextMenu.visit.isCancelled && (() => {
                   // 割り当て済み → 自動編成がその人を選んだ理由（この画面で編成した分のみ）
                   // 未割り当て   → いま誰に入れられて、誰に入れられないのか
                   const cv = contextMenu.visit;
@@ -4349,12 +4496,29 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   <>
                     <button 
                       className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-teal-50 flex items-center gap-3 text-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={contextMenu.visit.isExcludedFromAutoAssign}
-                      title={contextMenu.visit.isExcludedFromAutoAssign ? "固定を解除してから変更してください" : ""}
+                      disabled={contextMenu.visit.isExcludedFromAutoAssign || contextMenu.visit.isCancelled}
+                      title={contextMenu.visit.isCancelled ? "キャンセルを取り消してから変更してください" : contextMenu.visit.isExcludedFromAutoAssign ? "固定を解除してから変更してください" : ""}
                       onClick={() => { openMoveDialog(contextMenu.visit); setContextMenu(null); }}
                     >
                       <ArrowUpDown size={16} className="text-teal-500"/>担当者・時間を変更
                     </button>
+                    {contextMenu.visit.type !== 'other' && (contextMenu.visit.isCancelled ? (
+                      <button 
+                        className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-emerald-50 flex items-center gap-3 text-emerald-700 transition-colors"
+                        onClick={() => { handleUncancel(contextMenu.visit); setContextMenu(null); }}
+                      >
+                        <Undo2 size={16} className="text-emerald-500"/>キャンセルを取り消す
+                      </button>
+                    ) : (
+                      <button 
+                        className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-100 flex items-center gap-3 text-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={contextMenu.visit.isExcludedFromAutoAssign}
+                        title={contextMenu.visit.isExcludedFromAutoAssign ? "固定を解除してからキャンセルにしてください" : "訪問がキャンセルになったときに使います（予定は記録として残ります）"}
+                        onClick={() => { setCancelTarget(contextMenu.visit); setContextMenu(null); }}
+                      >
+                        <Ban size={16} className="text-slate-400"/>キャンセルにする
+                      </button>
+                    ))}
                     <button 
                       className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
                       onClick={() => { handleToggleExclude(contextMenu.visit.id); setContextMenu(null); }}
@@ -4557,14 +4721,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               <div onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-lg w-full shadow-2xl max-h-[88vh] flex flex-col">
                 <div className="flex justify-between items-start mb-4 shrink-0">
                   <div>
-                    <h3 className="text-lg md:text-2xl font-black text-slate-800">未割り当て {unassignedVisitsWithLayout.length}件</h3>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800">未割り当て {unassignedCount}件</h3>
                     <p className="text-xs font-bold text-slate-500 mt-1">{formatDateLabel(selectedDate)}{isAdmin ? "　行を押すと担当者を選べます" : ""}</p>
                   </div>
                   <button type="button" onClick={() => setShowUnassignedList(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full shrink-0" aria-label="閉じる"><X size={20} /></button>
                 </div>
                 <div className="overflow-y-auto space-y-1.5 pr-1 flex-1 min-h-0">
-                  {unassignedVisitsWithLayout.length === 0 && <p className="text-sm font-bold text-slate-400 text-center py-8">未割り当ての予定はありません</p>}
-                  {unassignedVisitsWithLayout.map(v => {
+                  {unassignedCount === 0 && <p className="text-sm font-bold text-slate-400 text-center py-6">未割り当ての予定はありません</p>}
+                  {unassignedVisitsWithLayout.filter(v => !v.isCancelled).map(v => {
                     const rows = isAdmin && v.type !== 'other' ? explainFor(v) : null;
                     const okCount = rows ? rows.filter(r => r.ok).length : 0;
                     const locked = v.isExcludedFromAutoAssign;
@@ -4588,6 +4752,23 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                       </button>
                     );
                   })}
+                  {cancelledCount > 0 && (
+                    <>
+                      <p className="text-xs font-black text-slate-500 pt-4 pb-1 flex items-center gap-1.5"><Ban size={13}/>キャンセル {cancelledCount}件</p>
+                      {unassignedVisitsWithLayout.filter(v => v.isCancelled).map(v => (
+                        <div key={v.id} className="w-full px-4 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-black text-slate-400 tabular-nums shrink-0">{v.startTime}</span>
+                              <span className="text-sm font-black text-slate-400 line-through truncate">{v.userName}</span>
+                            </div>
+                            {v.cancelNote && <div className="text-[11px] font-bold text-slate-500 mt-0.5 truncate">{v.cancelNote}</div>}
+                          </div>
+                          {isAdmin && <button type="button" onClick={() => handleUncancel(v)} className="shrink-0 text-[11px] font-black text-emerald-700 bg-white border border-emerald-200 hover:bg-emerald-50 px-2.5 py-1.5 rounded-lg whitespace-nowrap">取り消す</button>}
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -4648,9 +4829,19 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   <button onClick={() => setShowAddEventModal(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full"><X size={20} /></button>
                 </div>
                 <form onSubmit={handleAddEvent} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
+                    <button type="button" onClick={() => setAddKind('other')} className={`py-2.5 rounded-xl text-sm font-black flex items-center justify-center gap-1.5 transition-colors ${addKind === 'other' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}><Briefcase size={15}/>会議・研修など</button>
+                    <button type="button" onClick={() => setAddKind('visit')} className={`py-2.5 rounded-xl text-sm font-black flex items-center justify-center gap-1.5 transition-colors ${addKind === 'visit' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500'}`}><Users size={15}/>臨時の訪問</button>
+                  </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">タイトル (会議・研修など)</label>
-                    <input required type="text" name="title" ref={addEventTitleInputRef} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                    <label className="block text-xs font-bold text-slate-500 mb-1">{addKind === 'visit' ? '利用者名（登録済みの方は候補から選べます）' : 'タイトル (会議・研修など)'}</label>
+                    <input required type="text" name="title" ref={addEventTitleInputRef} list={addKind === 'visit' ? 'known-user-list' : undefined} autoComplete="off" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                    {addKind === 'visit' && (
+                      <>
+                        <datalist id="known-user-list">{knownUsers.map(u => <option key={u.id} value={u.userName} />)}</datalist>
+                        <p className="text-[11px] font-bold text-slate-400 mt-1.5 leading-relaxed">訪問として集計に数えられ、スプレッドシートを同期しても消えません。登録済みの利用者を選ぶと、住所や女性限定などの条件を引き継ぎます。</p>
+                      </>
+                    )}
                   </div>
                   <div className="flex gap-4">
                     <div className="flex-1">
@@ -4665,11 +4856,17 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">担当者</label>
                     <select name="nurseId" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold">
-                      <option value="unassigned">未割り当て</option>
-                      <option value="all">全員 (出勤中の全員に追加)</option>
+                      <option value="unassigned">{addKind === 'visit' ? '未割り当て（あとで決める・自動編成に任せる）' : '未割り当て'}</option>
+                      {addKind !== 'visit' && <option value="all">全員 (出勤中の全員に追加)</option>}
                       {nurses.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
                     </select>
                   </div>
+                  {addKind === 'visit' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">コメント（任意）</label>
+                      <input type="text" name="comment" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" placeholder="例：発熱のため臨時訪問" />
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 mt-4 bg-red-50 p-3 rounded-xl border border-red-100">
                      <input type="checkbox" id="lockEvent" name="isLocked" className="w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500" />
                      <label htmlFor="lockEvent" className="text-sm font-bold text-red-600">自動編成から除外（時間を固定する）</label>
@@ -4679,6 +4876,23 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   </button>
                 </form>
               </div>
+            </div>
+          )}
+
+          {cancelTarget && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4" onClick={() => setCancelTarget(null)}>
+              <form onSubmit={handleCancelSubmit} onClick={e => e.stopPropagation()} className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl">
+                <div className="w-14 h-14 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center mb-4 mx-auto"><Ban size={28} /></div>
+                <h3 className="text-xl md:text-2xl font-black text-slate-800 text-center mb-1">訪問をキャンセルにする</h3>
+                <p className="text-sm font-black text-slate-600 text-center mb-4">{cancelTarget.startTime}　{cancelTarget.userName}</p>
+                <p className="text-xs font-bold text-slate-500 leading-relaxed mb-4">予定は消さずに「キャンセル」として残します。担当者は外れ、自動編成や訪問件数の対象からも外れます。あとで「キャンセルを取り消す」で元に戻せます。</p>
+                <label className="block text-xs font-bold text-slate-500 mb-1">理由・メモ（任意）</label>
+                <input type="text" name="note" autoFocus className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold mb-6" placeholder="例：入院のため、ご家族から連絡" />
+                <div className="flex gap-3">
+                  <button type="button" onClick={() => setCancelTarget(null)} className="flex-1 py-4 rounded-2xl font-black text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">やめる</button>
+                  <button type="submit" className="flex-1 py-4 rounded-2xl font-black text-white bg-slate-600 hover:bg-slate-700 transition-colors shadow-lg">キャンセルにする</button>
+                </div>
+              </form>
             </div>
           )}
 
