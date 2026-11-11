@@ -139,6 +139,7 @@
       }
     } catch (e) { console.error("Firebase init error", e); }
 
+    /*__PURE_HELPERS_START__*/
     const START_HOUR = 7;
     const END_HOUR = 22;
     const PIXELS_PER_MINUTE = 2.0; 
@@ -223,7 +224,55 @@
     // ここから下は「画面の状態に依存しない純粋な計算」をまとめたもの。
     // 入力が同じなら必ず同じ結果になるので、単体でテストできる。
     // ============================================================
-    /*__PURE_HELPERS_START__*/
+    // --- CSVの読み取り ---
+    // 単純にカンマで区切ると、住所などにカンマが含まれるとき列がずれてしまう。
+    // CSVの決まり（"…" で囲まれた中のカンマ・改行は区切りではない、"" は " 1文字）に従って読む。
+    const parseCsv = (text) => {
+      const rows = [];
+      let row = [], field = '', inQuotes = false;
+      const src = String(text ?? '').replace(/^\uFEFF/, '');
+      for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (inQuotes) {
+          if (c === '"') {
+            if (src[i + 1] === '"') { field += '"'; i++; }
+            else inQuotes = false;
+          } else field += c;
+        } else if (c === '"' && field === '') {
+          inQuotes = true;
+        } else if (c === ',') {
+          row.push(field); field = '';
+        } else if (c === '\n' || c === '\r') {
+          if (c === '\r' && src[i + 1] === '\n') i++;
+          row.push(field); field = '';
+          rows.push(row); row = [];
+        } else field += c;
+      }
+      if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+      return rows;
+    };
+    // 取得した内容がCSVではなくWebページ（エラー画面やログイン画面）だった場合を見分ける
+    const looksLikeHtml = (text) => /^\s*<(!doctype|html|head|body)/i.test(String(text ?? ''));
+
+    // --- 割り当てできない理由 ---
+    // この予定をこの看護師に、この開始時刻で割り当てられない場合に、その理由を返す（問題なければ null）
+    const assignProblem = (visit, nurse, offType, startMin) => {
+      if (!nurse) return null;
+      if (visit.requiresFemaleNurse && !nurse.isFemale) return "この利用者は女性看護師限定です";
+      const excluded = visit.excludedNurseNames || [];
+      if (excluded.some(ex => ex && (nurse.name.includes(ex) || ex.includes(nurse.name)))) return "除外スタッフに設定されているため、割り当てできません";
+      if (offType === 'full') return `${nurse.name} は本日お休みです`;
+      if (offType === 'AM' && startMin < parseTime('13:30')) return `${nurse.name} は午前休（13:30以降出勤）です`;
+      if (offType === 'PM' && startMin >= parseTime('12:30')) return `${nurse.name} は午後休（12:30退勤）です`;
+      return null;
+    };
+    // 同じ看護師の、時間が重なる予定を探す
+    const findOverlap = (visits, visit, nurseId, date, startMin) => {
+      const endMin = startMin + (visit.duration || 30);
+      return visits.find(o => o.id !== visit.id && o.date === date && o.nurseId === nurseId
+        && parseTime(o.startTime) < endMin && startMin < parseTime(o.startTime) + (o.duration || 30)) || null;
+    };
+
     // --- 移動時間の計算 ---
     // 住所の表記ゆれ（空白・全角数字・ハイフンの種類）をそろえる
     const normalizeAddress = (addr) => (addr || '')
@@ -750,6 +799,14 @@
       const [activePatternSlot, setActivePatternSlot] = useState(null);
       
       const [editingVisit, setEditingVisit] = useState(null);
+      const [moveTarget, setMoveTarget] = useState(null);       // 担当者・時間を変更中の予定
+      const [moveDraft, setMoveDraft] = useState({ nurseId: 'unassigned', startTime: '09:00' });
+      // 指で操作する端末か（ドラッグが使えないので、タップでメニューを開く）
+      const isTouchDevice = useMemo(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches, []);
+      const openMoveDialog = (visit) => {
+        setMoveDraft({ nurseId: isVisitUnassigned(visit, nurseIdSet) ? 'unassigned' : String(visit.nurseId), startTime: visit.startTime });
+        setMoveTarget(visit);
+      };
       const [contextMenu, setContextMenu] = useState(null);
 
       const [editingMemoDate, setEditingMemoDate] = useState(null);
@@ -1654,7 +1711,7 @@
         }
 
         const menuWidth = 240;
-        const menuHeight = isAdmin ? 420 : 240; 
+        const menuHeight = isAdmin ? 470 : 240; 
         if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
         if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
         x = Math.max(8, x);
@@ -2114,38 +2171,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
         if (targetNurseId) {
             const targetNurse = nurses.find(n => n.id === targetNurseId);
-            
-            if (targetVisit.requiresFemaleNurse && !targetNurse.isFemale) {
-                setToastMessage("この利用者は女性看護師限定です");
-                setShowToast(true);
-                return;
-            }
-
-            if (targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
-                const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
-                if (isExcluded) {
-                    setToastMessage("除外スタッフに設定されているため、割り当てできません");
-                    setShowToast(true);
-                    return;
-                }
-            }
-
-            const offType = getIsNurseOffType(targetNurse, selectedDate, nurseStatuses);
-            if (offType === 'full') {
-                setToastMessage(`${targetNurse.name} は本日お休みです`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'AM' && newStartMin < parseTime('13:30')) {
-                setToastMessage(`${targetNurse.name} は午前休（13:30以降出勤）です`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'PM' && newStartMin >= parseTime('12:30')) {
-                setToastMessage(`${targetNurse.name} は午後休（12:30退勤）です`);
-                setShowToast(true);
-                return;
-            }
+            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), newStartMin);
+            if (problem) { setToastMessage(problem); setShowToast(true); return; }
         }
         
         saveHistory();
@@ -2166,42 +2193,40 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         
         if (parsedNurseId) {
             const targetNurse = nurses.find(n => n.id === parsedNurseId);
-            
-            if (targetVisit.requiresFemaleNurse && !targetNurse.isFemale) {
-                setToastMessage("この利用者は女性看護師限定です");
-                setShowToast(true);
-                return;
-            }
-            
-            if (targetVisit.excludedNurseNames && targetVisit.excludedNurseNames.length > 0) {
-                const isExcluded = targetVisit.excludedNurseNames.some(ex => targetNurse.name.includes(ex) || ex.includes(targetNurse.name));
-                if (isExcluded) {
-                    setToastMessage("除外スタッフに設定されているため、割り当てできません");
-                    setShowToast(true);
-                    return;
-                }
-            }
-
-            const offType = getIsNurseOffType(targetNurse, selectedDate, nurseStatuses);
-            if (offType === 'full') {
-                setToastMessage(`${targetNurse.name} は本日お休みです`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'AM' && targetStart < parseTime('13:30')) {
-                setToastMessage(`${targetNurse.name} は午前休（13:30以降出勤）です`);
-                setShowToast(true);
-                return;
-            }
-            if (offType === 'PM' && targetStart >= parseTime('12:30')) {
-                setToastMessage(`${targetNurse.name} は午後休（12:30退勤）です`);
-                setShowToast(true);
-                return;
-            }
+            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), targetStart);
+            if (problem) { setToastMessage(problem); setShowToast(true); return; }
         }
 
         saveHistory();
-        handleSetVisits(visits.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+        handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+      };
+
+      // スマホなど、ドラッグができない端末向け：メニューから担当者と開始時刻を変更する
+      const handleMoveSubmit = (e) => {
+        e.preventDefault();
+        if (!isAdmin || !moveTarget) return;
+        const formData = new FormData(e.target);
+        const nurseValue = formData.get('nurseId');
+        const newNurseId = nurseValue === 'unassigned' ? null : parseInt(nurseValue, 10);
+        const newStart = String(formData.get('startTime') || moveTarget.startTime);
+        const startMin = parseTime(newStart);
+        const target = visits.find(v => v.id === moveTarget.id);
+        if (!target || target.isExcludedFromAutoAssign) { setMoveTarget(null); return; }
+        let overlapNote = "";
+        if (newNurseId) {
+          const nurse = nurses.find(n => n.id === newNurseId);
+          const problem = assignProblem(target, nurse, getIsNurseOffType(nurse, target.date, nurseStatuses), startMin);
+          if (problem) { setToastMessage(problem); setShowToast(true); return; }
+          const overlap = findOverlap(visits, target, newNurseId, target.date, startMin);
+          if (overlap) overlapNote = `（※ ${overlap.userName} ${overlap.startTime}〜 と時間が重なっています）`;
+        }
+        saveHistory();
+        handleSetVisits(prev => prev.map(v => v.id === target.id
+          ? { ...v, nurseId: newNurseId, startTime: newStart, originalStartTime: v.originalStartTime || v.startTime }
+          : v));
+        setMoveTarget(null);
+        setToastMessage(`${target.userName} を ${newNurseId ? nurses.find(n => n.id === newNurseId).name : '未割り当て'}・${newStart} に変更しました${overlapNote}`);
+        setShowToast(true);
       };
 
       const updateCustomTravelTime = (visitId, newTime) => {
@@ -2273,12 +2298,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           const txt = await res.text();
           // 週の基準は必ず「表示中の週の月曜日」にする（開始日が月曜以外でも日付がずれないように）
           const weekMonday = displayDates[0] || getMondayStr(startDate || getTodayStr());
-          const rows = txt.split(/\r\n|\n/);
+          if (looksLikeHtml(txt)) throw new Error("CSVではなくWebページが返されました（URLまたは公開設定の誤り）");
+          const rows = parseCsv(txt);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
           
           for (let i = 1; i < rows.length; i++) {
-            const p = rows[i].split(',');
+            const p = rows[i];
             if (p[9] && p[9].includes('休止')) continue; 
             if (p[0]?.trim()) {
               const nameStr = p[0].trim();
@@ -2348,7 +2374,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           if (merged.deletedAssigned > 0) msg += `。担当者が決まっていた予定が${merged.deletedAssigned}件削除されました（「元に戻す」で復元できます）`;
           setToastMessage(msg); 
           setShowToast(true);
-        } catch (e) { console.error(e); setToastMessage("データの同期に失敗しました。予定は変更していません。"); setShowToast(true); } 
+        } catch (e) { console.error(e); setToastMessage(`同期に失敗しました：${e?.message || "通信エラー"}。予定は変更していません。`); setShowToast(true); } 
         finally { setIsLoadingSheet(false); }
       };
 
@@ -2360,12 +2386,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           const res = await fetch(nurseSheetUrl);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const txt = await res.text();
-          const rows = txt.split(/\r\n|\n/);
+          if (looksLikeHtml(txt)) throw new Error("CSVではなくWebページが返されました（URLまたは公開設定の誤り）");
+          const rows = parseCsv(txt);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
           
           for (let i = 1; i < rows.length; i++) {
-            const p = rows[i].split(',');
+            const p = rows[i];
             if (p[0]?.trim()) {
               const nameStr = p[0].trim();
               let st = p[1]?.trim() || '08:30'; if (st.length === 4) st = '0' + st;
@@ -2442,7 +2469,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           if (merged.removed > 0) msg += ` / 名簿から外れた ${merged.removed}名の予定は「未割り当て」に戻ります`;
           setToastMessage(msg); 
           setShowToast(true);
-        } catch (e) { console.error(e); setToastMessage("名簿の同期に失敗しました。名簿は変更していません。"); setShowToast(true); } 
+        } catch (e) { console.error(e); setToastMessage(`名簿の更新に失敗しました：${e?.message || "通信エラー"}。名簿は変更していません。`); setShowToast(true); } 
         finally { setIsLoadingNurseSheet(false); }
       };
 
@@ -2998,7 +3025,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                    onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(v.id); }}
                                    onPointerEnter={() => setActiveCardId(v.id)}
                                    onPointerLeave={() => setActiveCardId(null)}
-                                   onClick={(e) => { if (!isAdmin) handleContextMenu(e, v); }}
+                                   onClick={(e) => { if (!isAdmin || isTouchDevice) handleContextMenu(e, v); }}
                                    onContextMenu={(e) => handleContextMenu(e, v)}
                                    onTouchStart={(e) => handleTouchStart(e, v)}
                                    onTouchMove={handleTouchEndOrMove}
@@ -3084,7 +3111,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         onPointerDown={(e) => { e.stopPropagation(); setActiveCardId(item.id); }}
                                         onPointerEnter={() => setActiveCardId(item.id)}
                                         onPointerLeave={() => setActiveCardId(null)}
-                                        onClick={(e) => { if (!isAdmin) handleContextMenu(e, item); }}
+                                        onClick={(e) => { if (!isAdmin || isTouchDevice) handleContextMenu(e, item); }}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -3296,7 +3323,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                       {/* カード本体 */}
                                       <div 
                                         className={`flex-1 flex flex-col justify-between p-2 md:p-4 rounded-xl md:rounded-2xl border-l-[4px] md:border-l-[6px] shadow-sm md:shadow-md transition-all hover:scale-[1.01] md:hover:scale-105 hover:z-50 mr-2 md:mr-0 mb-0.5 md:mb-0 mobile-dynamic-h ${item.isExcludedFromAutoAssign ? (isOther ? 'bg-indigo-50/90 opacity-80' : item.isAccompany ? 'bg-fuchsia-50/90 opacity-80' : 'bg-slate-100 opacity-60 grayscale-[0.5]') : (isOther ? 'bg-indigo-50 border-l-indigo-400' : item.isAccompany ? 'bg-fuchsia-50 border-l-fuchsia-400' : 'bg-white border-l-slate-400')} ${item.isLate ? 'border-l-red-500 border-y-red-100 border-r-red-100 ring-2 ring-red-500/20' : (isOther ? 'border-l-indigo-500 border-y-indigo-100 border-r-indigo-100 hover:ring-2 hover:ring-indigo-500/20' : 'border-l-teal-500 border-y-slate-100 border-r-slate-100 hover:ring-2 hover:ring-teal-500/20')} ${(isAdmin && !item.isExcludedFromAutoAssign) ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''}`}
-                                        onClick={(e) => { if (!isAdmin) handleContextMenu(e, item); }}
+                                        onClick={(e) => { if (!isAdmin || isTouchDevice) handleContextMenu(e, item); }}
                                         onContextMenu={(e) => handleContextMenu(e, item)}
                                         onTouchStart={(e) => handleTouchStart(e, item)}
                                         onTouchMove={handleTouchEndOrMove}
@@ -3841,6 +3868,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 {isAdmin && (
                   <>
                     <button 
+                      className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-teal-50 flex items-center gap-3 text-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={contextMenu.visit.isExcludedFromAutoAssign}
+                      title={contextMenu.visit.isExcludedFromAutoAssign ? "固定を解除してから変更してください" : ""}
+                      onClick={() => { openMoveDialog(contextMenu.visit); setContextMenu(null); }}
+                    >
+                      <ArrowUpDown size={16} className="text-teal-500"/>担当者・時間を変更
+                    </button>
+                    <button 
                       className="w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700 transition-colors"
                       onClick={() => { handleToggleExclude(contextMenu.visit.id); setContextMenu(null); }}
                     >
@@ -3939,6 +3974,60 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             </div>
           )}
+
+          {moveTarget && (() => {
+            const draftStart = parseTime(moveDraft.startTime || moveTarget.startTime);
+            const candidates = nurses.map(n => {
+              const offType = getIsNurseOffType(n, moveTarget.date, nurseStatuses);
+              const problem = assignProblem(moveTarget, n, offType, draftStart);
+              const overlap = problem ? null : findOverlap(visits, moveTarget, n.id, moveTarget.date, draftStart);
+              const count = visits.filter(v => v.date === moveTarget.date && v.nurseId === n.id).length;
+              return { nurse: n, problem, overlap, count };
+            });
+            const pick = (value) => setMoveDraft(d => ({ ...d, nurseId: value }));
+            return (
+              <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setMoveTarget(null)}>
+                <form onSubmit={handleMoveSubmit} onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-md w-full shadow-2xl max-h-[88vh] flex flex-col">
+                  <div className="flex justify-between items-start mb-4 shrink-0">
+                    <div className="min-w-0">
+                      <h3 className="text-lg md:text-2xl font-black text-slate-800">担当者・時間を変更</h3>
+                      <p className="text-xs font-bold text-slate-500 mt-1 truncate">{moveTarget.userName}（{moveTarget.duration}分）</p>
+                    </div>
+                    <button type="button" onClick={() => setMoveTarget(null)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full shrink-0" aria-label="閉じる"><X size={20} /></button>
+                  </div>
+                  <div className="mb-4 shrink-0">
+                    <label className="block text-xs font-bold text-slate-500 mb-1">開始時間</label>
+                    <input required type="time" name="startTime" step="300" value={moveDraft.startTime} onChange={e => setMoveDraft(d => ({ ...d, startTime: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  <input type="hidden" name="nurseId" value={moveDraft.nurseId} />
+                  <label className="block text-xs font-bold text-slate-500 mb-1 shrink-0">担当者</label>
+                  <div className="overflow-y-auto space-y-1.5 pr-1 flex-1 min-h-0">
+                    <button type="button" onClick={() => pick('unassigned')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm font-black text-left transition-colors ${moveDraft.nurseId === 'unassigned' ? 'border-teal-500 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-600'}`}>
+                      <span>未割り当てに戻す</span>
+                    </button>
+                    {candidates.map(({ nurse, problem, overlap, count }) => {
+                      const selected = moveDraft.nurseId === String(nurse.id);
+                      return (
+                        <button type="button" key={nurse.id} disabled={!!problem} onClick={() => pick(String(nurse.id))} className={`w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl border text-sm font-black text-left transition-colors ${problem ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed' : selected ? 'border-teal-500 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: problem ? '#cbd5e1' : nurse.color }}></span>
+                            <span className="truncate">{nurse.name}</span>
+                            <span className="text-[10px] font-bold text-slate-400 shrink-0">{count}件</span>
+                          </span>
+                          <span className={`text-[10px] font-black shrink-0 text-right max-w-[50%] leading-tight ${problem ? 'text-slate-400' : overlap ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {problem ? (problem.includes('女性') ? '女性限定' : problem.includes('除外') ? '除外スタッフ' : problem.includes('午前休') ? '午前休' : problem.includes('午後休') ? '午後休' : 'お休み') : overlap ? `重複: ${overlap.userName}` : '空き'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button type="submit" className="w-full mt-4 py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30 shrink-0">
+                    変更する
+                  </button>
+                </form>
+              </div>
+            );
+          })()}
 
           {activePatternSlot && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4" onClick={() => setActivePatternSlot(null)}>
