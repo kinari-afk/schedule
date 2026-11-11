@@ -479,14 +479,14 @@ const errs=[];
   const { page } = r;
   await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(500);
   await page.locator('button[title="未割り当ての一覧を開く"]').tap(); await page.waitForTimeout(300);
-  await page.waitForSelector('text=未割り当て 12件');
+  await page.waitForSelector('div.fixed h3:has-text("未割り当て 12件")');
   await page.screenshot({ path: shot('m-unassigned-list.png') });
   await page.locator('div.fixed button', { hasText:'須藤' }).first().tap(); await page.waitForTimeout(300);
   await page.locator('form button', { hasText:'井上 健' }).tap();
   await page.locator('form button[type=submit]').tap(); await page.waitForTimeout(500);
   const vs = parse((await r.store()).visits);
   assert.equal(vs.find(v=>v.userName.startsWith('須藤') && v.date==='2026-11-11').nurseId,1001);
-  await page.waitForSelector('text=未割り当て 11件');     // 一覧は開いたまま、続けて次を割り当てられる
+  await page.waitForSelector('div.fixed h3:has-text("未割り当て 11件")');     // 一覧は開いたまま、続けて次を割り当てられる
   console.log('I OK: スマホで未割り当ての一覧から続けて割り当て');
   errs.push(...r.errors); await r.browser.close();
 }

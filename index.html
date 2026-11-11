@@ -3098,7 +3098,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                       </h1>
                       <div className={`${isAdmin ? 'flex' : 'hidden md:flex'} items-center gap-3 bg-white px-3 md:px-4 py-1 md:py-2 rounded-2xl border border-slate-200 shadow-sm`}>
                         <Clock size={16} className="text-slate-400" />
-                        <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
+                        <span className="text-xs font-black text-slate-500 uppercase tracking-tight whitespace-nowrap">移動時間:</span>
                         <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 disabled:bg-transparent read-only:focus:ring-0"/>
                         <span className="text-xs text-slate-400 font-bold">分</span>
                         <div className="w-px h-4 bg-slate-200"></div>
