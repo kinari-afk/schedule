@@ -10,7 +10,7 @@ const nodeModules = path.resolve(here, '..', 'node_modules');
 export const INDEX_HTML = path.resolve(here, '..', '..', 'index.html');
 export const SHOTS = path.resolve(here, '..', 'shots');
 fs.mkdirSync(SHOTS, { recursive: true });
-const V = 'https://test.local/vendor.js';
+const V = 'https://esm.sh/__test_vendor.js';
 const mods = {
   'https://esm.sh/react@18.2.0': `import {React} from '${V}'; export default React; export const {useState,useMemo,useRef,useEffect,useCallback,Fragment,createElement,forwardRef}=React;`,
   'https://esm.sh/react@18.2.0/jsx-runtime': `import {JSXRuntime} from '${V}'; export const {jsx,jsxs,Fragment}=JSXRuntime;`,
@@ -30,12 +30,15 @@ const mods = {
     export const signOut=async()=>{ set(null); };`,
   'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js': `
     // 偽のデータベース：複数ドキュメント対応。strictRules のときは「書き込みはパスワードログインのみ」を再現
-    const S = window.__mockStore = window.__mockStore || { docs: JSON.parse(JSON.stringify(window.__seedDocs || {})), subs: {}, writes: [] };
+    const saved = window.__authCfg?.persist ? localStorage.getItem('__mockDocs') : null;
+    const S = window.__mockStore = window.__mockStore || { docs: saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(window.__seedDocs || {})), subs: {}, writes: [] };
+    if (window.__authCfg?.persist) localStorage.setItem('__mockDocs', JSON.stringify(S.docs));
     const MAIN='artifacts/care-route-app/public/data/careRoute_state/main';
     Object.defineProperty(S,'data',{get(){return S.docs[MAIN]||null;}});
     const err=(code)=>{ const e=new Error(code); e.code=code; return e; };
     const snap=(p)=>({exists:()=>S.docs[p]!=null,data:()=>({...S.docs[p]})});
     export const getFirestore=()=>({});
+    export const initializeFirestore=()=>({}); export const persistentLocalCache=(o)=>o; export const persistentMultipleTabManager=()=>({});
     export const doc=(db,...a)=>({path:a.join('/')});
     export const setDoc=async(ref,data,opt)=>{
       const u=window.__mockAuth?.user;
@@ -44,21 +47,20 @@ const mods = {
       if (size>1048487) throw err('invalid-argument');
       S.docs[ref.path] = opt&&opt.merge ? {...(S.docs[ref.path]||{}),...data} : {...data};
       S.writes.push(ref.path);
+      if (window.__authCfg?.persist) localStorage.setItem('__mockDocs', JSON.stringify(S.docs));
       (S.subs[ref.path]||[]).forEach(cb=>setTimeout(()=>cb(snap(ref.path)),0));
     };
     export const getDoc=async(ref)=>snap(ref.path);
     export const onSnapshot=(ref,cb)=>{ (S.subs[ref.path]=S.subs[ref.path]||[]).push(cb); setTimeout(()=>cb(snap(ref.path)),0); return ()=>{ S.subs[ref.path]=S.subs[ref.path].filter(x=>x!==cb); }; };`,
 };
-export async function launch({ viewport, seed, admin = true, csv = {}, isMobile = false, scale = 1, authCfg = {}, login = null, routes = {} }) {
-  const browser = await chromium.launch();
-  const ctx = await browser.newContext({ acceptDownloads: true, viewport, deviceScaleFactor: scale, isMobile, hasTouch: isMobile, locale: 'ja-JP', timezoneId: 'Asia/Tokyo' });
-  const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+
+// 外部への通信をすべて横取りして、ローカルの偽物を返す。知らない宛先は遮断して記録する
+export function makeRouteHandler({ csv = {}, routes = {}, errors = [], isOffline = () => false }) {
   const lucideNames = fs.readFileSync(INDEX_HTML,'utf8').match(/import \{([^}]+)\} from 'lucide-react'/)[1].split(',').map(s=>s.trim().split(' as ')[0]);
-  await page.route('**/*', async route => {
+  return async (route) => {
     const url = route.request().url();
+    if (isOffline()) return route.abort('internetdisconnected');
+    if (url.startsWith('http://localhost')) return route.continue();
     const js = (body) => route.fulfill({ status: 200, contentType: 'text/javascript', body, headers: { 'access-control-allow-origin': '*' } });
     if (url.startsWith('https://test.local/app')) return route.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(INDEX_HTML,'utf8') });
     if (url === V) return js(fs.readFileSync(path.join(cache,'vendor.js'),'utf8'));
@@ -70,7 +72,16 @@ export async function launch({ viewport, seed, admin = true, csv = {}, isMobile 
     for (const k of Object.keys(csv)) if (url.includes(k)) return route.fulfill({ status: 200, contentType: 'text/csv', body: typeof csv[k]==='function'?csv[k]():csv[k], headers: { 'access-control-allow-origin': '*' } });
     errors.push('BLOCKED ' + url);
     return route.abort();
-  });
+  };
+}
+export async function launch({ viewport, seed, admin = true, csv = {}, isMobile = false, scale = 1, authCfg = {}, login = null, routes = {} }) {
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: true, viewport, deviceScaleFactor: scale, isMobile, hasTouch: isMobile, locale: 'ja-JP', timezoneId: 'Asia/Tokyo' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.route('**/*', makeRouteHandler({ csv, routes, errors }));
   await page.addInitScript(([seed, authCfg]) => { window.__seedDocs = seed ? { 'artifacts/care-route-app/public/data/careRoute_state/main': seed } : {}; window.__authCfg = authCfg; }, [seed, authCfg]);
   await page.goto('https://test.local/app' + (admin ? '?mode=admin' : ''));
   await page.waitForSelector('#root > div', { timeout: 30000 });

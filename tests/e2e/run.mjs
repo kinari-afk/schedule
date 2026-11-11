@@ -362,6 +362,70 @@ const errs=[];
   errs.push(...r.errors); await r.browser.close();
 }
 
+// ===== F. 同行訪問の連動 =====
+{
+  const { seed } = mk();
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  const menu = async (name, item) => { await page.locator('.visit-card:visible', { hasText:name }).first().click({ button:'right', position:{x:7,y:10} }); await page.waitForTimeout(200); await page.locator('div.fixed button', { hasText:item }).first().click(); await page.waitForTimeout(300); };
+  await menu('宇野','同行複製');
+  let vs = parse((await r.store()).visits);
+  const parent = vs.find(v=>v.userName.startsWith('宇野') && v.date==='2026-11-11' && !v.isAccompany);
+  const acc = vs.find(v=>v.isAccompany);
+  assert.equal(acc.accompanyOf,parent.id);
+  // 自動編成：同行と主担当は別の人になる
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  vs = parse((await r.store()).visits);
+  const pa = vs.find(v=>v.id===parent.id), aa = vs.find(v=>v.id===acc.id);
+  assert(pa.nurseId && aa.nurseId && pa.nurseId!==aa.nurseId,'同行と主担当が同じ人');
+  // 元の予定の時間を編集 → 同行も動く
+  await page.locator('.visit-card:visible', { hasText:'宇野' }).first().click({ button:'right' }); await page.waitForTimeout(200);
+  const isAccMenu = await page.locator('div.fixed', { hasText:'主担当:' }).count();
+  await page.mouse.click(5,5); await page.waitForTimeout(200);
+  const cards = page.locator('.visit-card:visible', { hasText:'宇野' });
+  await cards.nth(isAccMenu ? 1 : 0).click({ button:'right' }); await page.waitForTimeout(200);
+  assert(await page.locator('div.fixed', { hasText:'同行:' }).count()>0,'メニューに同行者が表示されない');
+  await page.locator('div.fixed button', { hasText:'編集' }).first().click(); await page.waitForTimeout(300);
+  await page.locator('form input[name=startTime]').fill('13:30'); await page.locator('form input[name=duration]').fill('45');
+  await page.locator('form button[type=submit]').click(); await page.waitForTimeout(500);
+  vs = parse((await r.store()).visits);
+  assert.equal(vs.find(v=>v.id===parent.id).startTime,'13:30');
+  assert.equal(vs.find(v=>v.id===acc.id).startTime,'13:30','同行が連動しない'); assert.equal(vs.find(v=>v.id===acc.id).duration,45);
+  assert.equal(vs.find(v=>v.id===acc.id).nurseId,aa.nurseId);
+  // 元の予定を削除 → 同行も消える → 元に戻すで両方復活
+  await side(page,'利用者管理'); await page.waitForTimeout(300);
+  const rowEl = page.locator('tbody tr', { hasText:'宇野' }).filter({ hasNotText:'同行' }).first();
+  await rowEl.locator('button[title=削除]').click(); await page.locator('button', { hasText:'削除する' }).click(); await page.waitForTimeout(500);
+  vs = parse((await r.store()).visits);
+  assert(!vs.find(v=>v.id===parent.id) && !vs.find(v=>v.id===acc.id),'元を消しても同行が残る');
+  await side(page,'全体スケジュール'); await page.waitForTimeout(300);
+  await page.locator('button', { hasText:'元に戻す' }).first().click(); await page.waitForTimeout(500);
+  vs = parse((await r.store()).visits);
+  assert(vs.find(v=>v.id===parent.id) && vs.find(v=>v.id===acc.id));
+  console.log('F OK: 同行訪問（別担当に割り当て・時間と所要時間の連動・削除の連動・元に戻す）');
+
+  // ===== G. 印刷 =====
+  await page.emulateMedia({ media:'print' });
+  const pr = page.locator('.print-only');
+  assert(await pr.isVisible()); assert.equal(await page.locator('aside').isVisible(), false);
+  const text = await pr.innerText();
+  assert(text.includes('訪問担当表') && text.includes('2026/11/11') && text.includes('青木 さくら') && text.includes('カンファレンス') && text.includes('お休み: 小川 大地'));
+  assert(text.includes('（同行）'));
+  await page.pdf({ path: shot('print-all.pdf'), preferCSSPageSize: true });
+  await page.screenshot({ path: shot('print-all.png'), fullPage:true });
+  await page.emulateMedia({ media:'screen' });
+  await side(page,'個別ルート確認'); await page.waitForTimeout(300);
+  await page.locator('button', { hasText:'井上 健' }).first().click(); await page.waitForTimeout(200);
+  await page.emulateMedia({ media:'print' });
+  const text2 = await pr.innerText();
+  assert(text2.includes('井上 健') && !text2.includes('青木 さくら') && text2.includes('東京都架空区'));
+  await page.screenshot({ path: shot('print-one.png'), fullPage:true });
+  assert(fs.statSync(shot('print-all.pdf')).size>5000);
+  console.log('G OK: 印刷（全員分・個別ルート・PDF出力）');
+  errs.push(...r.errors); await r.browser.close();
+}
+
 const real = errs.filter(e=>!e.includes('cdn.tailwindcss.com should not be used')&&!e.includes('in-browser Babel')&&!e.includes('形式が違います')&&!e.includes('CSVではなくWebページ'));
 if (real.length) { console.error('画面でエラーが発生:', real); process.exit(1); }
 console.log('ALL PASS');

@@ -39,6 +39,24 @@
       input, select, textarea { font-size: 16px !important; }
     }
     
+    /* 印刷・PDF用：画面用の表示を隠し、印刷専用の表だけを出す */
+    .print-only { display: none; }
+    @media print {
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { background: #fff !important; }
+      .app-shell { height: auto !important; overflow: visible !important; display: block !important; background: #fff !important; }
+      .app-shell > *:not(.print-only) { display: none !important; }
+      .print-only { display: block; color: #000; font-family: sans-serif; }
+      .print-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44mm, 1fr)); gap: 3mm; }
+      .print-box { border: 0.3mm solid #666; border-radius: 1.5mm; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
+      .print-box h3 { margin: 0; padding: 1mm 2mm; font-size: 10pt; font-weight: 700; background: #e5e7eb; border-bottom: 0.3mm solid #666; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .print-row { display: flex; gap: 2mm; padding: 1mm 2mm; font-size: 9pt; border-bottom: 0.2mm dotted #999; line-height: 1.35; }
+      .print-row:last-child { border-bottom: none; }
+      .print-time { white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .print-note { font-size: 7.5pt; color: #333; white-space: pre-wrap; }
+      .print-empty { padding: 1.5mm 2mm; font-size: 8pt; color: #666; }
+    }
+
     /* スマホのアドレスバー分を除いた「実際に見えている高さ」に合わせる */
     .app-shell { height: 100vh; height: 100dvh; }
 
@@ -79,11 +97,11 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
-    import { getFirestore, doc, setDoc, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+    import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
     import * as _LZ from 'https://esm.sh/lz-string@1.5.0';
     const LZString = (_LZ && _LZ.default && _LZ.default.compressToBase64) ? _LZ.default : _LZ;
 
@@ -135,9 +153,20 @@
       }
       if (app) {
         auth = getAuth(app);
-        db = getFirestore(app);
+        // 読み込んだデータを端末にも保存しておく（電波がない場所でも、最後に読み込んだ内容を表示できる）
+        try {
+          db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+        } catch (e) {
+          console.warn("端末への保存を有効にできなかったため、通常の方式で接続します", e);
+          db = getFirestore(app);
+        }
       }
     } catch (e) { console.error("Firebase init error", e); }
+
+    // アプリ本体（このページと、表示に必要な部品）を端末に保存する仕組みを登録する
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      navigator.serviceWorker.register('sw.js').catch(e => console.warn("オフライン用の保存を登録できませんでした", e));
+    }
 
     /*__PURE_HELPERS_START__*/
     const START_HOUR = 7;
@@ -271,6 +300,55 @@
       const endMin = startMin + (visit.duration || 30);
       return visits.find(o => o.id !== visit.id && o.date === date && o.nurseId === nurseId
         && parseTime(o.startTime) < endMin && startMin < parseTime(o.startTime) + (o.duration || 30)) || null;
+    };
+
+    // --- 同行訪問の連動 ---
+    // 同行用の予定（isAccompany）が、どの予定に付いているかを探す
+    const findAccompanyParent = (accompany, list) => {
+      if (accompany.accompanyOf != null) return list.find(v => v.id === accompany.accompanyOf) || null;
+      // 以前のバージョンで作った同行予定には紐づけ情報がないので、「同じ利用者・同じ日・同じ時刻」で探す
+      const name = normalizeName(accompany.userName);
+      return list.find(v => v.id !== accompany.id && !v.isAccompany && v.type !== 'other'
+        && v.date === accompany.date && v.startTime === accompany.startTime && normalizeName(v.userName) === name) || null;
+    };
+    // 予定の一覧が prev → next に変わるとき、元の予定の変更を同行予定にも反映する。
+    //  ・元の予定の時刻・日付・所要時間が変わった → 同行予定も同じだけ動かす
+    //  ・元の予定が削除された                     → 同行予定も削除する
+    //  ・同行予定そのものを同時に動かしている場合は、その操作を優先して何もしない
+    const syncAccompanyVisits = (prev, next) => {
+      if (!next.some(v => v.isAccompany)) return next;
+      const prevById = new Map(prev.map(v => [v.id, v]));
+      const nextById = new Map(next.map(v => [v.id, v]));
+      let changed = false;
+      const result = [];
+      next.forEach(a => {
+        if (!a.isAccompany) { result.push(a); return; }
+        const aPrev = prevById.get(a.id);
+        if (!aPrev) { result.push(a); return; }                       // いま作られたばかり
+        const parentPrev = findAccompanyParent(aPrev, prev);
+        if (!parentPrev) { result.push(a); return; }
+        const parentNext = nextById.get(parentPrev.id);
+        if (!parentNext) { changed = true; return; }                  // 元の予定が削除された
+        const selfMoved = a.startTime !== aPrev.startTime || a.date !== aPrev.date || a.duration !== aPrev.duration;
+        const parentMoved = parentNext.startTime !== parentPrev.startTime || parentNext.date !== parentPrev.date || parentNext.duration !== parentPrev.duration;
+        if (selfMoved || !parentMoved) {
+          // 紐づけ情報がまだ無ければ、この機会に記録しておく
+          if (a.accompanyOf == null) { changed = true; result.push({ ...a, accompanyOf: parentPrev.id }); } else result.push(a);
+          return;
+        }
+        const delta = parseTime(parentNext.startTime) - parseTime(parentPrev.startTime);
+        const newStart = formatTime(Math.max(0, Math.min(24 * 60 - 5, parseTime(a.startTime) + delta)));
+        changed = true;
+        result.push({
+          ...a,
+          accompanyOf: parentPrev.id,
+          date: parentNext.date,
+          startTime: newStart,
+          originalStartTime: parentNext.originalStartTime || a.originalStartTime,
+          duration: a.duration === parentPrev.duration ? parentNext.duration : a.duration
+        });
+      });
+      return changed ? result : next;
     };
 
     // --- 移動時間の計算 ---
@@ -652,6 +730,14 @@
 
       const [user, setUser] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
+      // 通信できる状態か
+      const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine !== false);
+      useEffect(() => {
+        const on = () => setIsOnline(true), off = () => setIsOnline(false);
+        window.addEventListener('online', on);
+        window.addEventListener('offline', off);
+        return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+      }, []);
       
       const [activeTab, setActiveTab] = useState(() => {
         return localStorage.getItem('careRoute_activeTab') || 'overview';
@@ -754,7 +840,8 @@
       }, [liveVisits, archiveCache, neededArchiveMonths]);
       // 保管済みの月を表示している間は「閲覧のみ」にする
       const isArchivedView = archivedMonthSet.has(monthOf(selectedDate)) && ['overview', 'schedule', 'visits'].includes(activeTab);
-      const isAdmin = isAdminUser && !isArchivedView;
+      // オフライン中も閲覧のみ（電波が戻ったときに、古い内容で上書きしてしまう事故を防ぐ）
+      const isAdmin = isAdminUser && !isArchivedView && isOnline;
 
       // ===== 位置情報 =====
       const [geoCache, setGeoCache] = useState({});              // 住所 → [緯度, 経度]
@@ -998,7 +1085,7 @@
       };
 
       const updateCloudData = (newData) => {
-        if (!isAdminUser) return;
+        if (!isAdminUser || !isOnline) return;
         if (user && db) {
           const docRef = mainDocRef();
           setDoc(docRef, newData, { merge: true }).catch(e => {
@@ -1025,6 +1112,7 @@
         if (!isAdmin) return;
         setVisits(prev => {
           let next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          next = syncAccompanyVisits(prev, next);   // 同行予定を元の予定に連動させる
           // 保管済みの月の予定は保管庫が正なので、メイン側には書き戻さない
           if (archivedMonthSet.size > 0) next = next.filter(v => !archivedMonthSet.has(monthOf(v.date)));
           updateCloudData({ visits: encodeField(next) });
@@ -1544,7 +1632,7 @@
 
       // 復元の実行：①いまの状態を自動でバックアップ → ②保管庫 → ③メインの順に書き込む
       const executeRestore = async () => {
-        if (!isAdminUser || !restoreCandidate || !db) return;
+        if (!isAdminUser || !isOnline || !restoreCandidate || !db) return;
         const { data } = restoreCandidate;
         setArchiveBusy(true);
         try {
@@ -1584,7 +1672,7 @@
       // 古い月のデータを「保管庫」（月ごとの別の保存場所）へ移す。
       // 安全のため「先に保管庫へ書く → 成功を確認 → メイン側から外す」の順で行う。
       const handleArchiveOldData = async () => {
-        if (!isAdminUser || !db || !storageInfo || storageInfo.archivable === 0) return;
+        if (!isAdminUser || !isOnline || !db || !storageInfo || storageInfo.archivable === 0) return;
         const cutoff = storageInfo.cutoffMonth;
         setArchiveBusy(true);
         try {
@@ -1630,7 +1718,7 @@
 
       // 保管済みの月を、編集できる場所へ戻す
       const handleUnarchiveMonth = async (month) => {
-        if (!isAdminUser || !db || !archivedMonthSet.has(month)) return;
+        if (!isAdminUser || !isOnline || !db || !archivedMonthSet.has(month)) return;
         setArchiveBusy(true);
         try {
           const snap = await getDoc(archiveDocRef(month));
@@ -1905,7 +1993,8 @@
           id: Date.now() + Math.floor(Math.random() * 1000),
           isExcludedFromAutoAssign: false, 
           nurseId: null, 
-          isAccompany: true
+          isAccompany: true,
+          accompanyOf: visit.isAccompany ? (visit.accompanyOf ?? null) : visit.id   // どの予定の同行かを記録
         };
         saveHistory();
         handleSetVisits(prev => [...prev, newVisit]);
@@ -2713,8 +2802,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               )}
             </div>
             <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400">
-              <div className={`w-2 h-2 rounded-full ${db && user ? 'bg-emerald-400' : 'bg-slate-500'}`}></div>
-              <span>{db && user ? (isSyncing ? '読込中' : '同期中') : '接続中...'}</span>
+              <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-400' : db && user ? 'bg-emerald-400' : 'bg-slate-500'}`}></div>
+              <span>{!isOnline ? 'オフライン' : db && user ? (isSyncing ? '読込中' : '同期中') : '接続中...'}</span>
             </div>
           </header>
 
@@ -2810,6 +2899,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             ) : null}
 
+            {!isOnline && (
+              <div className="bg-slate-700 text-white text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex items-center gap-2 shrink-0">
+                <WifiOff size={16} className="shrink-0" />
+                <span>オフラインです。最後に読み込んだ内容を表示しています{isAdminUser ? "（電波が戻るまで編集はできません）" : ""}</span>
+              </div>
+            )}
             {legacyAdmin && (
               <div className="bg-red-50 border-b border-red-200 text-red-700 text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex items-center gap-2 shrink-0">
                 <ShieldAlert size={16} className="shrink-0" />
@@ -2843,6 +2938,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                         <input type="number" min="5" max="60" value={travelSpeedKmh} onChange={e => handleSetTravelSpeed(Math.min(60, Math.max(5, parseInt(e.target.value) || DEFAULT_TRAVEL_SPEED_KMH)))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 read-only:focus:ring-0"/>
                         <span className="text-xs text-slate-400 font-bold">km</span>
                       </div>
+                      <button onClick={() => window.print()} className="hidden md:flex bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap" title="この日の担当表を印刷、またはPDFとして保存します">
+                        <Printer size={16} />
+                        印刷 / PDF
+                      </button>
                     </div>
                     <div ref={scrollRefOverview} className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pc-scrollable pb-2 md:pb-3 cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
                       
@@ -3203,6 +3302,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                         </div>
                         
                         <div className="flex items-center gap-2">
+                           <button onClick={() => window.print()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-1.5 md:py-3 rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0" title="この担当者のルートを印刷、またはPDFとして保存します">
+                             <Printer size={16} />
+                             <span className="hidden md:inline">印刷 / PDF</span>
+                           </button>
                            {isAdmin && (
                              <button 
                                 onClick={handleUndo}
@@ -3814,6 +3917,59 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             </div>
           </main>
 
+          {/* 印刷専用の表（画面には表示されない）。個別ルートのタブでは選択中の担当者だけ、それ以外は全員分 */}
+          <div className="print-only">
+            {(() => {
+              const onlyOne = activeTab === 'schedule' && selectedNurse;
+              const targets = onlyOne ? [selectedNurse] : nurses;
+              const working = targets.filter(n => !allSchedules[n.id]?.isOff);
+              const offNames = targets.filter(n => allSchedules[n.id]?.isOff).map(n => n.name);
+              const unassigned = onlyOne ? [] : unassignedVisitsWithLayout;
+              const memo = dailyMemos[selectedDate];
+              const row = (v, start, end) => (
+                <div className="print-row" key={v.id}>
+                  <span className="print-time">{start}–{end}</span>
+                  <span>
+                    {v.userName}
+                    {v.isAccompany ? '（同行）' : ''}{v.requiresFemaleNurse && v.type !== 'other' ? '（女性限定）' : ''}
+                    {onlyOne && v.address ? <div className="print-note">{v.address}</div> : null}
+                    {v.comment ? <div className="print-note">※ {v.comment}</div> : null}
+                  </span>
+                </div>
+              );
+              return (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '3mm' }}>
+                    <h1 style={{ fontSize: '15pt', fontWeight: 700, margin: 0 }}>
+                      訪問担当表　{selectedDate.replace(/-/g, '/')}（{JS_DAYS[new Date(selectedDate).getDay()]}）{onlyOne ? `　${selectedNurse.name}` : ''}
+                    </h1>
+                    <span style={{ fontSize: '8pt' }}>印刷: {new Date().toLocaleString('ja-JP')}</span>
+                  </div>
+                  {memo && <div style={{ fontSize: '9pt', border: '0.3mm solid #666', borderRadius: '1.5mm', padding: '1.5mm 2mm', marginBottom: '3mm', whiteSpace: 'pre-wrap' }}>【共有事項】{memo}</div>}
+                  <div className="print-grid" style={onlyOne ? { gridTemplateColumns: '1fr' } : undefined}>
+                    {working.map(n => {
+                      const sch = allSchedules[n.id];
+                      const list = sch?.visits || [];
+                      return (
+                        <div className="print-box" key={n.id}>
+                          <h3>{n.name}{sch?.offType === 'AM' ? '（午前休）' : sch?.offType === 'PM' ? '（午後休）' : ''}　{list.length}件</h3>
+                          {list.length === 0 ? <div className="print-empty">予定なし</div> : list.map(v => row(v, v.actualStartTime, v.departureTime))}
+                        </div>
+                      );
+                    })}
+                    {unassigned.length > 0 && (
+                      <div className="print-box">
+                        <h3>未割り当て　{unassigned.length}件</h3>
+                        {unassigned.map(v => row(v, v.startTime, formatTime(parseTime(v.startTime) + (v.duration || 0))))}
+                      </div>
+                    )}
+                  </div>
+                  {offNames.length > 0 && <div style={{ fontSize: '9pt', marginTop: '3mm' }}>お休み: {offNames.join('、')}</div>}
+                </>
+              );
+            })()}
+          </div>
+
           {/* スマホ用：下部のタブ切り替え（親指が届きやすく、名前も読める） */}
           <nav className="md:hidden shrink-0 bg-white border-t border-slate-200 flex justify-around px-1 pt-1 z-50" style={{ paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))' }}>
             {[
@@ -3849,6 +4005,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   </div>
                   <div className="text-[11px] font-bold text-slate-400 mt-0.5 truncate">
                     担当: {nurses.find(n => n.id === contextMenu.visit.nurseId)?.name || '未割り当て'}
+                    {(() => {
+                      // 同行の相手（同行予定なら元の担当、元の予定なら同行者）を表示
+                      const cv = contextMenu.visit;
+                      const partners = cv.isAccompany
+                        ? [findAccompanyParent(cv, visits)].filter(Boolean)
+                        : visits.filter(a => a.isAccompany && a.date === cv.date && findAccompanyParent(a, visits)?.id === cv.id);
+                      if (partners.length === 0) return null;
+                      return <span className="text-fuchsia-600"> ／ {cv.isAccompany ? '主担当' : '同行'}: {partners.map(pv => nurses.find(n => n.id === pv.nurseId)?.name || '未割り当て').join('・')}</span>;
+                    })()}
                   </div>
                   {(contextMenu.visit.requiresFemaleNurse || contextMenu.visit.isAccompany) && (
                     <div className="flex flex-wrap gap-1 mt-1.5">

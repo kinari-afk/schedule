@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -189,5 +189,40 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.equal(H.findOverlap(others,v,4,D,600),null);          // 10:00〜10:30 と 10:30〜 は重ならない
   assert.equal(H.findOverlap(others,v,3,D,9*60),null);
   console.log('P OK: 割り当て可否・重複の判定');
+}
+// ---- 同行訪問の連動 ----
+{
+  const p=visit('親 様','10:00',30,{nurseId:1});
+  const a={...visit('親 様','10:00',30,{nurseId:2}), isAccompany:true, accompanyOf:p.id};
+  const other=visit('他 様','11:00',30);
+  const prev=[p,a,other];
+  // 元の予定を10:00→13:30・45分に変更 → 同行も同じに
+  let next=H.syncAccompanyVisits(prev, prev.map(v=>v.id===p.id?{...v,startTime:'13:30',duration:45}:v));
+  let a2=next.find(v=>v.id===a.id); assert.equal(a2.startTime,'13:30'); assert.equal(a2.duration,45); assert.equal(a2.nurseId,2);
+  // 同行だけを動かした場合はそのまま（意図的なずらしを尊重）
+  next=H.syncAccompanyVisits(prev, prev.map(v=>v.id===a.id?{...v,startTime:'10:15'}:v));
+  assert.equal(next.find(v=>v.id===a.id).startTime,'10:15'); assert.equal(next.find(v=>v.id===p.id).startTime,'10:00');
+  // ずらした同行（+15分）は、元が動いたら「同じ幅だけ」動く
+  const prevOff=prev.map(v=>v.id===a.id?{...v,startTime:'10:15'}:v);
+  next=H.syncAccompanyVisits(prevOff, prevOff.map(v=>v.id===p.id?{...v,startTime:'11:00'}:v));
+  assert.equal(next.find(v=>v.id===a.id).startTime,'11:15');
+  // 元の予定を削除 → 同行も消える。関係ない予定は残る
+  next=H.syncAccompanyVisits(prev, prev.filter(v=>v.id!==p.id));
+  assert.deepEqual(next.map(v=>v.id),[other.id]);
+  // 担当者だけの変更では同行は変わらない（同じ配列がそのまま返る）
+  const same=prev.map(v=>v.id===p.id?{...v,nurseId:3}:v);
+  assert.equal(H.syncAccompanyVisits(prev,same),same);
+  // 紐づけ情報のない古い同行予定：同じ利用者・日・時刻で見つけて連動し、紐づけを記録する
+  const legacy={...a, accompanyOf:undefined};
+  const prevL=[p,legacy];
+  next=H.syncAccompanyVisits(prevL, prevL.map(v=>v.id===p.id?{...v,startTime:'09:00'}:v));
+  assert.equal(next.find(v=>v.id===legacy.id).startTime,'09:00'); assert.equal(next.find(v=>v.id===legacy.id).accompanyOf,p.id);
+  // 「元に戻す」のように両方が同時に変わる場合は、渡された内容をそのまま使う
+  const snap=[{...p,startTime:'08:00'},{...a,startTime:'08:30'}];
+  next=H.syncAccompanyVisits(prev,snap); assert.equal(next.find(v=>v.id===a.id).startTime,'08:30');
+  // 日付の変更も連動
+  next=H.syncAccompanyVisits(prev, prev.map(v=>v.id===p.id?{...v,date:'2026-11-12'}:v));
+  assert.equal(next.find(v=>v.id===a.id).date,'2026-11-12');
+  console.log('AC OK: 同行訪問の連動（時刻・所要時間・日付・削除・手動ずらし・旧データ）');
 }
 console.log('ALL PASS');

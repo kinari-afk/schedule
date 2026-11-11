@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node unit.test.mjs",
     "test:e2e": "node e2e/build.mjs && node e2e/run.mjs",
-    "test:all": "npm test && npm run test:e2e"
+    "test:offline": "node e2e/build.mjs && node e2e/offline.mjs",
+    "test:all": "npm test && npm run test:e2e && node e2e/offline.mjs"
   },
   "devDependencies": {
     "@babel/standalone": "^7.26.0",
