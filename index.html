@@ -97,7 +97,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer, HelpCircle, ListChecks, Coffee } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -283,16 +283,62 @@
     // 取得した内容がCSVではなくWebページ（エラー画面やログイン画面）だった場合を見分ける
     const looksLikeHtml = (text) => /^\s*<(!doctype|html|head|body)/i.test(String(text ?? ''));
 
+    // --- 編成の設定（管理者が画面から変更でき、データベースに保存される） ---
+    const DEFAULT_SETTINGS = {
+      amOffStart: '13:30',   // 午前休の人が出勤する時刻
+      pmOffEnd: '12:30',     // 午後休の人が退勤する時刻
+      lunch: { enabled: true, from: '11:30', to: '13:30', minutes: 60 }   // 昼休憩：この時間帯の中に、連続した空き時間を確保する
+    };
+    const normalizeSettings = (raw) => {
+      const r = raw && typeof raw === 'object' ? raw : {};
+      const isTime = (t) => typeof t === 'string' && /^\d{1,2}:\d{2}$/.test(t);
+      const lunch = r.lunch && typeof r.lunch === 'object' ? r.lunch : {};
+      const minutes = parseInt(lunch.minutes, 10);
+      return {
+        amOffStart: isTime(r.amOffStart) ? r.amOffStart : DEFAULT_SETTINGS.amOffStart,
+        pmOffEnd: isTime(r.pmOffEnd) ? r.pmOffEnd : DEFAULT_SETTINGS.pmOffEnd,
+        lunch: {
+          enabled: typeof lunch.enabled === 'boolean' ? lunch.enabled : DEFAULT_SETTINGS.lunch.enabled,
+          from: isTime(lunch.from) ? lunch.from : DEFAULT_SETTINGS.lunch.from,
+          to: isTime(lunch.to) ? lunch.to : DEFAULT_SETTINGS.lunch.to,
+          minutes: minutes >= 10 && minutes <= 180 ? minutes : DEFAULT_SETTINGS.lunch.minutes
+        }
+      };
+    };
+    // その日の勤務時間（分）。半休のときは、設定した時刻で区切る
+    const workWindow = (nurse, offType, settings) => {
+      const st = settings || DEFAULT_SETTINGS;
+      let startMin = parseTime(nurse.startTime);
+      let endMin = parseTime(nurse.endTime || '17:30');
+      if (offType === 'AM') startMin = Math.max(startMin, parseTime(st.amOffStart));
+      else if (offType === 'PM') endMin = Math.min(endMin, parseTime(st.pmOffEnd));
+      return { startMin, endMin };
+    };
+    // 昼休憩を取れる状態か。busy は [{start, end}]（その看護師の予定）。
+    // 昼の時間帯と勤務時間が重なる範囲の中に、決めた分数以上の連続した空きがあれば true
+    const hasLunchGap = (busy, startMin, endMin, lunch) => {
+      const from = Math.max(parseTime(lunch.from), startMin), to = Math.min(parseTime(lunch.to), endMin);
+      if (to - from < lunch.minutes) return true;   // そもそも昼の時間帯に勤務していない（半休など）→ 対象外
+      let cursor = from;
+      const sorted = busy.filter(b => b.end > from && b.start < to).sort((a, b) => a.start - b.start);
+      for (const b of sorted) {
+        if (b.start - cursor >= lunch.minutes) return true;
+        cursor = Math.max(cursor, b.end);
+      }
+      return to - cursor >= lunch.minutes;
+    };
+
     // --- 割り当てできない理由 ---
     // この予定をこの看護師に、この開始時刻で割り当てられない場合に、その理由を返す（問題なければ null）
-    const assignProblem = (visit, nurse, offType, startMin) => {
+    const assignProblem = (visit, nurse, offType, startMin, settings) => {
+      const st = settings || DEFAULT_SETTINGS;
       if (!nurse) return null;
       if (visit.requiresFemaleNurse && !nurse.isFemale) return "この利用者は女性看護師限定です";
       const excluded = visit.excludedNurseNames || [];
       if (excluded.some(ex => ex && (nurse.name.includes(ex) || ex.includes(nurse.name)))) return "除外スタッフに設定されているため、割り当てできません";
       if (offType === 'full') return `${nurse.name} は本日お休みです`;
-      if (offType === 'AM' && startMin < parseTime('13:30')) return `${nurse.name} は午前休（13:30以降出勤）です`;
-      if (offType === 'PM' && startMin >= parseTime('12:30')) return `${nurse.name} は午後休（12:30退勤）です`;
+      if (offType === 'AM' && startMin < parseTime(st.amOffStart)) return `${nurse.name} は午前休（${st.amOffStart}以降出勤）です`;
+      if (offType === 'PM' && startMin >= parseTime(st.pmOffEnd)) return `${nurse.name} は午後休（${st.pmOffEnd}退勤）です`;
       return null;
     };
     // 同じ看護師の、時間が重なる予定を探す
@@ -428,24 +474,19 @@
       return map;
     };
 
-    // 自動編成の本体。
+    // ===== 自動編成 =====
     //  ・看護師ごとに「その日の予定の並び」を持ち、新しい訪問が「空き時間に収まるか」で判定する
     //    （＝後ろの時間に予定が入っていても、その前の空き時間を使える／ダブルブッキングはしない）
     //  ・収まる候補が複数いるときは「負担の少なさ・午前午後のバランス・移動の少なさ・過去の担当実績」の合計点で選ぶ
-    const planAutoAssign = ({ visits, nurses, date, offTypeOf, pointOf, travelBetween, history }) => {
-      const travelTo = (fromPt, v) => v.customTravelTime ?? travelBetween(fromPt, pointOf(v));
-      const nurseIdSet = new Set(nurses.map(n => n.id));
 
+    // 看護師ごとの「その日の状態」を作る
+    const buildNurseStates = ({ visits, nurses, date, offTypeOf, pointOf, settings }) => {
       const states = [];
       nurses.forEach(n => {
         const offType = offTypeOf(n);
-        if (offType === 'full') return;
-        let startMin = parseTime(n.startTime);
-        let endMin = parseTime(n.endTime || '17:30');
-        if (offType === 'AM') { startMin = parseTime('13:30'); endMin = parseTime('17:30'); }
-        else if (offType === 'PM') { startMin = parseTime('08:00'); endMin = parseTime('12:30'); }
-
-        const s = { nurse: n, offType, startMin, endMin, items: [], total: 0, am: 0, pm: 0, home: pointOf({ location: n.startLocation, address: n.address }) };
+        if (offType === 'full') { states.push({ nurse: n, offType, isOff: true }); return; }
+        const { startMin, endMin } = workWindow(n, offType, settings);
+        const s = { nurse: n, offType, isOff: false, startMin, endMin, items: [], total: 0, am: 0, pm: 0, home: pointOf({ location: n.startLocation, address: n.address }) };
         visits.forEach(v => {
           if (v.date !== date || v.nurseId !== n.id) return;
           const start = parseTime(v.startTime), dur = v.duration || 30;
@@ -456,31 +497,83 @@
         s.items.sort((a, b) => a.start - b.start);
         states.push(s);
       });
+      return states;
+    };
 
-      // level 1: 移動時間まで含めて無理なく収まる
-      // level 2: 移動時間の余裕はないが、時間は重ならず勤務時間内に収まる
-      // level 3: 時間は重ならないが、勤務終了時刻を超える（時間外）
-      const checkFit = (s, v, level) => {
-        const start = parseTime(v.startTime), dur = v.duration || 30, end = start + dur;
-        if (start < s.startMin) return null;
-        if (level < 3 && end > s.endMin) return null;
-        if (level === 3 && s.offType !== 'work') return null;
-        let prev = null, next = null;
-        for (const it of s.items) { if (it.start <= start) prev = it; else { next = it; break; } }
-        if (prev && prev.end > start) return null;
-        if (next && next.start < end) return null;
-        const prevLoc = prev ? pointOf(prev.visit) : s.home;
-        const prevEnd = prev ? prev.end : s.startMin;
-        const tIn = travelTo(prevLoc, v);
-        const tOut = next ? travelTo(pointOf(v), next.visit) : 0;
-        if (level === 1) {
-          if (prevEnd + tIn > start) return null;
-          if (next && end + tOut > next.start) return null;
-        }
-        return { detour: tIn + (next ? tOut - travelTo(prevLoc, next.visit) : 0) };
-      };
+    const nurseNameMatches = (nurseName, target) => !!nurseName && !!target && (nurseName === target || nurseName.includes(target) || target.includes(nurseName));
 
-      const nameMatches = (nurseName, target) => !!nurseName && !!target && (nurseName === target || nurseName.includes(target) || target.includes(nurseName));
+    // 割り当ての「無理のなさ」の段階（数字が小さいほど良い）
+    const FIT_LABELS = {
+      1: null,
+      2: '昼休憩が取れなくなります',
+      3: '前後の移動時間に余裕がありません',
+      4: '移動時間に余裕がなく、昼休憩も取れなくなります',
+      5: '勤務時間を超えます（時間外）'
+    };
+    // 割り当てられない理由
+    const REJECT_LABELS = {
+      off: 'お休み', female: '女性限定のため対象外', excluded: '除外スタッフ',
+      before: '出勤前の時間', after: '退勤後の時間', overlap: '別の予定と時間が重なる'
+    };
+
+    // 1人の看護師について、この訪問を入れられるかを判定する。
+    // 入れられる → { ok: true, level, detour } ／ 入れられない → { ok: false, code, detail }
+    const classifyFit = (s, v, { pointOf, travelBetween, settings }) => {
+      const st = settings || DEFAULT_SETTINGS;
+      const excluded = v.excludedNurseNames || [];
+      if (excluded.some(ex => nurseNameMatches(s.nurse.name, ex))) return { ok: false, code: 'excluded' };
+      if (v.requiresFemaleNurse && !s.nurse.isFemale) return { ok: false, code: 'female' };
+      if (s.isOff) return { ok: false, code: 'off' };
+      const travelTo = (fromPt, target) => target.customTravelTime ?? travelBetween(fromPt, pointOf(target));
+      const start = parseTime(v.startTime), dur = v.duration || 30, end = start + dur;
+      if (start < s.startMin) return { ok: false, code: 'before' };
+      if (start >= s.endMin) return { ok: false, code: 'after' };
+      let prev = null, next = null;
+      for (const it of s.items) { if (it.start <= start) prev = it; else { next = it; break; } }
+      if (prev && prev.end > start) return { ok: false, code: 'overlap', detail: prev.visit.userName };
+      if (next && next.start < end) return { ok: false, code: 'overlap', detail: next.visit.userName };
+      const overtime = end > s.endMin;
+      if (overtime && s.offType !== 'work') return { ok: false, code: 'after' };   // 半休の人には時間外を頼まない
+
+      const prevLoc = prev ? pointOf(prev.visit) : s.home;
+      const prevEnd = prev ? prev.end : s.startMin;
+      const tIn = travelTo(prevLoc, v);
+      const tOut = next ? travelTo(pointOf(v), next.visit) : 0;
+      const tight = prevEnd + tIn > start || (!!next && end + tOut > next.start);
+
+      let lunchOk = true;
+      if (st.lunch.enabled && s.offType === 'work') {
+        const busy = s.items.map(it => ({ start: it.start, end: it.end }));
+        const had = hasLunchGap(busy, s.startMin, s.endMin, st.lunch);
+        // すでに昼休憩が取れない状態の人は、これ以上悪くならないので問題なしとみなす
+        lunchOk = !had || hasLunchGap([...busy, { start, end }], s.startMin, s.endMin, st.lunch);
+      }
+      const level = overtime ? 5 : (!tight && lunchOk) ? 1 : !tight ? 2 : lunchOk ? 3 : 4;
+      return { ok: true, level, detour: tIn + (next ? tOut - travelTo(prevLoc, next.visit) : 0) };
+    };
+
+    // ある予定について、看護師全員の「入れられる／入れられない理由」を一覧にする（画面の説明用）
+    const explainVisit = (opts, visit) => {
+      const states = buildNurseStates({ ...opts, visits: opts.visits.filter(v => v.id !== visit.id) });
+      return states.map(s => {
+        const fit = classifyFit(s, visit, opts);
+        return fit.ok
+          ? { nurse: s.nurse, ok: true, level: fit.level, label: FIT_LABELS[fit.level] }
+          : { nurse: s.nurse, ok: false, code: fit.code, label: REJECT_LABELS[fit.code] + (fit.detail ? `（${fit.detail}）` : '') };
+      });
+    };
+    // 「なぜ誰にも入らないのか」を1行にまとめる。 例: 時間が重なる 3名 ／ お休み 1名
+    const summarizeRejections = (rows) => {
+      const counts = {};
+      rows.filter(r => !r.ok).forEach(r => { counts[r.code] = (counts[r.code] || 0) + 1; });
+      const order = ['overlap', 'before', 'after', 'off', 'female', 'excluded'];
+      return order.filter(c => counts[c]).map(c => `${REJECT_LABELS[c]} ${counts[c]}名`).join(' ／ ');
+    };
+
+    const planAutoAssign = ({ visits, nurses, date, offTypeOf, pointOf, travelBetween, history, settings }) => {
+      const opts = { pointOf, travelBetween, settings: settings || DEFAULT_SETTINGS };
+      const nurseIdSet = new Set(nurses.map(n => n.id));
+      const states = buildNurseStates({ visits, nurses, date, offTypeOf, pointOf, settings: opts.settings });
 
       const scoreOf = (s, v, fit) => {
         const start = parseTime(v.startTime), dur = v.duration || 30;
@@ -489,16 +582,16 @@
         let score = ((s.total + dur) / span) * 100;                       // 勤務時間に対する負担率
         score += ((isAM ? s.am - s.pm : s.pm - s.am) / span) * 30;        // 午前・午後のかたより
         score += fit.detour;                                               // 増える移動時間（分）
-        let usedHistory = false;
+        let historyNote = null;
         if (history && v.type !== 'other' && !v.isAccompany) {
           const h = history.get(normalizeName(v.userName));
           const cnt = h ? (h.byNurse[s.nurse.id] || 0) : 0;
           if (cnt > 0) {
             score -= (cnt / h.total) * Math.min(1, h.total / 3) * 30;     // なじみの看護師を優先
-            usedHistory = true;
+            historyNote = `過去の担当実績（この利用者の訪問の約${Math.round((cnt / h.total) * 100)}%を担当）`;
           }
         }
-        return { score, usedHistory };
+        return { score, historyNote };
       };
 
       const targets = visits
@@ -512,55 +605,72 @@
         .sort((a, b) => a.rank - b.rank || parseTime(a.v.startTime) - parseTime(b.v.startTime) || (b.v.duration || 0) - (a.v.duration || 0));
 
       const assignedTo = new Map();
+      const reasons = {};        // 予定ID → なぜその人になったか／なぜ未割り当てか
       const failed = [];
-      let historyHits = 0, overtimeCount = 0;
+      let historyHits = 0, overtimeCount = 0, noLunchCount = 0;
 
       targets.forEach(({ v }) => {
-        const excludedNames = v.excludedNurseNames || [];
-        const isExcluded = (name) => excludedNames.some(ex => nameMatches(name, ex));
-        let best = null, bestUsedHistory = false, bestLevel = 0;
+        let best = null, bestFit = null, why = '';
 
+        // 1) 優先担当者の指定があれば、時間外でない限りその人へ
         for (const prefName of (v.preferredNurseNames || [])) {
           if (!prefName) continue;
-          const s = states.find(st => nameMatches(st.nurse.name, prefName) && !isExcluded(st.nurse.name));
-          if (s && (checkFit(s, v, 1) || checkFit(s, v, 2))) { best = s; break; }
+          const s = states.find(st => !st.isOff && nurseNameMatches(st.nurse.name, prefName));
+          if (!s) continue;
+          const fit = classifyFit(s, v, opts);
+          // 優先担当者は利用者側の希望なので、女性限定の条件より優先する（従来どおり）
+          const fitIgnoringFemale = (!fit.ok && fit.code === 'female') ? classifyFit(s, { ...v, requiresFemaleNurse: false }, opts) : fit;
+          if (fitIgnoringFemale.ok && fitIgnoringFemale.level < 5) { best = s; bestFit = fitIgnoringFemale; why = `優先担当者に指定されているため（${prefName}）`; break; }
         }
 
+        // 2) それ以外は、無理のない段階から順に、点数の良い人を選ぶ
         if (!best) {
-          const candidates = states.filter(s => !isExcluded(s.nurse.name) && !(v.requiresFemaleNurse && !s.nurse.isFemale));
+          const fits = states.map(s => ({ s, fit: classifyFit(s, v, opts) })).filter(x => x.fit.ok);
           outer:
-          for (const level of [1, 2, 3]) {
+          for (const level of [1, 2, 3, 4, 5]) {
             for (const low of [false, true]) {
-              let bestScore = Infinity;
-              candidates.forEach(s => {
-                if (!!s.nurse.isLowPriority !== low) return;
-                const fit = checkFit(s, v, level);
-                if (!fit) return;
-                const { score, usedHistory } = scoreOf(s, v, fit);
-                if (score < bestScore) { bestScore = score; best = s; bestUsedHistory = usedHistory; bestLevel = level; }
+              let bestScore = Infinity, note = null;
+              fits.forEach(({ s, fit }) => {
+                if (fit.level !== level || !!s.nurse.isLowPriority !== low) return;
+                const { score, historyNote } = scoreOf(s, v, fit);
+                if (score < bestScore) { bestScore = score; best = s; bestFit = fit; note = historyNote; }
               });
-              if (best) break outer;
+              if (best) {
+                const sameLevel = fits.filter(x => x.fit.level === level && !!x.s.nurse.isLowPriority === low).length;
+                if (note) { why = note; historyHits++; }
+                else if (sameLevel === 1) why = 'この時間に入れる担当者が1名だけだったため';
+                else why = `入れる${sameLevel}名のうち、負担と移動が最も少ないため`;
+                break outer;
+              }
             }
           }
         }
 
-        if (!best) { failed.push(v); return; }
+        if (!best) {
+          failed.push(v);
+          const rows = states.map(s => { const fit = classifyFit(s, v, opts); return { ok: fit.ok, code: fit.code }; });
+          reasons[v.id] = `入れる担当者がいません：${summarizeRejections(rows) || '出勤者なし'}`;
+          return;
+        }
         const start = parseTime(v.startTime), dur = v.duration || 30;
         best.items.push({ start, end: start + dur, visit: v });
         best.items.sort((a, b) => a.start - b.start);
         best.total += dur;
         if (start < 12 * 60) best.am += dur; else best.pm += dur;
         assignedTo.set(v.id, best.nurse.id);
-        if (bestUsedHistory) historyHits++;
-        if (bestLevel === 3) overtimeCount++;
+        if (bestFit.level === 5) overtimeCount++;
+        if (bestFit.level === 2 || bestFit.level === 4) noLunchCount++;
+        reasons[v.id] = why + (FIT_LABELS[bestFit.level] ? `。※ ${FIT_LABELS[bestFit.level]}` : '');
       });
 
       return {
         visits: visits.map(v => assignedTo.has(v.id) ? { ...v, nurseId: assignedTo.get(v.id) } : v),
         assignedCount: assignedTo.size,
         failed,
+        reasons,
         historyHits,
-        overtimeCount
+        overtimeCount,
+        noLunchCount
       };
     };
 
@@ -848,6 +958,11 @@
       const [travelSpeedKmh, setTravelSpeedKmh] = useState(DEFAULT_TRAVEL_SPEED_KMH);
       const [geoProgress, setGeoProgress] = useState(null);       // 取得中の進み具合
       const pointOf = useMemo(() => makePointOf(geoCache), [geoCache]);
+      // ===== 編成の設定・理由 =====
+      const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+      const [showSettings, setShowSettings] = useState(false);
+      const [assignReasons, setAssignReasons] = useState({});      // 予定ID → 自動編成の理由（この画面を開いている間だけ保持）
+      const [showUnassignedList, setShowUnassignedList] = useState(false);
       const [restoreCandidate, setRestoreCandidate] = useState(null);
       const restoreInputRef = useRef(null);
       
@@ -1010,6 +1125,7 @@
             if (data.travelSpeedKmh !== undefined) setTravelSpeedKmh(data.travelSpeedKmh);
             if (data.archivedMonths) { try { setArchivedMonths(JSON.parse(data.archivedMonths)); } catch (e) { console.error(e); } }
             if (data.geoCache) { try { setGeoCache(JSON.parse(data.geoCache)); } catch (e) { console.error(e); } }
+            if (data.settings) { try { setSettings(normalizeSettings(JSON.parse(data.settings))); } catch (e) { console.error(e); } }
 
             // 旧形式（非圧縮）のデータを検出したら、圧縮形式へ一度だけ移行する
             const isRawJson = (s) => typeof s === 'string' && s.length > 0 && !s.startsWith(COMPRESS_PREFIX);
@@ -1070,6 +1186,7 @@
           dailyMemos: JSON.stringify(dailyMemos),
           archivedMonths: JSON.stringify(archivedMonths),
           geoCache: JSON.stringify(geoCache),
+          settings: JSON.stringify(settings),
           sheetUrl: sheetUrl,
           nurseSheetUrl: nurseSheetUrl,
           baseTravelTime: String(baseTravelTime),
@@ -1183,6 +1300,26 @@
       };
 
       const handleSetBaseTravelTime = (v) => { if(!isAdminUser) return; setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
+      const handleSaveSettings = (e) => {
+        e.preventDefault();
+        if (!isAdminUser) return;
+        const f = new FormData(e.target);
+        const next = normalizeSettings({
+          amOffStart: f.get('amOffStart'),
+          pmOffEnd: f.get('pmOffEnd'),
+          lunch: { enabled: f.get('lunchEnabled') === 'on', from: f.get('lunchFrom'), to: f.get('lunchTo'), minutes: f.get('lunchMinutes') }
+        });
+        if (parseTime(next.lunch.to) - parseTime(next.lunch.from) < next.lunch.minutes) {
+          setToastMessage("昼休憩の時間帯が、休憩の長さより短くなっています。時間帯を広げるか、休憩の長さを短くしてください。");
+          setShowToast(true);
+          return;
+        }
+        setSettings(next);
+        updateCloudData({ settings: JSON.stringify(next) });
+        setShowSettings(false);
+        setToastMessage("編成の設定を保存しました");
+        setShowToast(true);
+      };
       const handleSetTravelSpeed = (v) => { if(!isAdminUser) return; setTravelSpeedKmh(v); updateCloudData({ travelSpeedKmh: v }); };
       const handleSheetUrlChange = (e) => { if(!isAdminUser) return; setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
       const handleNurseSheetUrlChange = (e) => { if(!isAdminUser) return; setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
@@ -1306,16 +1443,7 @@
           const assigned = visits.filter(v => v.nurseId === nurse.id && v.date === selectedDate);
           const sorted = [...assigned].sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
           
-          let workStartTimeMin = parseTime(nurse.startTime);
-          let workEndTimeMin = parseTime(nurse.endTime || '17:30');
-          
-          if (offType === 'AM') {
-              workStartTimeMin = parseTime('13:30');
-              workEndTimeMin = parseTime('17:30');
-          } else if (offType === 'PM') {
-              workStartTimeMin = parseTime('08:00');
-              workEndTimeMin = parseTime('12:30');
-          }
+          const { startMin: workStartTimeMin, endMin: workEndTimeMin } = workWindow(nurse, offType, settings);
 
           let currentTime = workStartTimeMin;
           let calculatedStartTime = currentTime;
@@ -1366,11 +1494,14 @@
             finalTravelTime, 
             calculatedStartTime: formatTime(calculatedStartTime),
             workStartTimeStr: formatTime(workStartTimeMin),
-            workEndTimeMin: workEndTimeMin
+            workEndTimeMin: workEndTimeMin,
+            // 昼休憩を取れる空きがあるか（設定が有効で、終日勤務のときだけ判定）
+            noLunch: settings.lunch.enabled && offType === 'work' && sorted.length > 0
+              && !hasLunchGap(sorted.map(v => ({ start: parseTime(v.startTime), end: parseTime(v.startTime) + (v.duration || 30) })), workStartTimeMin, workEndTimeMin, settings.lunch)
           };
         });
         return schedules;
-      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses, pointOf, travelSpeedKmh]);
+      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses, pointOf, travelSpeedKmh, settings]);
 
       const firstVisitMinutes = useMemo(() => {
         const starts = visits.filter(v => v.date === selectedDate).map(v => parseTime(v.startTime));
@@ -1798,8 +1929,8 @@
             y = e.touches[0].clientY;
         }
 
-        const menuWidth = 240;
-        const menuHeight = isAdmin ? 470 : 240; 
+        const menuWidth = 290;
+        const menuHeight = isAdmin ? 560 : 240; 
         if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
         if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
         x = Math.max(8, x);
@@ -2080,8 +2211,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 const targetStart = parseTime(v.startTime);
                 const shouldUnassign = 
                   (nextStatus === 'off') || 
-                  (nextStatus === 'am_off' && targetStart < parseTime('13:30')) ||
-                  (nextStatus === 'pm_off' && targetStart >= parseTime('12:30'));
+                  (nextStatus === 'am_off' && targetStart < parseTime(settings.amOffStart)) ||
+                  (nextStatus === 'pm_off' && targetStart >= parseTime(settings.pmOffEnd));
                 
                 if (shouldUnassign) {
                   return { ...v, nurseId: null, startTime: v.originalStartTime || v.startTime, customTravelTime: null };
@@ -2160,39 +2291,60 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         setShowToast(true);
       };
 
-      const handleAutoAssign = () => {
+      // 自動編成に渡す条件をまとめる（日付ごと）
+      const assignOptionsFor = (date, baseVisits) => ({
+        visits: baseVisits,
+        nurses,
+        date,
+        offTypeOf: (n) => getIsNurseOffType(n, date, nurseStatuses),
+        pointOf,
+        travelBetween: (a, b) => travelMinutes(a, b, baseTravelTime, travelSpeedKmh),
+        history: useHistoryAssign ? buildAssignHistory(baseVisits, nurseIdSet, date) : null,
+        settings
+      });
+
+      // dates に含まれる日を順番に自動編成する（1日だけなら [selectedDate]）
+      const runAutoAssign = (dates) => {
         if (!isAdmin) return;
-        const hasWorker = nurses.some(n => getIsNurseOffType(n, selectedDate, nurseStatuses) !== 'full');
-        if (!hasWorker) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
+        const targets = dates.filter(d => nurses.some(n => getIsNurseOffType(n, d, nurseStatuses) !== 'full'));
+        if (targets.length === 0) { setToastMessage("出勤者がいません"); setShowToast(true); return; }
         
         saveHistory();
         setIsOptimizing(true);
         
         setTimeout(() => {
           try {
-            const history = useHistoryAssign ? buildAssignHistory(visits, nurseIdSet, selectedDate) : null;
-            const result = planAutoAssign({
-              visits,
-              nurses,
-              date: selectedDate,
-              offTypeOf: (n) => getIsNurseOffType(n, selectedDate, nurseStatuses),
-              pointOf,
-              travelBetween: (a, b) => travelMinutes(a, b, baseTravelTime, travelSpeedKmh),
-              history
+            // 前の日の結果を次の日の「過去の実績」として使うので、同じ週の中で担当者がそろいやすくなる
+            let working = visits;
+            const total = { assigned: 0, failed: 0, history: 0, overtime: 0, noLunch: 0, days: 0 };
+            const newReasons = {};
+            targets.forEach(date => {
+              const result = planAutoAssign(assignOptionsFor(date, working));
+              working = result.visits;
+              Object.assign(newReasons, result.reasons);
+              total.assigned += result.assignedCount;
+              total.failed += result.failed.length;
+              total.history += result.historyHits;
+              total.overtime += result.overtimeCount;
+              total.noLunch += result.noLunchCount;
+              if (result.assignedCount > 0 || result.failed.length > 0) total.days++;
             });
             
             setIsOptimizing(false); 
-            if (result.assignedCount === 0) {
-              setToastMessage(result.failed.length > 0
-                ? `空いている担当者が見つからず、${result.failed.length}件は未割り当てのままです`
+            setAssignReasons(prev => ({ ...prev, ...newReasons }));
+            const label = dates.length > 1 ? `${total.days}日分の自動編成完了` : "自動編成完了";
+            if (total.assigned === 0) {
+              setToastMessage(total.failed > 0
+                ? `入れる担当者が見つからず、${total.failed}件は未割り当てのままです（カードをタップすると理由を確認できます）`
                 : "自動編成できる対象がありませんでした");
             } else {
-              handleSetVisits(result.visits); 
-              const parts = [`自動編成完了: ${result.assignedCount}件を割り当て`];
-              if (result.historyHits > 0) parts.push(`うち${result.historyHits}件は過去の担当実績を反映`);
-              if (result.overtimeCount > 0) parts.push(`${result.overtimeCount}件は時間外`);
-              if (result.failed.length > 0) parts.push(`${result.failed.length}件は空きがなく未割り当てのまま`);
-              setToastMessage(parts.join(" / ")); 
+              handleSetVisits(working); 
+              const parts = [`${label}: ${total.assigned}件を割り当て`];
+              if (total.history > 0) parts.push(`うち${total.history}件は過去の担当実績を反映`);
+              if (total.noLunch > 0) parts.push(`${total.noLunch}件は昼休憩を確保できず`);
+              if (total.overtime > 0) parts.push(`${total.overtime}件は時間外`);
+              if (total.failed > 0) parts.push(`${total.failed}件は入れる人がおらず未割り当てのまま`);
+              setToastMessage(parts.join(" / ") + "（カードのメニューで理由を確認できます）"); 
             }
             setShowToast(true);
           } catch (error) {
@@ -2203,6 +2355,22 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           }
         }, 400);
       };
+
+      const handleAutoAssign = () => runAutoAssign([selectedDate]);
+
+      // 表示中の週のうち、今日以降で未割り当てが残っている日をまとめて編成する
+      const weekAssignDates = useMemo(() => {
+        const today = getTodayStr();
+        return displayDates.filter(d => d >= today && !archivedMonthSet.has(monthOf(d))
+          && visits.some(v => v.date === d && isVisitUnassigned(v, nurseIdSet) && !v.isExcludedFromAutoAssign));
+      }, [displayDates, visits, nurseIdSet, archivedMonthSet]);
+      const handleAutoAssignWeek = () => {
+        if (isOptimizing || weekAssignDates.length === 0) return;
+        runAutoAssign(weekAssignDates);
+      };
+
+      // メニューを開いた予定について、看護師全員の「入れられる／入れられない理由」を調べる
+      const explainFor = (visit) => explainVisit(assignOptionsFor(visit.date, visits), visit);
 
       const executeResetAssignments = () => {
         if (!isAdmin) return;
@@ -2260,7 +2428,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
         if (targetNurseId) {
             const targetNurse = nurses.find(n => n.id === targetNurseId);
-            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), newStartMin);
+            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), newStartMin, settings);
             if (problem) { setToastMessage(problem); setShowToast(true); return; }
         }
         
@@ -2282,7 +2450,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         
         if (parsedNurseId) {
             const targetNurse = nurses.find(n => n.id === parsedNurseId);
-            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), targetStart);
+            const problem = assignProblem(targetVisit, targetNurse, getIsNurseOffType(targetNurse, selectedDate, nurseStatuses), targetStart, settings);
             if (problem) { setToastMessage(problem); setShowToast(true); return; }
         }
 
@@ -2304,7 +2472,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         let overlapNote = "";
         if (newNurseId) {
           const nurse = nurses.find(n => n.id === newNurseId);
-          const problem = assignProblem(target, nurse, getIsNurseOffType(nurse, target.date, nurseStatuses), startMin);
+          const problem = assignProblem(target, nurse, getIsNurseOffType(nurse, target.date, nurseStatuses), startMin, settings);
           if (problem) { setToastMessage(problem); setShowToast(true); return; }
           const overlap = findOverlap(visits, target, newNurseId, target.date, startMin);
           if (overlap) overlapNote = `（※ ${overlap.userName} ${overlap.startTime}〜 と時間が重なっています）`;
@@ -3007,6 +3175,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             リセット
                           </button>
                           <button 
+                            onClick={() => setShowSettings(true)}
+                            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                            title="昼休憩や半休の時刻など、自動編成の条件を設定します"
+                          >
+                            <Settings2 size={16} />
+                            編成の設定
+                          </button>
+                          <button 
                             onClick={() => setUseHistoryAssign(v => !v)}
                             className={`border px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${useHistoryAssign ? 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'}`}
                             title="ONにすると、自動編成のときに「過去にその利用者を担当した看護師」を優先します"
@@ -3024,6 +3200,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
                             {autoAssignFunnyMessage ? autoAssignFunnyMessage : (isOptimizing ? "編成中..." : "自動編成")}
                           </button>
+                          <button 
+                            onClick={handleAutoAssignWeek}
+                            disabled={isOptimizing || weekAssignDates.length === 0}
+                            className="bg-white border border-teal-300 hover:bg-teal-50 text-teal-700 px-3 md:px-4 py-1.5 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="表示中の週のうち、今日以降で未割り当てが残っている日をまとめて自動編成します"
+                          >
+                            <CalendarDays size={16} />
+                            週まとめて編成{weekAssignDates.length > 0 ? `（${weekAssignDates.length}日）` : ''}
+                          </button>
                         </>
                       )}
                     </div>
@@ -3038,7 +3223,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                           <div className="w-10 md:w-20 shrink-0 border-r border-slate-200 bg-slate-100 flex justify-center items-center text-[9px] md:text-[10px] font-black text-slate-400 sticky left-0 z-40">時間</div>
                           <div className={`${unassignedCount > 0 ? 'w-28' : 'w-11'} md:w-48 shrink-0 border-r border-slate-200 flex flex-col items-center justify-center py-2 md:py-4 bg-white/50`}>
                              <div className="font-black text-slate-500 text-[9px] md:text-[10px] uppercase tracking-wider mb-1 text-center leading-tight">{unassignedCount > 0 ? '未割り当て' : <><span className="md:hidden">未割当</span><span className="hidden md:inline">未割り当て</span></>}</div>
-                             <div className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200' : 'bg-slate-200 text-slate-600'} text-[10px] md:text-[11px] font-black px-1.5 md:px-3 py-0.5 md:py-1 rounded-full whitespace-nowrap`}>{unassignedCount}件</div>
+                             <button type="button" onClick={() => unassignedCount > 0 && setShowUnassignedList(true)} disabled={unassignedCount === 0} title={unassignedCount > 0 ? "未割り当ての一覧を開く" : ""} className={`${unassignedCount > 0 ? 'bg-red-500 text-white shadow-lg shadow-red-200 hover:bg-red-600 cursor-pointer' : 'bg-slate-200 text-slate-600 cursor-default'} text-[10px] md:text-[11px] font-black px-1.5 md:px-3 py-0.5 md:py-1 rounded-full whitespace-nowrap flex items-center gap-1`}>{unassignedCount}件{unassignedCount > 0 && <ListChecks size={11} />}</button>
                           </div>
                           {nurses.map(nurse => {
                             const offType = getIsNurseOffType(nurse, selectedDate, nurseStatuses);
@@ -3081,6 +3266,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         {offType === 'AM' && <span className="text-[8px] md:text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1 md:px-1.5 rounded-full">午前休</span>}
                                         {offType === 'PM' && <span className="text-[8px] md:text-[9px] font-black text-orange-500 bg-orange-50 border border-orange-200 px-1 md:px-1.5 rounded-full">午後休</span>}
                                         <span className="text-[10px] font-black text-slate-400 uppercase">{assigned.length} 予定</span>
+                                        {allSchedules[nurse.id]?.noLunch && <span className="text-[8px] md:text-[9px] font-black text-rose-500 bg-rose-50 border border-rose-200 px-1 rounded-full flex items-center gap-0.5" title={`${settings.lunch.from}〜${settings.lunch.to} の間に ${settings.lunch.minutes}分の空きがありません`}><Coffee size={9}/>休憩なし</span>}
                                     </div>
                                   </div>
                                 )}
@@ -3334,7 +3520,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
                       {selectedNurseOffType !== 'work' && (
                         <div className={`mb-3 px-3 py-2 rounded-xl text-xs font-black border shrink-0 ${selectedNurseOffType === 'full' ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                          {selectedNurse.name} さんはこの日 {selectedNurseOffType === 'full' ? 'お休み' : selectedNurseOffType === 'AM' ? '午前休（13:30〜）' : '午後休（〜12:30）'} です
+                          {selectedNurse.name} さんはこの日 {selectedNurseOffType === 'full' ? 'お休み' : selectedNurseOffType === 'AM' ? `午前休（${settings.amOffStart}〜）` : `午後休（〜${settings.pmOffEnd}）`} です
                         </div>
                       )}
                       <div className="flex-1 overflow-y-auto hide-scrollbar">
@@ -3544,7 +3730,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                   <div className="hidden md:block text-sm font-black text-slate-800">{allSchedules[selectedNurse.id]?.returnTime}</div>
                                   {(() => {
                                     const returnTimeMin = parseTime(allSchedules[selectedNurse.id]?.returnTime);
-                                    const endTimeMin = parseTime(selectedNurse.endTime || '17:30');
+                                    const endTimeMin = allSchedules[selectedNurse.id]?.workEndTimeMin ?? parseTime(selectedNurse.endTime || '17:30');
                                     if (returnTimeMin > endTimeMin) return <span className="text-[8px] md:text-[9px] font-black text-red-500 bg-red-50 px-1 md:px-1.5 py-0.5 rounded border border-red-200 mt-0.5">時間外</span>;
                                     return null;
                                   })()}
@@ -4023,6 +4209,31 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   )}
                 </div>
                 
+                {isAdmin && contextMenu.visit.type !== 'other' && (() => {
+                  // 割り当て済み → 自動編成がその人を選んだ理由（この画面で編成した分のみ）
+                  // 未割り当て   → いま誰に入れられて、誰に入れられないのか
+                  const cv = contextMenu.visit;
+                  if (!isVisitUnassigned(cv, nurseIdSet)) {
+                    const why = assignReasons[cv.id];
+                    if (!why) return null;
+                    return (
+                      <div className="px-4 py-2.5 bg-teal-50/60 border-b border-teal-100 text-[11px] text-slate-600 leading-relaxed max-w-[280px]">
+                        <div className="font-black text-teal-700 mb-0.5 flex items-center gap-1"><HelpCircle size={12}/>自動編成の理由</div>
+                        {why}
+                      </div>
+                    );
+                  }
+                  const rows = explainFor(cv);
+                  const okRows = rows.filter(r => r.ok);
+                  return (
+                    <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 text-[11px] text-slate-600 leading-relaxed max-w-[280px]">
+                      <div className="font-black text-slate-700 mb-0.5 flex items-center gap-1"><HelpCircle size={12}/>{okRows.length > 0 ? `入れられる担当者: ${okRows.length}名` : '入れられる担当者がいません'}</div>
+                      {okRows.length > 0 && <div className="text-emerald-700 font-bold">{okRows.map(r => r.nurse.name + (r.level === 5 ? '(時間外)' : r.level >= 3 ? '(移動ぎりぎり)' : r.level === 2 ? '(休憩なし)' : '')).join('、')}</div>}
+                      {rows.some(r => !r.ok) && <div className="text-slate-500 mt-0.5">入れられない理由: {summarizeRejections(rows)}</div>}
+                    </div>
+                  );
+                })()}
+
                 {contextMenu.visit.comment && (
                   <div className="px-4 py-3 bg-amber-50/50 border-b border-amber-100/50 text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
                     <div className="font-bold text-amber-600 mb-1 flex items-center gap-1"><MessageSquare size={12}/>コメント</div>
@@ -4144,14 +4355,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             const draftStart = parseTime(moveDraft.startTime || moveTarget.startTime);
             const candidates = nurses.map(n => {
               const offType = getIsNurseOffType(n, moveTarget.date, nurseStatuses);
-              const problem = assignProblem(moveTarget, n, offType, draftStart);
+              const problem = assignProblem(moveTarget, n, offType, draftStart, settings);
               const overlap = problem ? null : findOverlap(visits, moveTarget, n.id, moveTarget.date, draftStart);
               const count = visits.filter(v => v.date === moveTarget.date && v.nurseId === n.id).length;
               return { nurse: n, problem, overlap, count };
             });
             const pick = (value) => setMoveDraft(d => ({ ...d, nurseId: value }));
             return (
-              <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setMoveTarget(null)}>
+              <div className="fixed inset-0 z-[210] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setMoveTarget(null)}>
                 <form onSubmit={handleMoveSubmit} onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-md w-full shadow-2xl max-h-[88vh] flex flex-col">
                   <div className="flex justify-between items-start mb-4 shrink-0">
                     <div className="min-w-0">
@@ -4193,6 +4404,90 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             );
           })()}
+
+          {showSettings && (
+            <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setShowSettings(false)}>
+              <form onSubmit={handleSaveSettings} onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-md w-full shadow-2xl max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-5">
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 flex items-center gap-2"><Settings2 size={22} className="text-teal-600"/>編成の設定</h3>
+                  <button type="button" onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full" aria-label="閉じる"><X size={20} /></button>
+                </div>
+
+                <p className="text-xs font-black text-slate-500 mb-2 flex items-center gap-1.5"><Coffee size={14}/>昼休憩</p>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-5 space-y-3">
+                  <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                    <input type="checkbox" name="lunchEnabled" defaultChecked={settings.lunch.enabled} className="w-4 h-4 text-teal-600 rounded border-slate-300" />
+                    自動編成で昼休憩を確保する
+                  </label>
+                  <div className="flex items-center gap-2 text-sm font-bold text-slate-600 flex-wrap">
+                    <input type="time" name="lunchFrom" defaultValue={settings.lunch.from} className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-teal-500" />
+                    <span>〜</span>
+                    <input type="time" name="lunchTo" defaultValue={settings.lunch.to} className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-teal-500" />
+                    <span>の間に</span>
+                    <input type="number" name="lunchMinutes" min="10" max="180" step="5" defaultValue={settings.lunch.minutes} className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-bold text-center outline-none focus:ring-2 focus:ring-teal-500" />
+                    <span>分</span>
+                  </div>
+                  <p className="text-[11px] font-bold text-slate-400 leading-relaxed">この時間帯の中に、続けて休める空き時間が残る人を優先します。全員が取れなくなる場合は、未割り当てにはせず割り当てたうえで「休憩なし」と表示します。</p>
+                </div>
+
+                <p className="text-xs font-black text-slate-500 mb-2 flex items-center gap-1.5"><Clock size={14}/>半休の時刻</p>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-6 space-y-3">
+                  <label className="flex items-center justify-between gap-2 text-sm font-bold text-slate-700">
+                    <span>午前休の人が出勤する時刻</span>
+                    <input required type="time" name="amOffStart" defaultValue={settings.amOffStart} className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-teal-500" />
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-sm font-bold text-slate-700">
+                    <span>午後休の人が退勤する時刻</span>
+                    <input required type="time" name="pmOffEnd" defaultValue={settings.pmOffEnd} className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-teal-500" />
+                  </label>
+                  <p className="text-[11px] font-bold text-slate-400 leading-relaxed">午前休は「この時刻〜本人の終業時刻」、午後休は「本人の始業時刻〜この時刻」が勤務時間になります。</p>
+                </div>
+
+                <button type="submit" className="w-full py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30">保存する</button>
+              </form>
+            </div>
+          )}
+
+          {showUnassignedList && (
+            <div className="fixed inset-0 z-[190] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setShowUnassignedList(false)}>
+              <div onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-lg w-full shadow-2xl max-h-[88vh] flex flex-col">
+                <div className="flex justify-between items-start mb-4 shrink-0">
+                  <div>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800">未割り当て {unassignedVisitsWithLayout.length}件</h3>
+                    <p className="text-xs font-bold text-slate-500 mt-1">{formatDateLabel(selectedDate)}{isAdmin ? "　行を押すと担当者を選べます" : ""}</p>
+                  </div>
+                  <button type="button" onClick={() => setShowUnassignedList(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full shrink-0" aria-label="閉じる"><X size={20} /></button>
+                </div>
+                <div className="overflow-y-auto space-y-1.5 pr-1 flex-1 min-h-0">
+                  {unassignedVisitsWithLayout.length === 0 && <p className="text-sm font-bold text-slate-400 text-center py-8">未割り当ての予定はありません</p>}
+                  {unassignedVisitsWithLayout.map(v => {
+                    const rows = isAdmin && v.type !== 'other' ? explainFor(v) : null;
+                    const okCount = rows ? rows.filter(r => r.ok).length : 0;
+                    const locked = v.isExcludedFromAutoAssign;
+                    return (
+                      <button type="button" key={v.id} disabled={!isAdmin || locked} onClick={() => { openMoveDialog(v); }} className={`w-full text-left px-4 py-3 rounded-xl border transition-colors ${(!isAdmin || locked) ? 'border-slate-100 bg-slate-50 cursor-default' : 'border-slate-200 bg-white hover:border-teal-400 hover:bg-teal-50/40'}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span className="text-sm font-black text-slate-800 tabular-nums shrink-0">{v.startTime}</span>
+                            <span className="text-sm font-black text-slate-700 truncate">{v.userName}</span>
+                          </span>
+                          <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">{v.duration}分</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                          {locked && <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-100">固定中</span>}
+                          {v.isAccompany && <span className="text-[10px] bg-fuchsia-100 text-fuchsia-600 px-1.5 py-0.5 rounded font-black border border-fuchsia-200">同行</span>}
+                          {v.requiresFemaleNurse && <span className="text-[10px] bg-pink-50 text-pink-600 px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
+                          {rows && (okCount > 0
+                            ? <span className="text-[10px] font-black text-emerald-600">入れられる人: {okCount}名</span>
+                            : <span className="text-[10px] font-black text-rose-600">入れられる人がいません（{summarizeRejections(rows)}）</span>)}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           {activePatternSlot && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4" onClick={() => setActivePatternSlot(null)}>
