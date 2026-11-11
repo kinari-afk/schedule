@@ -79,11 +79,11 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
-    import { getFirestore, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
     import * as _LZ from 'https://esm.sh/lz-string@1.5.0';
     const LZString = (_LZ && _LZ.default && _LZ.default.compressToBase64) ? _LZ.default : _LZ;
 
@@ -169,8 +169,22 @@
 
     const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
 
-    const DEFAULT_USER_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=0&single=true&output=csv";
-    const DEFAULT_NURSE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQI0jwy-uuQLiFhL8v2lQOZyPUAbi2zEdcFQ5L0Kj1FID4uft8tJNgwK1_1p5njDouz4gnAgVWE6dc7/pub?gid=1876217961&single=true&output=csv";
+    // スプレッドシートのURLはコードに書かない（このファイルは誰でも見られるため）。
+    // 管理者が「接続設定」に入力したURLがデータベースに保存され、それを使う。
+    const DEFAULT_USER_SHEET_URL = "";
+    const DEFAULT_NURSE_SHEET_URL = "";
+
+    // ===== セキュリティ設定 =====
+    // false: URLを知っている人は誰でも閲覧できる（従来どおり）／ true: 閲覧にもログインが必要
+    const REQUIRE_LOGIN_TO_VIEW = false;
+    // 管理者として扱うメールアドレス（小文字）。空のときは「ログインした人は全員が管理者」。
+    // 閲覧専用の共有アカウントを作る場合は、ここに管理者のアドレスだけを書く。
+    const ADMIN_EMAILS = [];
+
+    // ===== データ保管の設定 =====
+    const ARCHIVE_KEEP_MONTHS = 6;        // 今月を含めて何か月分を「すぐ編集できる場所」に残すか
+    const DEFAULT_TRAVEL_SPEED_KMH = 20;  // 距離から移動時間を計算するときの平均時速
+    const ROAD_FACTOR = 1.3;              // 直線距離 → 道のりへの換算係数
 
     const formatDateLabel = (dateStr) => {
       if (!dateStr) return '';
@@ -210,10 +224,45 @@
     // 入力が同じなら必ず同じ結果になるので、単体でテストできる。
     // ============================================================
     /*__PURE_HELPERS_START__*/
-    const locDist = (a, b) => {
-      const ax = a?.x ?? 50, ay = a?.y ?? 50, bx = b?.x ?? 50, by = b?.y ?? 50;
-      return Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
+    // --- 移動時間の計算 ---
+    // 住所の表記ゆれ（空白・全角数字・ハイフンの種類）をそろえる
+    const normalizeAddress = (addr) => (addr || '')
+      .replace(/[\s　]/g, '')
+      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[－‐−–—]/g, '-')
+      .replace(/(\d)ー(?=\d)/g, '$1-');
+    // 住所から「町名まで」を取り出す。 例: 東京都○○区緑町1-2-3 → 東京都○○区緑町
+    const areaKeyOf = (addr) => {
+      const key = normalizeAddress(addr).split(/[0-9]|[一二三四五六七八九十]+丁目/)[0];
+      return key || null;
     };
+    const haversineKm = (a, b) => {
+      const rad = (d) => d * Math.PI / 180;
+      const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+      return 6371 * 2 * Math.asin(Math.sqrt(h));
+    };
+    const isValidLatLng = (lat, lng) => typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng) && lat >= 20 && lat <= 46 && lng >= 122 && lng <= 154;
+    // 予定や看護師（{location, address}）から「地点」を作る関数を返す。
+    // 優先順位: シートの緯度経度 → 住所から取得済みの緯度経度(geoCache) → 町名
+    const makePointOf = (geoCache) => (obj) => {
+      const loc = obj?.location;
+      const area = areaKeyOf(obj?.address);
+      if (loc && isValidLatLng(loc.lat, loc.lng)) return { lat: loc.lat, lng: loc.lng, area };
+      const hit = geoCache ? geoCache[normalizeAddress(obj?.address)] : null;
+      if (Array.isArray(hit) && isValidLatLng(hit[0], hit[1])) return { lat: hit[0], lng: hit[1], area };
+      return { area };
+    };
+    // 2地点間の移動時間（分）。基本の移動時間に、距離に応じた時間を足す。
+    //  ・両方の緯度経度が分かる → 直線距離×道のり係数÷時速
+    //  ・町名だけ分かる         → 同じ町名なら +0分、違えば +4分
+    //  ・どちらか不明           → +2分
+    const travelMinutes = (a, b, base, speedKmh) => {
+      if (a && b && a.lat != null && b.lat != null) return base + Math.round(haversineKm(a, b) * ROAD_FACTOR / (speedKmh || DEFAULT_TRAVEL_SPEED_KMH) * 60);
+      if (a && b && a.area && b.area) return base + (a.area === b.area ? 0 : 4);
+      return base + 2;
+    };
+    const monthOf = (dateStr) => (dateStr || '').slice(0, 7);
 
     // 日付文字列を必ず YYYY-MM-DD（ゼロ埋め）にそろえる。 例: 2026/4/5 → 2026-04-05
     const normalizeDateStr = (raw) => {
@@ -256,8 +305,8 @@
     //  ・看護師ごとに「その日の予定の並び」を持ち、新しい訪問が「空き時間に収まるか」で判定する
     //    （＝後ろの時間に予定が入っていても、その前の空き時間を使える／ダブルブッキングはしない）
     //  ・収まる候補が複数いるときは「負担の少なさ・午前午後のバランス・移動の少なさ・過去の担当実績」の合計点で選ぶ
-    const planAutoAssign = ({ visits, nurses, date, offTypeOf, baseTravelTime, history }) => {
-      const travelTo = (fromLoc, v) => v.customTravelTime ?? (baseTravelTime + Math.round(locDist(fromLoc, v.location) * 0.05));
+    const planAutoAssign = ({ visits, nurses, date, offTypeOf, pointOf, travelBetween, history }) => {
+      const travelTo = (fromPt, v) => v.customTravelTime ?? travelBetween(fromPt, pointOf(v));
       const nurseIdSet = new Set(nurses.map(n => n.id));
 
       const states = [];
@@ -269,7 +318,7 @@
         if (offType === 'AM') { startMin = parseTime('13:30'); endMin = parseTime('17:30'); }
         else if (offType === 'PM') { startMin = parseTime('08:00'); endMin = parseTime('12:30'); }
 
-        const s = { nurse: n, offType, startMin, endMin, items: [], total: 0, am: 0, pm: 0, home: n.startLocation || { x: 50, y: 50 } };
+        const s = { nurse: n, offType, startMin, endMin, items: [], total: 0, am: 0, pm: 0, home: pointOf({ location: n.startLocation, address: n.address }) };
         visits.forEach(v => {
           if (v.date !== date || v.nurseId !== n.id) return;
           const start = parseTime(v.startTime), dur = v.duration || 30;
@@ -293,10 +342,10 @@
         for (const it of s.items) { if (it.start <= start) prev = it; else { next = it; break; } }
         if (prev && prev.end > start) return null;
         if (next && next.start < end) return null;
-        const prevLoc = prev ? prev.visit.location : s.home;
+        const prevLoc = prev ? pointOf(prev.visit) : s.home;
         const prevEnd = prev ? prev.end : s.startMin;
         const tIn = travelTo(prevLoc, v);
-        const tOut = next ? travelTo(v.location, next.visit) : 0;
+        const tOut = next ? travelTo(pointOf(v), next.visit) : 0;
         if (level === 1) {
           if (prevEnd + tIn > start) return null;
           if (next && end + tOut > next.start) return null;
@@ -540,7 +589,8 @@
     };
 
     function App() {
-      const isAdmin = useMemo(() => {
+      // URLに ?mode=admin が付いているか（＝管理者としてログインしたい、という意思表示。これだけでは管理者にならない）
+      const wantsAdmin = useMemo(() => {
         if (typeof window === 'undefined') return false;
         const params = new URLSearchParams(window.location.search);
         return params.get('mode') === 'admin';
@@ -600,11 +650,70 @@
       });
       
       const [nurses, setNurses] = useState([]);
-      const [visits, setVisits] = useState([]);
+      // liveVisits = メインの保存場所にある予定（編集できる）。古い月は「保管庫」に移されている。
+      const [liveVisits, setVisits] = useState([]);
       const [nurseStatuses, setNurseStatuses] = useState([]); 
       const [savedPatterns, setSavedPatterns] = useState({});
       const [history, setHistory] = useState([]);
       const [dailyMemos, setDailyMemos] = useState({});
+
+      const displayDates = useMemo(() => {
+        if (!startDate) return [];
+        const dates = [];
+        const start = new Date(startDate);
+        
+        const startJsDay = start.getDay();
+        const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
+        start.setDate(start.getDate() + diffToMonday);
+
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(start);
+          d.setDate(d.getDate() + i);
+          dates.push(d.toISOString().split('T')[0]);
+        }
+        return dates;
+      }, [startDate]);
+
+      // ===== ログイン状態 =====
+      const [authReady, setAuthReady] = useState(false);
+      const [legacyAdmin, setLegacyAdmin] = useState(false);   // ログイン機能が未設定のときだけ使う、従来方式の管理者モード
+      const [showLogin, setShowLogin] = useState(false);
+      const [loginError, setLoginError] = useState("");
+      const [loginBusy, setLoginBusy] = useState(false);
+      const [loginNotConfigured, setLoginNotConfigured] = useState(false);
+      const usesEnvToken = typeof window !== 'undefined' && typeof window.__initial_auth_token !== 'undefined' && !!window.__initial_auth_token;
+      const isPasswordUser = !!user && !user.isAnonymous && !usesEnvToken;
+      const isAdminUser = legacyAdmin
+        || (usesEnvToken && wantsAdmin && !!user)
+        || (isPasswordUser && (ADMIN_EMAILS.length === 0 || ADMIN_EMAILS.includes((user.email || '').toLowerCase())));
+
+      // ===== 保管庫（古い月のデータ） =====
+      const [archivedMonths, setArchivedMonths] = useState([]);   // 保管庫に移した月（"2026-01" 形式）
+      const [archiveCache, setArchiveCache] = useState({});       // 読み込み済みの保管データ
+      const [archiveBusy, setArchiveBusy] = useState(false);
+      const archivedMonthSet = useMemo(() => new Set(archivedMonths), [archivedMonths]);
+      // いま表示に必要な「保管済みの月」
+      const neededArchiveMonths = useMemo(() => {
+        const months = new Set(displayDates.map(monthOf));
+        if (activeTab === 'report') months.add(reportMonth);
+        return [...months].filter(m => archivedMonthSet.has(m)).sort();
+      }, [displayDates, activeTab, reportMonth, archivedMonthSet]);
+      // 画面に出す予定 = 編集できる予定 + （必要なら）保管庫から読み込んだ予定
+      const visits = useMemo(() => {
+        const extra = neededArchiveMonths.flatMap(m => archiveCache[m]?.visits || []);
+        return extra.length > 0 ? [...extra, ...liveVisits] : liveVisits;
+      }, [liveVisits, archiveCache, neededArchiveMonths]);
+      // 保管済みの月を表示している間は「閲覧のみ」にする
+      const isArchivedView = archivedMonthSet.has(monthOf(selectedDate)) && ['overview', 'schedule', 'visits'].includes(activeTab);
+      const isAdmin = isAdminUser && !isArchivedView;
+
+      // ===== 位置情報 =====
+      const [geoCache, setGeoCache] = useState({});              // 住所 → [緯度, 経度]
+      const [travelSpeedKmh, setTravelSpeedKmh] = useState(DEFAULT_TRAVEL_SPEED_KMH);
+      const [geoProgress, setGeoProgress] = useState(null);       // 取得中の進み具合
+      const pointOf = useMemo(() => makePointOf(geoCache), [geoCache]);
+      const [restoreCandidate, setRestoreCandidate] = useState(null);
+      const restoreInputRef = useRef(null);
       
       const [baseTravelTime, setBaseTravelTime] = useState(7);
       const [selectedNurseId, setSelectedNurseId] = useState(() => {
@@ -680,17 +789,64 @@
 
       useEffect(() => {
         if (!auth) return;
-        const initAuth = async () => {
+        const initialToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
+        // まず「前回のログインが残っているか」を確認し、残っていなければ匿名（閲覧用）で入る。
+        // ※ 先に匿名ログインしてしまうと、管理者のログイン状態を上書きしてしまうため、この順番が大切。
+        const unsubscribe = onAuthStateChanged(auth, async (u) => {
+          setUser(u);
+          setAuthReady(true);
+          if (u) return;
           try {
-            const initialToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
-            if (initialToken) { await signInWithCustomToken(auth, initialToken); } 
-            else { await signInAnonymously(auth); }
+            if (initialToken) { await signInWithCustomToken(auth, initialToken); }
+            else if (!REQUIRE_LOGIN_TO_VIEW) { await signInAnonymously(auth); }
           } catch (e) { console.error("Auth error", e); }
-        };
-        initAuth();
-        const unsubscribe = onAuthStateChanged(auth, setUser);
+        });
         return () => unsubscribe();
       }, []);
+
+      // ログイン画面を出す条件：管理者用URLで開いたのに管理者でない／閲覧にもログインが必要な設定で未ログイン
+      useEffect(() => {
+        if (!authReady) return;
+        if ((wantsAdmin && !isAdminUser) || (REQUIRE_LOGIN_TO_VIEW && !user)) setShowLogin(true);
+        if (isAdminUser) setShowLogin(false);
+      }, [authReady, wantsAdmin, isAdminUser, user]);
+
+      const handleLogin = async (e) => {
+        e.preventDefault();
+        if (!auth) return;
+        const formData = new FormData(e.target);
+        setLoginBusy(true);
+        setLoginError("");
+        try {
+          await signInWithEmailAndPassword(auth, String(formData.get('email') || '').trim(), String(formData.get('password') || ''));
+          setShowLogin(false);
+        } catch (err) {
+          console.error("Login error", err);
+          const code = err?.code || '';
+          if (code === 'auth/operation-not-allowed') {
+            setLoginNotConfigured(true);
+            setLoginError("ログイン機能がまだ有効になっていません。Firebaseコンソールで「メール/パスワード」ログインを有効にしてください（手順はREADMEにあります）。");
+          } else if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email', 'auth/missing-password'].includes(code)) {
+            setLoginError("メールアドレスかパスワードが違います。");
+          } else if (code === 'auth/too-many-requests') {
+            setLoginError("試行回数が多すぎます。しばらく待ってからもう一度お試しください。");
+          } else if (code === 'auth/network-request-failed') {
+            setLoginError("ネットワークに接続できません。通信環境をご確認ください。");
+          } else {
+            setLoginError(`ログインできませんでした：${err?.message || code || "不明なエラー"}`);
+          }
+        } finally {
+          setLoginBusy(false);
+        }
+      };
+
+      const handleLogout = async () => {
+        setLegacyAdmin(false);
+        if (!auth) return;
+        try { await signOut(auth); } catch (e) { console.error(e); }
+        setToastMessage("ログアウトしました");
+        setShowToast(true);
+      };
 
       useEffect(() => {
         if (!user || !db) return;
@@ -707,6 +863,9 @@
             if (data.sheetUrl) setSheetUrl(data.sheetUrl);
             if (data.nurseSheetUrl) setNurseSheetUrl(data.nurseSheetUrl);
             if (data.baseTravelTime !== undefined) setBaseTravelTime(data.baseTravelTime);
+            if (data.travelSpeedKmh !== undefined) setTravelSpeedKmh(data.travelSpeedKmh);
+            if (data.archivedMonths) { try { setArchivedMonths(JSON.parse(data.archivedMonths)); } catch (e) { console.error(e); } }
+            if (data.geoCache) { try { setGeoCache(JSON.parse(data.geoCache)); } catch (e) { console.error(e); } }
 
             // 旧形式（非圧縮）のデータを検出したら、圧縮形式へ一度だけ移行する
             const isRawJson = (s) => typeof s === 'string' && s.length > 0 && !s.startsWith(COMPRESS_PREFIX);
@@ -714,7 +873,7 @@
             const patternsRaw = data.savedPatterns;
             const statusesRaw = data.nurseStatuses;
             const needsMigration = isRawJson(visitsRaw) || isRawJson(patternsRaw) || isRawJson(statusesRaw);
-            if (isAdmin && needsMigration && !migratedRef.current && LZString && typeof LZString.compressToBase64 === 'function') {
+            if (isAdminUser && needsMigration && !migratedRef.current && LZString && typeof LZString.compressToBase64 === 'function') {
               migratedRef.current = true;
               updateCloudData({
                 visits: encodeField(decodeField(visitsRaw, [])),
@@ -722,22 +881,51 @@
                 nurseStatuses: encodeField(decodeField(statusesRaw, []))
               });
             }
-          } else {
-            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", dailyMemos: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 });
+          } else if (isAdminUser) {
+            // 初回だけ、空のデータを作る（書き込めるのは管理者のみ）
+            setDoc(docRef, { nurses: "[]", visits: "[]", nurseStatuses: "[]", savedPatterns: "{}", dailyMemos: "{}", sheetUrl: DEFAULT_USER_SHEET_URL, nurseSheetUrl: DEFAULT_NURSE_SHEET_URL, baseTravelTime: 7 }).catch(e => console.error(e));
           }
           setIsSyncing(false);
-        }, (err) => { console.error(err); setIsSyncing(false); });
+        }, (err) => {
+          console.error(err);
+          setIsSyncing(false);
+          if (err?.code === 'permission-denied') {
+            setToastMessage("データを読み込めません：閲覧が許可されていません（ログインが必要な設定になっている可能性があります）。");
+            setShowToast(true);
+          }
+        });
         return () => unsubscribe();
-      }, [user]);
+      }, [user, legacyAdmin]);
+
+      const mainDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
+      const archiveDocRef = (month) => doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_archive', month);
+
+      // 表示に必要な保管データを、必要になったときだけ読み込む
+      useEffect(() => {
+        if (!user || !db) return;
+        neededArchiveMonths.forEach(month => {
+          if (archiveCache[month]) return;
+          setArchiveCache(prev => ({ ...prev, [month]: { loading: true, visits: [] } }));
+          getDoc(archiveDocRef(month)).then(snap => {
+            const d = snap.exists() ? snap.data() : {};
+            setArchiveCache(prev => ({ ...prev, [month]: { visits: decodeField(d.visits, []), savedPatterns: decodeField(d.savedPatterns, {}) } }));
+          }).catch(e => {
+            console.error("archive load failed:", e);
+            setArchiveCache(prev => ({ ...prev, [month]: { error: true, visits: [] } }));
+          });
+        });
+      }, [neededArchiveMonths, user]);
 
       // ドキュメント全体のおおよそのバイト数を見積もる（Firestoreの上限は1ドキュメント約1MB）
       const estimateDocSize = (override = {}) => {
         const fields = {
           nurses: JSON.stringify(nurses),
-          visits: encodeField(visits),
+          visits: encodeField(liveVisits),
           nurseStatuses: encodeField(nurseStatuses),
           savedPatterns: encodeField(savedPatterns),
           dailyMemos: JSON.stringify(dailyMemos),
+          archivedMonths: JSON.stringify(archivedMonths),
+          geoCache: JSON.stringify(geoCache),
           sheetUrl: sheetUrl,
           nurseSheetUrl: nurseSheetUrl,
           baseTravelTime: String(baseTravelTime),
@@ -753,9 +941,9 @@
       };
 
       const updateCloudData = (newData) => {
-        if (!isAdmin) return;
+        if (!isAdminUser) return;
         if (user && db) {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'careRoute_state', 'main');
+          const docRef = mainDocRef();
           setDoc(docRef, newData, { merge: true }).catch(e => {
             console.error("Firestore write failed:", e);
             const size = estimateDocSize(newData);
@@ -764,7 +952,7 @@
             if (e.code === 'resource-exhausted' || e.code === 'invalid-argument' || e.code === 'out-of-range' || overLimit) {
               msg = `保存できませんでした：データ量が上限（約1MB）に達しています（現在 約${Math.round(size / 1024)}KB）。過去の予定やメモリ保存の整理が必要です。`;
             } else if (e.code === 'permission-denied') {
-              msg = "保存できませんでした：データベースへの書き込みが許可されていません（Firestoreのセキュリティルールをご確認ください）。";
+              msg = "保存できませんでした：書き込みが許可されていません。管理者としてログインしているかご確認ください。";
             } else if (e.code === 'unavailable' || e.code === 'deadline-exceeded') {
               msg = "保存できませんでした：ネットワークに接続できません。通信環境をご確認ください。";
             } else {
@@ -779,14 +967,16 @@
       const handleSetVisits = (newVal) => {
         if (!isAdmin) return;
         setVisits(prev => {
-          const next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          let next = typeof newVal === 'function' ? newVal(prev) : newVal;
+          // 保管済みの月の予定は保管庫が正なので、メイン側には書き戻さない
+          if (archivedMonthSet.size > 0) next = next.filter(v => !archivedMonthSet.has(monthOf(v.date)));
           updateCloudData({ visits: encodeField(next) });
           return next;
         });
       };
 
       const handleSetNurses = (newVal) => {
-        if (!isAdmin) return;
+        if (!isAdminUser) return;
         setNurses(prev => {
           const next = typeof newVal === 'function' ? newVal(prev) : newVal;
           updateCloudData({ nurses: JSON.stringify(next) });
@@ -847,30 +1037,15 @@
         });
       };
 
-      const handleSetBaseTravelTime = (v) => { if(!isAdmin) return; setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
-      const handleSheetUrlChange = (e) => { if(!isAdmin) return; setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
-      const handleNurseSheetUrlChange = (e) => { if(!isAdmin) return; setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
+      const handleSetBaseTravelTime = (v) => { if(!isAdminUser) return; setBaseTravelTime(v); updateCloudData({ baseTravelTime: v }); };
+      const handleSetTravelSpeed = (v) => { if(!isAdminUser) return; setTravelSpeedKmh(v); updateCloudData({ travelSpeedKmh: v }); };
+      const handleSheetUrlChange = (e) => { if(!isAdminUser) return; setSheetUrl(e.target.value); updateCloudData({ sheetUrl: e.target.value }); };
+      const handleNurseSheetUrlChange = (e) => { if(!isAdminUser) return; setNurseSheetUrl(e.target.value); updateCloudData({ nurseSheetUrl: e.target.value }); };
       
       const handleSetStartDate = (dateStr) => {
         setStartDate(dateStr);
       };
 
-      const displayDates = useMemo(() => {
-        if (!startDate) return [];
-        const dates = [];
-        const start = new Date(startDate);
-        
-        const startJsDay = start.getDay();
-        const diffToMonday = startJsDay === 0 ? -6 : 1 - startJsDay;
-        start.setDate(start.getDate() + diffToMonday);
-
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(start);
-          d.setDate(d.getDate() + i);
-          dates.push(d.toISOString().split('T')[0]);
-        }
-        return dates;
-      }, [startDate]);
 
       const handlePrevWeek = () => {
         if (!startDate) return;
@@ -1000,11 +1175,12 @@
           let currentTime = workStartTimeMin;
           let calculatedStartTime = currentTime;
           let calcVisits = [];
-          let currentLoc = nurse.startLocation || {x:50, y:50};
+          const homePoint = pointOf({ location: nurse.startLocation, address: nurse.address });
+          let currentLoc = homePoint;
           
           sorted.forEach((visit, idx) => {
-            const dist = Math.sqrt(Math.pow((visit.location?.x || 50) - currentLoc.x, 2) + Math.pow((visit.location?.y || 50) - currentLoc.y, 2));
-            const travelTime = visit.customTravelTime ?? (baseTravelTime + Math.round(dist * 0.05));
+            const visitPoint = pointOf(visit);
+            const travelTime = visit.customTravelTime ?? travelMinutes(currentLoc, visitPoint, baseTravelTime, travelSpeedKmh);
             
             if (idx === 0) {
               const targetStart = parseTime(visit.startTime);
@@ -1027,12 +1203,12 @@
               departureTime: formatTime(actualStart + visit.duration) 
             });
             currentTime = actualStart + visit.duration; 
-            currentLoc = visit.location || {x: 50, y: 50};
+            currentLoc = visitPoint;
           });
           
           let finalTravelTime = 0, returnTime = null;
           if (calcVisits.length > 0) {
-            finalTravelTime = baseTravelTime + Math.round(Math.sqrt(Math.pow(currentLoc.x - (nurse.startLocation?.x || 50), 2) + Math.pow(currentLoc.y - (nurse.startLocation?.y || 50), 2)) * 0.05);
+            finalTravelTime = travelMinutes(currentLoc, homePoint, baseTravelTime, travelSpeedKmh);
             returnTime = formatTime(currentTime + finalTravelTime);
           } else {
             returnTime = formatTime(workStartTimeMin);
@@ -1049,7 +1225,7 @@
           };
         });
         return schedules;
-      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses]);
+      }, [nurses, visits, selectedDate, baseTravelTime, nurseStatuses, pointOf, travelSpeedKmh]);
 
       const firstVisitMinutes = useMemo(() => {
         const starts = visits.filter(v => v.date === selectedDate).map(v => parseTime(v.startTime));
@@ -1229,7 +1405,7 @@
         if (activeTab !== 'report') return null;
         const LIMIT = 1048576; // Firestoreの1ドキュメント上限（約1MB）
         const bytes = estimateDocSize();
-        const dates = visits.map(v => v.date).filter(Boolean).sort();
+        const dates = liveVisits.map(v => v.date).filter(Boolean).sort();
         const oldest = dates[0] || null;
         const newest = dates[dates.length - 1] || null;
         let monthsLeft = null;
@@ -1237,30 +1413,232 @@
           const spanDays = (new Date(newest) - new Date(oldest)) / 86400000 + 1;
           if (spanDays >= 28 && bytes > 0) monthsLeft = Math.max(0, Math.floor(((LIMIT - bytes) / (bytes / spanDays)) / 30));
         }
-        const unknownNurse = visits.filter(v => v.nurseId != null && !nurseIdSet.has(v.nurseId)).length;
-        return { bytes, limit: LIMIT, percent: Math.min(100, Math.round((bytes / LIMIT) * 100)), oldest, newest, count: visits.length, monthsLeft, unknownNurse };
-      }, [activeTab, visits, nurses, nurseStatuses, savedPatterns, dailyMemos, nurseIdSet]);
+        const unknownNurse = liveVisits.filter(v => v.nurseId != null && !nurseIdSet.has(v.nurseId)).length;
+        // 保管庫へ移せる対象（今月を含めて ARCHIVE_KEEP_MONTHS か月より前）
+        const now = new Date();
+        const cutoffDate = new Date(now.getFullYear(), now.getMonth() - (ARCHIVE_KEEP_MONTHS - 1), 1);
+        const cutoffMonth = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, '0')}`;
+        const archivable = liveVisits.filter(v => v.date && monthOf(v.date) < cutoffMonth).length;
+        return { bytes, limit: LIMIT, percent: Math.min(100, Math.round((bytes / LIMIT) * 100)), oldest, newest, count: liveVisits.length, monthsLeft, unknownNurse, cutoffMonth, archivable };
+      }, [activeTab, liveVisits, nurses, nurseStatuses, savedPatterns, dailyMemos, nurseIdSet, archivedMonths, geoCache]);
 
-      // 全データをJSONファイルとして端末に保存する（万一に備えたバックアップ）
-      const handleDownloadBackup = () => {
-        if (!isAdmin) return;
+      const downloadJson = (payload, filename) => {
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
+      // 保管庫の全データを読み込む（バックアップ用）
+      const loadAllArchives = async () => {
+        const archives = {};
+        for (const month of archivedMonths) {
+          const snap = await getDoc(archiveDocRef(month));
+          const d = snap.exists() ? snap.data() : {};
+          archives[month] = { visits: decodeField(d.visits, []), savedPatterns: decodeField(d.savedPatterns, {}) };
+        }
+        return archives;
+      };
+
+      // 全データ（保管庫も含む）をJSONファイルとして端末に保存する
+      const handleDownloadBackup = async (silent = false) => {
+        if (!isAdminUser) return false;
         try {
-          const payload = { app: 'CareRoute', exportedAt: new Date().toISOString(), nurses, visits, nurseStatuses, savedPatterns, dailyMemos, baseTravelTime, sheetUrl, nurseSheetUrl };
-          const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `careroute-backup-${getTodayStr()}.json`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-          setToastMessage("バックアップを保存しました（利用者の個人情報を含むため、取り扱いにご注意ください）");
+          const archives = await loadAllArchives();
+          const payload = { app: 'CareRoute', version: 2, exportedAt: new Date().toISOString(), nurses, visits: liveVisits, nurseStatuses, savedPatterns, dailyMemos, baseTravelTime, travelSpeedKmh, sheetUrl, nurseSheetUrl, geoCache, archivedMonths, archives };
+          const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+          downloadJson(payload, `careroute-backup-${getTodayStr()}-${stamp}.json`);
+          if (!silent) { setToastMessage("バックアップを保存しました（利用者の個人情報を含むため、取り扱いにご注意ください）"); setShowToast(true); }
+          return true;
         } catch (e) {
           console.error(e);
           setToastMessage("バックアップの保存に失敗しました");
+          setShowToast(true);
+          return false;
         }
-        setShowToast(true);
+      };
+
+      // バックアップファイルを選んだとき：中身を確かめて、確認画面を出す（この時点ではまだ何も書き換えない）
+      const handleRestoreFileChosen = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file || !isAdminUser) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const data = JSON.parse(String(reader.result));
+            if (data?.app !== 'CareRoute' || !Array.isArray(data.visits) || !Array.isArray(data.nurses)) throw new Error("形式が違います");
+            const archives = (data.archives && typeof data.archives === 'object') ? data.archives : {};
+            const archivedCount = Object.values(archives).reduce((sum, a) => sum + (Array.isArray(a?.visits) ? a.visits.length : 0), 0);
+            setRestoreCandidate({ data, fileName: file.name, archivedCount });
+          } catch (err) {
+            console.error(err);
+            setToastMessage("このファイルはCareRouteのバックアップとして読み込めませんでした。何も変更していません。");
+            setShowToast(true);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      // 復元の実行：①いまの状態を自動でバックアップ → ②保管庫 → ③メインの順に書き込む
+      const executeRestore = async () => {
+        if (!isAdminUser || !restoreCandidate || !db) return;
+        const { data } = restoreCandidate;
+        setArchiveBusy(true);
+        try {
+          const saved = await handleDownloadBackup(true);
+          if (!saved) throw new Error("復元前のバックアップに失敗したため中止しました");
+          const archives = (data.archives && typeof data.archives === 'object') ? data.archives : {};
+          const months = Object.keys(archives).filter(m => /^\d{4}-\d{2}$/.test(m)).sort();
+          for (const month of months) {
+            await setDoc(archiveDocRef(month), { month, visits: encodeField(archives[month].visits || []), savedPatterns: encodeField(archives[month].savedPatterns || {}), updatedAt: new Date().toISOString() });
+          }
+          await setDoc(mainDocRef(), {
+            nurses: JSON.stringify(data.nurses),
+            visits: encodeField(data.visits),
+            nurseStatuses: encodeField(data.nurseStatuses || []),
+            savedPatterns: encodeField(data.savedPatterns || {}),
+            dailyMemos: JSON.stringify(data.dailyMemos || {}),
+            baseTravelTime: data.baseTravelTime ?? 7,
+            travelSpeedKmh: data.travelSpeedKmh ?? DEFAULT_TRAVEL_SPEED_KMH,
+            sheetUrl: data.sheetUrl || sheetUrl || "",
+            nurseSheetUrl: data.nurseSheetUrl || nurseSheetUrl || "",
+            geoCache: JSON.stringify(data.geoCache || {}),
+            archivedMonths: JSON.stringify(months)
+          }, { merge: true });
+          setArchiveCache({});
+          setHistory([]);
+          setRestoreCandidate(null);
+          setToastMessage("バックアップから復元しました（復元前の状態も、いま端末に保存したファイルから戻せます）");
+        } catch (e) {
+          console.error(e);
+          setToastMessage(`復元に失敗しました：${e?.message || e?.code || "不明なエラー"}`);
+        } finally {
+          setArchiveBusy(false);
+          setShowToast(true);
+        }
+      };
+
+      // 古い月のデータを「保管庫」（月ごとの別の保存場所）へ移す。
+      // 安全のため「先に保管庫へ書く → 成功を確認 → メイン側から外す」の順で行う。
+      const handleArchiveOldData = async () => {
+        if (!isAdminUser || !db || !storageInfo || storageInfo.archivable === 0) return;
+        const cutoff = storageInfo.cutoffMonth;
+        setArchiveBusy(true);
+        try {
+          const byMonth = {};
+          liveVisits.forEach(v => {
+            const m = monthOf(v.date);
+            if (v.date && m < cutoff) (byMonth[m] = byMonth[m] || { visits: [], savedPatterns: {} }).visits.push(v);
+          });
+          Object.keys(savedPatterns).forEach(date => {
+            const m = monthOf(date);
+            if (m < cutoff) (byMonth[m] = byMonth[m] || { visits: [], savedPatterns: {} }).savedPatterns[date] = savedPatterns[date];
+          });
+          const months = Object.keys(byMonth).sort();
+          for (const month of months) {
+            let mergedVisits = byMonth[month].visits;
+            let mergedPatterns = byMonth[month].savedPatterns;
+            if (archivedMonthSet.has(month)) {
+              // すでに保管済みの月に追加する場合は、中身を合体させる
+              const snap = await getDoc(archiveDocRef(month));
+              const d = snap.exists() ? snap.data() : {};
+              const ids = new Set(mergedVisits.map(v => v.id));
+              mergedVisits = [...decodeField(d.visits, []).filter(v => !ids.has(v.id)), ...mergedVisits];
+              mergedPatterns = { ...decodeField(d.savedPatterns, {}), ...mergedPatterns };
+            }
+            await setDoc(archiveDocRef(month), { month, visits: encodeField(mergedVisits), savedPatterns: encodeField(mergedPatterns), updatedAt: new Date().toISOString() });
+          }
+          const nextVisits = liveVisits.filter(v => !(v.date && monthOf(v.date) < cutoff));
+          const nextPatterns = {};
+          Object.keys(savedPatterns).forEach(date => { if (monthOf(date) >= cutoff) nextPatterns[date] = savedPatterns[date]; });
+          const nextMonths = [...new Set([...archivedMonths, ...months])].sort();
+          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths) }, { merge: true });
+          setArchiveCache({});
+          setHistory([]);
+          setToastMessage(`${months.length}か月分（${liveVisits.length - nextVisits.length}件）を保管庫へ移しました。保管した月も、その日付を開けばこれまでどおり閲覧できます。`);
+        } catch (e) {
+          console.error(e);
+          setToastMessage(`保管に失敗しました：${e?.message || e?.code || "不明なエラー"}（データは失われていません）`);
+        } finally {
+          setArchiveBusy(false);
+          setShowToast(true);
+        }
+      };
+
+      // 保管済みの月を、編集できる場所へ戻す
+      const handleUnarchiveMonth = async (month) => {
+        if (!isAdminUser || !db || !archivedMonthSet.has(month)) return;
+        setArchiveBusy(true);
+        try {
+          const snap = await getDoc(archiveDocRef(month));
+          const d = snap.exists() ? snap.data() : {};
+          const back = decodeField(d.visits, []);
+          const ids = new Set(liveVisits.map(v => v.id));
+          const nextVisits = [...liveVisits, ...back.filter(v => !ids.has(v.id))];
+          const nextPatterns = { ...decodeField(d.savedPatterns, {}), ...savedPatterns };
+          const nextMonths = archivedMonths.filter(m => m !== month);
+          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths) }, { merge: true });
+          setArchiveCache({});
+          setToastMessage(`${month.replace('-', '年')}月のデータを編集できる状態に戻しました`);
+        } catch (e) {
+          console.error(e);
+          const tooBig = e?.code === 'resource-exhausted' || e?.code === 'invalid-argument';
+          setToastMessage(tooBig ? "戻せませんでした：データ量が上限を超えます。先にほかの古い月を保管庫へ移してください。" : `戻せませんでした：${e?.message || e?.code || "不明なエラー"}`);
+        } finally {
+          setArchiveBusy(false);
+          setShowToast(true);
+        }
+      };
+
+      // 位置情報の状況（住所のうち、緯度経度が分かっているものの数）
+      const geoStatus = useMemo(() => {
+        if (activeTab !== 'visits') return null;
+        const known = new Set(), missing = new Set();
+        const check = (obj) => {
+          const key = normalizeAddress(obj.address);
+          if (!key) return;
+          if (pointOf(obj).lat != null) known.add(key); else missing.add(key);
+        };
+        const today = getTodayStr();
+        liveVisits.forEach(v => { if (v.type !== 'other' && v.date >= today) check(v); });
+        nurses.forEach(n => check({ location: n.startLocation, address: n.address }));
+        return { known: known.size, missing: [...missing] };
+      }, [activeTab, liveVisits, nurses, pointOf]);
+
+      // 住所から緯度経度を調べる（国土地理院の住所検索を利用。送るのは住所だけで、氏名は送らない）
+      const handleGeocode = async () => {
+        if (!isAdminUser || !geoStatus || geoStatus.missing.length === 0 || geoProgress) return;
+        const targets = geoStatus.missing;
+        if (!window.confirm(`住所 ${targets.length}件の位置（緯度・経度）を調べます。\n\n・国土地理院の住所検索サービスに「住所」を送信します（氏名は送信しません）\n・結果は移動時間の計算だけに使います\n\n実行しますか？`)) return;
+        const nextCache = { ...geoCache };
+        let ok = 0, ng = 0;
+        setGeoProgress({ done: 0, total: targets.length });
+        try {
+          for (let i = 0; i < targets.length; i++) {
+            try {
+              const res = await fetch(`https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(targets[i])}`);
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              const list = await res.json();
+              const c = Array.isArray(list) && list[0]?.geometry?.coordinates;
+              const lat = c ? Number(c[1]) : NaN, lng = c ? Number(c[0]) : NaN;
+              if (isValidLatLng(lat, lng)) { nextCache[targets[i]] = [Math.round(lat * 1e5) / 1e5, Math.round(lng * 1e5) / 1e5]; ok++; }
+              else ng++;
+            } catch (err) { console.error("geocode failed:", err); ng++; }
+            setGeoProgress({ done: i + 1, total: targets.length });
+            await new Promise(r => setTimeout(r, 250)); // 相手のサーバーに負荷をかけないよう間隔をあける
+          }
+          if (ok > 0) { setGeoCache(nextCache); updateCloudData({ geoCache: JSON.stringify(nextCache) }); }
+          setToastMessage(`位置情報を取得しました：成功 ${ok}件 / 見つからず ${ng}件${ng > 0 ? "（見つからない住所は、都道府県から書くと見つかりやすくなります）" : ""}`);
+        } finally {
+          setGeoProgress(null);
+          setShowToast(true);
+        }
       };
 
       const handleContextMenu = (e, visit) => {
@@ -1652,7 +2030,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               nurses,
               date: selectedDate,
               offTypeOf: (n) => getIsNurseOffType(n, selectedDate, nurseStatuses),
-              baseTravelTime,
+              pointOf,
+              travelBetween: (a, b) => travelMinutes(a, b, baseTravelTime, travelSpeedKmh),
               history
             });
             
@@ -1886,6 +2265,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
       const handleFetchSheet = async () => {
         if (!isAdmin) return;
+        if (!sheetUrl) { setToastMessage("「接続設定」に利用者スプレッドシートのURLを入力してください"); setShowToast(true); return; }
         setIsLoadingSheet(true);
         try {
           const res = await fetch(sheetUrl);
@@ -1915,6 +2295,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               const excludedNurseNames = excludedNursesStr ? excludedNursesStr.split(/[・,、]/).map(n => n.trim()).filter(Boolean) : [];
 
               const address = p[8]?.trim() || '';
+              // 任意の列：緯度(11列目)・経度(12列目)。入っていれば実際の距離で移動時間を計算する
+              const lat = parseFloat(p[10]), lng = parseFloat(p[11]);
+              const latLng = isValidLatLng(lat, lng) ? { lat, lng } : {};
 
               let visitDate = '';
               if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
@@ -1930,7 +2313,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               result.push({ 
                 id: Date.now() + i, 
                 userName: nameStr.includes('様') ? nameStr : nameStr + ' 様', 
-                location: getHashLoc(address || nameStr), 
+                location: { ...getHashLoc(address || nameStr), ...latLng }, 
                 duration: dur, 
                 date: visitDate, 
                 dayOfWeek: dayMap[dateOrDay] ?? 1, 
@@ -1970,7 +2353,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
       };
 
       const handleFetchNurseSheet = async () => {
-        if (!isAdmin) return;
+        if (!isAdminUser) return;
+        if (!nurseSheetUrl) { setToastMessage("「接続設定」に看護師スプレッドシートのURLを入力してください"); setShowToast(true); return; }
         setIsLoadingNurseSheet(true);
         try {
           const res = await fetch(nurseSheetUrl);
@@ -2022,11 +2406,15 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               }
 
               const address = p[7]?.trim() || '';
+              // 任意の列：緯度(9列目)・経度(10列目)
+              const lat = parseFloat(p[8]), lng = parseFloat(p[9]);
+              const latLng = isValidLatLng(lat, lng) ? { lat, lng } : {};
               
               result.push({ 
                 id: Date.now() + i, 
                 name: nameStr, 
-                startLocation: getHashLoc(address || nameStr), 
+                address: address,
+                startLocation: { ...getHashLoc(address || nameStr), ...latLng }, 
                 color: colors[result.length % colors.length], 
                 startTime: st, 
                 endTime: et,
@@ -2191,10 +2579,16 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               {isSidebarOpen && (
                 <div className="flex flex-col gap-1 items-start mt-1">
                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-1 whitespace-nowrap overflow-hidden">Route Optimization v2.5</p>
-                  {isAdmin ? (
-                    <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] px-2 py-0.5 rounded font-black ml-1">管理者モード</span>
+                  {isAdminUser ? (
+                    <div className="flex items-center gap-1.5 ml-1">
+                      <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] px-2 py-0.5 rounded font-black">管理者モード</span>
+                      <button onClick={handleLogout} className="text-[10px] font-black text-slate-400 hover:text-white border border-slate-600 px-2 py-0.5 rounded flex items-center gap-1 transition-colors" title={user?.email || ''}><LogOut size={10}/>ログアウト</button>
+                    </div>
                   ) : (
-                    <span className="bg-slate-700 text-slate-400 text-[10px] px-2 py-0.5 rounded font-black ml-1 border border-slate-600">閲覧モード</span>
+                    <div className="flex items-center gap-1.5 ml-1">
+                      <span className="bg-slate-700 text-slate-400 text-[10px] px-2 py-0.5 rounded font-black border border-slate-600">閲覧モード</span>
+                      {wantsAdmin && <button onClick={() => { setLoginError(""); setShowLogin(true); }} className="text-[10px] font-black text-teal-300 hover:text-white border border-teal-700 px-2 py-0.5 rounded flex items-center gap-1 transition-colors"><LogIn size={10}/>ログイン</button>}
+                    </div>
                   )}
                 </div>
               )}
@@ -2283,8 +2677,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 <Activity className="text-teal-400" size={20} />
                 <span>CareRoute</span>
               </div>
-              {isAdmin ? (
-                <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">管理者</span>
+              {isAdminUser ? (
+                <button onClick={handleLogout} className="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1.5 py-0.5 rounded font-black ml-1 flex items-center gap-1" title="タップでログアウト">管理者<LogOut size={9}/></button>
+              ) : wantsAdmin ? (
+                <button onClick={() => { setLoginError(""); setShowLogin(true); }} className="bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[9px] px-1.5 py-0.5 rounded font-black ml-1 flex items-center gap-1"><LogIn size={9}/>ログイン</button>
               ) : (
                 <span className="bg-slate-700 text-slate-400 border border-slate-600 text-[9px] px-1.5 py-0.5 rounded font-black ml-1">閲覧</span>
               )}
@@ -2387,6 +2783,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               </div>
             ) : null}
 
+            {legacyAdmin && (
+              <div className="bg-red-50 border-b border-red-200 text-red-700 text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex items-center gap-2 shrink-0">
+                <ShieldAlert size={16} className="shrink-0" />
+                <span>ログイン機能が未設定のため、従来の方式で管理者になっています（URLを知っている人は誰でも編集できる状態です）。READMEの手順で設定してください。</span>
+              </div>
+            )}
+            {isArchivedView && (
+              <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-[11px] md:text-xs font-black px-3 md:px-6 py-2 flex flex-wrap items-center gap-2 shrink-0">
+                <Archive size={16} className="shrink-0" />
+                <span>{monthOf(selectedDate).replace('-', '年')}月は保管済みのため、閲覧のみです{archiveCache[monthOf(selectedDate)]?.loading ? "（読み込み中…）" : archiveCache[monthOf(selectedDate)]?.error ? "（読み込みに失敗しました）" : ""}</span>
+                {isAdminUser && (
+                  <button onClick={() => handleUnarchiveMonth(monthOf(selectedDate))} disabled={archiveBusy} className="ml-auto bg-white border border-amber-300 text-amber-700 px-3 py-1 rounded-lg hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap">編集できるように戻す</button>
+                )}
+              </div>
+            )}
             <div className="flex-1 overflow-auto p-2.5 md:p-10">
               {activeTab === 'overview' && (
                 <div className="flex flex-col h-full space-y-2 md:space-y-6">
@@ -2400,6 +2811,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                         <span className="text-xs font-black text-slate-500 uppercase tracking-tight">移動時間:</span>
                         <input type="number" min="0" value={baseTravelTime} onChange={e => handleSetBaseTravelTime(Math.max(0, parseInt(e.target.value) || 0))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 disabled:bg-transparent read-only:focus:ring-0"/>
                         <span className="text-xs text-slate-400 font-bold">分</span>
+                        <div className="w-px h-4 bg-slate-200"></div>
+                        <span className="text-xs font-black text-slate-500 tracking-tight whitespace-nowrap" title="住所の位置（緯度・経度）が分かっている区間は、距離÷時速 の時間を上の移動時間に足します">時速:</span>
+                        <input type="number" min="5" max="60" value={travelSpeedKmh} onChange={e => handleSetTravelSpeed(Math.min(60, Math.max(5, parseInt(e.target.value) || DEFAULT_TRAVEL_SPEED_KMH)))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 read-only:focus:ring-0"/>
+                        <span className="text-xs text-slate-400 font-bold">km</span>
                       </div>
                     </div>
                     <div ref={scrollRefOverview} className="flex gap-2 w-full md:w-auto overflow-x-auto hide-scrollbar pc-scrollable pb-2 md:pb-3 cursor-grab active:cursor-grabbing" onWheel={handleHorizontalScroll}>
@@ -3048,14 +3463,28 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                           </button>
                           {showVisitSettings && (
                             <div className="mt-4 pt-4 border-t border-slate-100 animate-[fadeIn_0.2s_ease-out]">
-                              <input type="text" value={sheetUrl} onChange={handleSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
+                              <input type={isAdminUser ? "text" : "password"} value={isAdminUser ? sheetUrl : (sheetUrl ? "********" : "")} onChange={handleSheetUrlChange} readOnly={!isAdminUser} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
                               <div className="mt-4 pt-4 border-t border-slate-100">
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等)</p>
+                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等), <br/>緯度(任意), 経度(任意)</p>
                               </div>
                             </div>
                           )}
                        </div>
+                       {geoStatus && (
+                         <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm text-sm">
+                           <p className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 mb-3"><Navigation size={16}/> 位置情報（移動時間の精度）</p>
+                           <p className="text-[11px] font-bold text-slate-500 leading-relaxed">
+                             位置が分かっている住所: <span className="text-teal-600 font-black">{geoStatus.known}件</span> ／ 未取得: <span className={`font-black ${geoStatus.missing.length > 0 ? 'text-amber-600' : 'text-slate-500'}`}>{geoStatus.missing.length}件</span>
+                           </p>
+                           <p className="text-[10px] font-bold text-slate-400 leading-relaxed mt-1">位置が分かる区間は実際の距離から、分からない区間は町名が同じかどうかで移動時間を見積もります。</p>
+                           {isAdminUser && geoStatus.missing.length > 0 && (
+                             <button onClick={handleGeocode} disabled={!!geoProgress} className="mt-3 w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-xl font-black text-xs shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                               <MapPin size={14}/>{geoProgress ? `取得中… ${geoProgress.done}/${geoProgress.total}` : "住所から位置を取得する"}
+                             </button>
+                           )}
+                         </div>
+                       )}
                     </div>
                     <div className="xl:col-span-3">
                       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
@@ -3131,7 +3560,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 <div className="max-w-7xl mx-auto space-y-8 text-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter leading-tight">看護師の管理</h1>
-                    {isAdmin && (
+                    {isAdminUser && (
                       <button onClick={handleFetchNurseSheet} disabled={isLoadingNurseSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-50 text-sm">
                         {isLoadingNurseSheet ? <RefreshCw className="animate-spin" size={18}/> : <RefreshCw size={18}/>}更新
                       </button>
@@ -3146,10 +3575,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                          </button>
                          {showNurseSettings && (
                            <div className="mt-4 pt-4 border-t border-slate-100 animate-[fadeIn_0.2s_ease-out]">
-                             <input type="text" value={nurseSheetUrl} onChange={handleNurseSheetUrlChange} readOnly={!isAdmin} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
+                             <input type={isAdminUser ? "text" : "password"} value={isAdminUser ? nurseSheetUrl : (nurseSheetUrl ? "********" : "")} onChange={handleNurseSheetUrlChange} readOnly={!isAdminUser} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-400" placeholder="URLを入力"/>
                              <div className="mt-4 pt-4 border-t border-slate-100">
                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                               <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地</p>
+                               <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 勤務開始時間, 勤務終了時間, 休み曜日, <br/>優先度, 性別, 特定休日, 出発地, <br/>緯度(任意), 経度(任意)</p>
                              </div>
                            </div>
                          )}
@@ -3237,10 +3666,33 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             <p className="text-[11px] font-bold text-amber-600 mt-1 leading-relaxed">※ 担当者が現在の名簿に見つからない予定が {storageInfo.unknownNurse.toLocaleString()}件あります（過去の名簿更新で担当者との紐づけが外れたもの。「未割り当て」として表示されます）</p>
                           )}
                         </div>
-                        {isAdmin && (
-                          <button onClick={handleDownloadBackup} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0" title="全データをファイルとして端末に保存します">
-                            <Download size={16} />
-                            バックアップを保存
+                        {isAdminUser && (
+                          <div className="flex flex-col gap-2 shrink-0">
+                            <button onClick={() => handleDownloadBackup()} disabled={archiveBusy} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50" title="全データ（保管庫を含む）をファイルとして端末に保存します">
+                              <Download size={16} />
+                              バックアップを保存
+                            </button>
+                            <button onClick={() => restoreInputRef.current?.click()} disabled={archiveBusy} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50" title="バックアップファイルの状態に戻します">
+                              <Upload size={16} />
+                              バックアップから復元
+                            </button>
+                            <input ref={restoreInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleRestoreFileChosen} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <p className="text-[11px] font-bold text-slate-500 leading-relaxed">
+                          <Archive size={12} className="inline mr-1 -mt-0.5 text-slate-400" />
+                          保管庫: {archivedMonths.length > 0 ? `${archivedMonths[0].replace('-', '/')} 〜 ${archivedMonths[archivedMonths.length - 1].replace('-', '/')} の ${archivedMonths.length}か月分` : 'まだありません'}
+                          {storageInfo.archivable > 0
+                            ? <> ／ {storageInfo.cutoffMonth.replace('-', '/')} より前の {storageInfo.archivable.toLocaleString()}件を保管庫へ移せます</>
+                            : <> ／ 直近{ARCHIVE_KEEP_MONTHS}か月より前のデータはありません</>}
+                          <br/><span className="text-slate-400">保管庫へ移した月は上限（約1MB）の対象から外れます。その日付を開けば閲覧でき、必要なら編集できる状態に戻せます。</span>
+                        </p>
+                        {isAdminUser && storageInfo.archivable > 0 && (
+                          <button onClick={handleArchiveOldData} disabled={archiveBusy} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50">
+                            <Archive size={16} />
+                            {archiveBusy ? "処理中…" : "古いデータを保管庫へ移す"}
                           </button>
                         )}
                       </div>
@@ -3621,8 +4073,65 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             </div>
           )}
 
+          {showLogin && (
+            <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-xl md:text-2xl font-black text-slate-800 flex items-center gap-2"><Lock size={22} className="text-teal-600"/>{REQUIRE_LOGIN_TO_VIEW && !user ? "ログイン" : "管理者ログイン"}</h3>
+                  {!(REQUIRE_LOGIN_TO_VIEW && !user) && (
+                    <button onClick={() => setShowLogin(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full" aria-label="閉じる"><X size={20} /></button>
+                  )}
+                </div>
+                <p className="text-xs font-bold text-slate-500 mb-5 leading-relaxed">{REQUIRE_LOGIN_TO_VIEW && !user ? "スケジュールを見るにはログインが必要です。" : "予定の編集にはログインが必要です。閉じると閲覧モードで開きます。"}</p>
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">メールアドレス</label>
+                    <input required type="email" name="email" autoComplete="username" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">パスワード</label>
+                    <input required type="password" name="password" autoComplete="current-password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                  </div>
+                  {loginError && <p className="text-xs font-black text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2 leading-relaxed">{loginError}</p>}
+                  <button type="submit" disabled={loginBusy} className="w-full py-4 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30 disabled:opacity-50">
+                    {loginBusy ? "確認中…" : "ログイン"}
+                  </button>
+                  {loginNotConfigured && wantsAdmin && !REQUIRE_LOGIN_TO_VIEW && (
+                    <button type="button" onClick={() => { setLegacyAdmin(true); setShowLogin(false); }} className="w-full py-3 rounded-2xl font-black text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors">
+                      設定が終わるまで、従来の方式で管理者として開く
+                    </button>
+                  )}
+                </form>
+              </div>
+            </div>
+          )}
+
+          {restoreCandidate && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl">
+                <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-5 mx-auto">
+                  <AlertTriangle size={32} />
+                </div>
+                <h3 className="text-xl md:text-2xl font-black text-slate-800 text-center mb-3">バックアップから復元</h3>
+                <div className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 mb-3 leading-relaxed">
+                  <div className="truncate">ファイル: {restoreCandidate.fileName}</div>
+                  <div>保存日時: {restoreCandidate.data.exportedAt ? new Date(restoreCandidate.data.exportedAt).toLocaleString('ja-JP') : '不明'}</div>
+                  <div>予定: {restoreCandidate.data.visits.length.toLocaleString()}件{restoreCandidate.archivedCount > 0 ? ` ＋ 保管庫 ${restoreCandidate.archivedCount.toLocaleString()}件` : ''} ／ 看護師: {restoreCandidate.data.nurses.length}名</div>
+                </div>
+                <p className="text-xs font-bold text-slate-500 text-center mb-6 leading-relaxed">
+                  いまのデータを、このファイルの内容で<span className="text-red-500 font-black">すべて置き換えます</span>。<br/>
+                  実行前に、いまの状態を自動でファイルに保存します。
+                </p>
+                <div className="flex gap-3">
+                  <button onClick={() => setRestoreCandidate(null)} disabled={archiveBusy} className="flex-1 py-4 rounded-2xl font-black text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50">キャンセル</button>
+                  <button onClick={executeRestore} disabled={archiveBusy} className="flex-1 py-4 rounded-2xl font-black text-white bg-amber-500 hover:bg-amber-600 transition-colors shadow-lg shadow-amber-500/30 disabled:opacity-50">{archiveBusy ? "復元中…" : "復元する"}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {showToast && (
-            <div onClick={() => setShowToast(false)} className="fixed bottom-20 right-3 left-3 md:left-auto md:bottom-10 md:right-10 glass-effect text-slate-900 px-4 py-3 md:px-8 md:py-5 rounded-[1.25rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 z-[100] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]">
+            <div onClick={() => setShowToast(false)} className="fixed bottom-20 right-3 left-3 md:left-auto md:bottom-10 md:right-10 glass-effect text-slate-900 px-4 py-3 md:px-8 md:py-5 rounded-[1.25rem] md:rounded-[2rem] shadow-2xl flex items-center gap-3 md:gap-4 z-[500] border border-white shadow-teal-500/20 cursor-pointer max-w-[90vw]">
               <div className="bg-emerald-500 p-1.5 md:p-2 rounded-lg md:rounded-xl text-white shadow-lg shadow-emerald-200 shrink-0">
                 <CheckCircle2 size={20} className="md:w-6 md:h-6" />
               </div>
