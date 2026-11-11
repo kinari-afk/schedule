@@ -7,13 +7,15 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
 let vid=100;
 const visit=(userName,startTime,duration=30,o={})=>({id:vid++,userName,date:D,startTime,originalStartTime:startTime,duration,nurseId:null,location:{x:50,y:50},preferredNurseNames:[],excludedNurseNames:[],...o});
-const run=(visits,nurses,o={})=>{ const pointOf=H.makePointOf(o.geo||{}); return H.planAutoAssign({visits,nurses,date:D,offTypeOf:o.off||(()=>'work'),pointOf,travelBetween:(a,b)=>H.travelMinutes(a,b,7,20),history:o.history||null}); };
+const NOLUNCH={...H.DEFAULT_SETTINGS,lunch:{...H.DEFAULT_SETTINGS.lunch,enabled:false}};
+const ctx=(visits,nurses,o={})=>({visits,nurses,date:D,offTypeOf:o.off||(()=>'work'),pointOf:H.makePointOf(o.geo||{}),travelBetween:(a,b)=>H.travelMinutes(a,b,7,20),history:o.history||null,settings:o.settings||NOLUNCH});
+const run=(visits,nurses,o={})=>H.planAutoAssign(ctx(visits,nurses,o));
 const overlaps=(vs,nurses)=>{ for(const n of nurses){ const m=vs.filter(v=>v.nurseId===n.id).sort((a,b)=>a.startTime.localeCompare(b.startTime)); for(let i=1;i<m.length;i++){ const pe=H.constructor, a=m[i-1], b=m[i]; const pa=(t)=>+t.slice(0,2)*60+ +t.slice(3); if(pa(a.startTime)+a.duration>pa(b.startTime)) return true; } } return false; };
 
 // 1. 後ろに固定予定(16:00会議)があっても、その前の空き時間に入れられる
@@ -224,5 +226,86 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   next=H.syncAccompanyVisits(prev, prev.map(v=>v.id===p.id?{...v,date:'2026-11-12'}:v));
   assert.equal(next.find(v=>v.id===a.id).date,'2026-11-12');
   console.log('AC OK: 同行訪問の連動（時刻・所要時間・日付・削除・手動ずらし・旧データ）');
+}
+// ---- 設定・勤務時間・昼休憩 ----
+{
+  const S=H.normalizeSettings({amOffStart:'13:00',lunch:{minutes:'45',from:'bad'}});
+  assert.equal(S.amOffStart,'13:00'); assert.equal(S.pmOffEnd,'12:30'); assert.equal(S.lunch.minutes,45); assert.equal(S.lunch.from,'11:30'); assert.equal(S.lunch.enabled,true);
+  assert.deepEqual(H.normalizeSettings(null),H.DEFAULT_SETTINGS);
+  const n=nurse(1,'A',{startTime:'09:00',endTime:'16:00'});
+  assert.deepEqual(H.workWindow(n,'work',S),{startMin:540,endMin:960});
+  assert.deepEqual(H.workWindow(n,'AM',S),{startMin:780,endMin:960});     // 午前休：設定した時刻から、本人の終業まで
+  assert.deepEqual(H.workWindow(n,'PM',S),{startMin:540,endMin:750});     // 午後休：本人の始業から、設定した時刻まで
+  const L={from:'11:30',to:'13:30',minutes:60};
+  assert.equal(H.hasLunchGap([],510,1050,L),true);
+  assert.equal(H.hasLunchGap([{start:690,end:750},{start:780,end:810}],510,1050,L),false);  // 11:30-12:30, 13:00-13:30 → 空きは30分だけ
+  assert.equal(H.hasLunchGap([{start:660,end:720}],510,1050,L),true);                       // 12:00以降が空き
+  assert.equal(H.hasLunchGap([{start:700,end:800}],810,1050,L),true);                       // 午前休などで昼に勤務していない → 対象外
+  console.log('ST OK: 設定の読み込み・半休の勤務時間・昼休憩の判定');
+}
+// 昼休憩：取れる人を優先し、全員取れなくなる場合でも未割り当てにはしない
+{
+  const LUNCH=H.DEFAULT_SETTINGS;
+  const nurses=[nurse(1,'A'),nurse(2,'B')];
+  // Aは11:00-12:00に予定あり。12:30-13:00の訪問をAに入れると、昼の空きが30分ずつに分かれてしまう → Bへ
+  const vs=[visit('先約 様','11:00',60,{nurseId:1}), visit('午後1 様','14:00',60,{nurseId:2}), visit('午後2 様','15:00',60,{nurseId:2}), visit('昼 様','12:30',30)];
+  let r=run(vs,nurses,{settings:LUNCH}); assert.equal(r.visits.at(-1).nurseId,2,'昼休憩を守れる人が選ばれない'); assert.equal(r.noLunchCount,0);
+  // 昼休憩を考慮しなければ、負担の軽いAへ
+  r=run(vs,nurses); assert.equal(r.visits.at(-1).nurseId,1);
+  // 看護師がAだけなら、休憩を削ってでも割り当て、その旨を記録する
+  const vs1=[vs[0],visit('昼 様','12:30',30)];
+  r=run(vs1,[nurse(1,'A')],{settings:LUNCH});
+  assert.equal(r.visits.at(-1).nurseId,1); assert.equal(r.noLunchCount,1); assert.match(r.reasons[vs1[1].id],/昼休憩/);
+  console.log('LU OK: 昼休憩を守れる人を優先（守れない場合は割り当てて注意を記録）');
+}
+// 半休の時刻を設定から読む
+{
+  const S={...NOLUNCH,amOffStart:'13:00',pmOffEnd:'12:00'};
+  const nurses=[nurse(1,'午前休'),nurse(2,'午後休')];
+  const vs=[visit('a 様','13:00'),visit('b 様','12:00')];
+  const r=run(vs,nurses,{settings:S,off:n=>n.id===1?'AM':'PM'});
+  assert.equal(r.visits[0].nurseId,1); assert.equal(r.visits[1].nurseId,null);     // 12:00はどちらも不可
+  assert.match(H.assignProblem(vs[1],nurses[1],'PM',720,S),/12:00退勤/);
+  assert.equal(H.assignProblem(vs[0],nurses[0],'AM',780,S),null);
+  console.log('HD OK: 半休の時刻を設定で変更');
+}
+// ---- 割り当ての理由 ----
+{
+  const nurses=[nurse(1,'山田'),nurse(2,'佐藤',{isFemale:false}),nurse(3,'休み'),nurse(4,'遅番',{startTime:'13:00'})];
+  const off=n=>n.id===3?'full':'work';
+  const busy=visit('先約 様','10:00',60,{nurseId:1});
+  const target=visit('対象 様','10:30',30,{requiresFemaleNurse:true});
+  const rows=H.explainVisit(ctx([busy,target],nurses,{off}),target);
+  assert.deepEqual(rows.map(r=>r.ok?'ok':r.code),['overlap','female','off','before']);
+  assert.match(rows[0].label,/先約 様/);
+  assert.equal(H.summarizeRejections(rows),'別の予定と時間が重なる 1名 ／ 出勤前の時間 1名 ／ お休み 1名 ／ 女性限定のため対象外 1名');
+  const r=run([busy,target],nurses,{off});
+  assert.equal(r.failed.length,1); assert.match(r.reasons[target.id],/入れる担当者がいません/); assert.match(r.reasons[target.id],/時間が重なる 1名/);
+  // 割り当てられた側の理由
+  const pref=visit('指名 様','14:00',30,{preferredNurseNames:['佐藤']});
+  const only=visit('一人だけ 様','10:15',30);
+  const r2=run([busy,pref,only],[nurses[0],nurses[1]]);
+  assert.match(r2.reasons[pref.id],/優先担当者/); assert.match(r2.reasons[only.id],/1名だけ/);
+  const past=['2026-11-04','2026-10-28','2026-10-21'].map(d=>visit('常連 様','10:00',30,{date:d,nurseId:2}));
+  const cur=visit('常連 様','10:00');
+  const all=[...past,cur];
+  const r3=run(all,[nurses[0],nurses[1]],{history:H.buildAssignHistory(all,new Set([1,2]),D)});
+  assert.match(r3.reasons[cur.id],/過去の担当実績（この利用者の訪問の約100%を担当）/);
+  // 入れられる人には段階の説明が付く
+  const rows2=H.explainVisit(ctx([busy,only],[nurses[1]]),only); assert.equal(rows2[0].ok,true);
+  console.log('EX OK: 割り当ての理由・未割り当ての理由');
+}
+// ---- 負担の集計 ----
+{
+  const sch={isOff:false, workStartTimeStr:'08:30', workEndTimeMin:1050, finalTravelTime:9, returnTime:'17:45', noLunch:true,
+    visits:[{duration:60,travelTime:8},{duration:30,travelTime:7},{type:'other',duration:45,travelTime:9}]};
+  const w=H.computeWorkload(sch);
+  assert.deepEqual([w.visitCount,w.visitMin,w.otherMin,w.travelMin,w.totalMin,w.spanMin,w.overtimeMin,w.noLunch],[2,90,45,33,168,540,15,true]);
+  assert.equal(Math.round(w.ratio*100),31);
+  assert.equal(H.computeWorkload({isOff:true}),null);
+  const empty=H.computeWorkload({isOff:false,workStartTimeStr:'08:30',workEndTimeMin:1050,finalTravelTime:0,returnTime:'08:30',visits:[]});
+  assert.deepEqual([empty.totalMin,empty.travelMin,empty.overtimeMin],[0,0,0]);
+  assert.equal(H.formatHM(168),'2:48'); assert.equal(H.formatHM(5),'0:05');
+  console.log('WL OK: 負担の集計（訪問・会議・移動・時間外・割合）');
 }
 console.log('ALL PASS');

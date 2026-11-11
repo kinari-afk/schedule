@@ -426,6 +426,82 @@ const errs=[];
   errs.push(...r.errors); await r.browser.close();
 }
 
+// ===== H. 週まとめて編成・設定・理由の表示 =====
+{
+  const { seed } = mk();
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  // --- 設定：半休の時刻と昼休憩を変更して保存
+  await page.locator('button', { hasText:'編成の設定' }).click(); await page.waitForTimeout(300);
+  await page.screenshot({ path: shot('settings.png') });
+  await page.locator('input[name=amOffStart]').fill('13:00');
+  await page.locator('input[name=lunchMinutes]').fill('45');
+  await page.locator('form button[type=submit]', { hasText:'保存する' }).click();
+  await page.waitForSelector('text=編成の設定を保存しました');
+  let st = JSON.parse((await r.store()).settings);
+  assert.equal(st.amOffStart,'13:00'); assert.equal(st.lunch.minutes,45); assert.equal(st.lunch.enabled,true); assert.equal(st.pmOffEnd,'12:30');
+  // --- 未割り当ての理由（編成前）：メニューに「入れられる担当者」が出る
+  await page.locator('.visit-card:visible', { hasText:'宇野' }).first().click({ button:'right', position:{x:7,y:10} }); await page.waitForTimeout(300);
+  assert(await page.locator('div.fixed', { hasText:'入れられる担当者' }).count()>0,'未割り当ての理由が出ない');
+  await page.screenshot({ path: shot('reason-unassigned.png') });
+  await page.mouse.click(5,5); await page.waitForTimeout(200);
+  // --- 週まとめて編成：今日(水)以降の3日分。月・火（過去）は触らない
+  const before = parse((await r.store()).visits);
+  const label = await page.locator('button', { hasText:'週まとめて編成' }).innerText();
+  assert(label.includes('3日'),'対象日数: '+label);
+  await page.locator('button', { hasText:'週まとめて編成' }).click();
+  await page.waitForSelector('text=日分の自動編成完了');
+  const toast = await page.locator('text=日分の自動編成完了').innerText();
+  const after = parse((await r.store()).visits);
+  const un = (vs,d)=>vs.filter(v=>v.date===d && v.nurseId==null).length;
+  for (const d of ['2026-11-11','2026-11-12','2026-11-13']) assert.equal(un(after,d),0,d+' に未割り当てが残った');
+  for (const d of ['2026-11-09','2026-11-10']) assert.equal(un(after,d),un(before,d),d+'（過去の日）が変更された');
+  const ns = JSON.parse((await r.store()).nurses);
+  for (const d of ['2026-11-11','2026-11-12','2026-11-13']) for (const n of ns) { const m=after.filter(v=>v.date===d&&v.nurseId===n.id).sort((a,b)=>a.startTime.localeCompare(b.startTime)); for(let i=1;i<m.length;i++){ const tt=x=>+x.slice(0,2)*60+ +x.slice(3); assert(tt(m[i-1].startTime)+m[i-1].duration<=tt(m[i].startTime),'重複 '+d+' '+n.name); } }
+  // 同じ利用者は、週の中でなるべく同じ担当者に（前の日の結果を実績として使う）
+  console.log('H1 OK: 週まとめて編成', toast);
+  // --- 割り当ての理由（編成後）：メニューに「自動編成の理由」が出る
+  await page.locator('.visit-card:visible').first().click({ button:'right' }); await page.waitForTimeout(300);
+  assert(await page.locator('div.fixed', { hasText:'自動編成の理由' }).count()>0,'割り当ての理由が出ない');
+  await page.screenshot({ path: shot('reason-assigned.png') });
+  await page.mouse.click(5,5); await page.waitForTimeout(200);
+  // --- 元に戻す：週まとめて編成を1回で取り消せる
+  await page.locator('button', { hasText:'元に戻す' }).first().click(); await page.waitForTimeout(500);
+  assert.equal(un(parse((await r.store()).visits),'2026-11-12'),un(before,'2026-11-12'));
+  console.log('H2 OK: 設定の保存・理由の表示・週まとめて編成の取り消し');
+  // --- 負担の一覧
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  await page.locator('button', { hasText:'負担の一覧' }).click(); await page.waitForTimeout(400);
+  const wl = await page.locator('div:has(> div > p:has-text("負担の一覧"))').first().innerText();
+  assert(wl.includes('青木 さくら') && wl.includes('訪問') && wl.includes('移動') && wl.includes('今週') && wl.includes('お休み') && /平均 \d+%/.test(wl), '負担の一覧の内容: '+wl.slice(0,200));
+  await page.screenshot({ path: shot('workload.png') });
+  await page.reload(); await page.waitForSelector('#root > div'); await page.waitForTimeout(600);   // 開いた状態を覚えている（再読み込みで偽DBは初期化される）
+  assert(await page.locator('p:has-text("負担の一覧")').count()>0,'開いた状態が記憶されていない');
+  await page.locator('button', { hasText:'負担の一覧' }).click(); await page.waitForTimeout(200);
+  assert.equal(await page.locator('p:has-text("負担の一覧")').count(),0);
+  console.log('H3 OK: 負担の一覧（表示・記憶・閉じる）');
+  errs.push(...r.errors); await r.browser.close();
+}
+// ===== I. スマホ：未割り当ての一覧から割り当て =====
+{
+  const { seed } = mk();
+  const r = await launch({ viewport:{width:390,height:780}, seed, admin:true, isMobile:true, scale:2, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(500);
+  await page.locator('button[title="未割り当ての一覧を開く"]').tap(); await page.waitForTimeout(300);
+  await page.waitForSelector('div.fixed h3:has-text("未割り当て 12件")');
+  await page.screenshot({ path: shot('m-unassigned-list.png') });
+  await page.locator('div.fixed button', { hasText:'須藤' }).first().tap(); await page.waitForTimeout(300);
+  await page.locator('form button', { hasText:'井上 健' }).tap();
+  await page.locator('form button[type=submit]').tap(); await page.waitForTimeout(500);
+  const vs = parse((await r.store()).visits);
+  assert.equal(vs.find(v=>v.userName.startsWith('須藤') && v.date==='2026-11-11').nurseId,1001);
+  await page.waitForSelector('div.fixed h3:has-text("未割り当て 11件")');     // 一覧は開いたまま、続けて次を割り当てられる
+  console.log('I OK: スマホで未割り当ての一覧から続けて割り当て');
+  errs.push(...r.errors); await r.browser.close();
+}
+
 const real = errs.filter(e=>!e.includes('cdn.tailwindcss.com should not be used')&&!e.includes('in-browser Babel')&&!e.includes('形式が違います')&&!e.includes('CSVではなくWebページ'));
 if (real.length) { console.error('画面でエラーが発生:', real); process.exit(1); }
 console.log('ALL PASS');
