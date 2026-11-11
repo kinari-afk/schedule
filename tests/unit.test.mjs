@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -294,5 +294,18 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   // 入れられる人には段階の説明が付く
   const rows2=H.explainVisit(ctx([busy,only],[nurses[1]]),only); assert.equal(rows2[0].ok,true);
   console.log('EX OK: 割り当ての理由・未割り当ての理由');
+}
+// ---- 負担の集計 ----
+{
+  const sch={isOff:false, workStartTimeStr:'08:30', workEndTimeMin:1050, finalTravelTime:9, returnTime:'17:45', noLunch:true,
+    visits:[{duration:60,travelTime:8},{duration:30,travelTime:7},{type:'other',duration:45,travelTime:9}]};
+  const w=H.computeWorkload(sch);
+  assert.deepEqual([w.visitCount,w.visitMin,w.otherMin,w.travelMin,w.totalMin,w.spanMin,w.overtimeMin,w.noLunch],[2,90,45,33,168,540,15,true]);
+  assert.equal(Math.round(w.ratio*100),31);
+  assert.equal(H.computeWorkload({isOff:true}),null);
+  const empty=H.computeWorkload({isOff:false,workStartTimeStr:'08:30',workEndTimeMin:1050,finalTravelTime:0,returnTime:'08:30',visits:[]});
+  assert.deepEqual([empty.totalMin,empty.travelMin,empty.overtimeMin],[0,0,0]);
+  assert.equal(H.formatHM(168),'2:48'); assert.equal(H.formatHM(5),'0:05');
+  console.log('WL OK: 負担の集計（訪問・会議・移動・時間外・割合）');
 }
 console.log('ALL PASS');

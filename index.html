@@ -328,6 +328,25 @@
       return to - cursor >= lunch.minutes;
     };
 
+    // --- 負担の集計 ---
+    // 1人・1日分のスケジュール（移動時間を計算済みの予定の並び）から、時間の内訳を出す
+    const computeWorkload = (sch) => {
+      if (!sch || sch.isOff) return null;
+      const list = sch.visits || [];
+      let visitCount = 0, visitMin = 0, otherMin = 0, travelMin = 0;
+      list.forEach(v => {
+        if (v.type === 'other') otherMin += v.duration || 0;
+        else { visitCount++; visitMin += v.duration || 0; }
+        travelMin += v.travelTime || 0;
+      });
+      if (list.length > 0) travelMin += sch.finalTravelTime || 0;   // 最後の訪問先から戻る分
+      const spanMin = Math.max(0, (sch.workEndTimeMin ?? 0) - parseTime(sch.workStartTimeStr));
+      const totalMin = visitMin + otherMin + travelMin;
+      const overtimeMin = list.length > 0 ? Math.max(0, parseTime(sch.returnTime) - (sch.workEndTimeMin ?? 0)) : 0;
+      return { visitCount, visitMin, otherMin, travelMin, totalMin, spanMin, ratio: spanMin > 0 ? totalMin / spanMin : 0, overtimeMin, noLunch: !!sch.noLunch };
+    };
+    const formatHM = (min) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+
     // --- 割り当てできない理由 ---
     // この予定をこの看護師に、この開始時刻で割り当てられない場合に、その理由を返す（問題なければ null）
     const assignProblem = (visit, nurse, offType, startMin, settings) => {
@@ -963,6 +982,9 @@
       const [showSettings, setShowSettings] = useState(false);
       const [assignReasons, setAssignReasons] = useState({});      // 予定ID → 自動編成の理由（この画面を開いている間だけ保持）
       const [showUnassignedList, setShowUnassignedList] = useState(false);
+      // 負担の一覧を開いているか（端末ごとに記憶）
+      const [showWorkload, setShowWorkload] = useState(() => localStorage.getItem('careRoute_showWorkload') === 'on');
+      useEffect(() => { localStorage.setItem('careRoute_showWorkload', showWorkload ? 'on' : 'off'); }, [showWorkload]);
       const [restoreCandidate, setRestoreCandidate] = useState(null);
       const restoreInputRef = useRef(null);
       
@@ -1508,6 +1530,23 @@
         return starts.length > 0 ? Math.min(...starts) : null;
       }, [visits, selectedDate]);
       const hasDayVisits = firstVisitMinutes !== null;
+
+      // 担当者ごとの負担（その日の内訳と、表示中の週の合計）
+      const workloadRows = useMemo(() => {
+        if (!showWorkload || activeTab !== 'overview') return null;
+        const weekSet = new Set(displayDates);
+        const week = {};
+        visits.forEach(v => {
+          if (v.type === 'other' || !weekSet.has(v.date) || isVisitUnassigned(v, nurseIdSet)) return;
+          const w = week[v.nurseId] || (week[v.nurseId] = { count: 0, min: 0 });
+          w.count++; w.min += v.duration || 0;
+        });
+        const rows = nurses.map(n => ({ nurse: n, load: computeWorkload(allSchedules[n.id]), week: week[n.id] || { count: 0, min: 0 } }));
+        const working = rows.filter(r => r.load && r.load.spanMin > 0);
+        const avgRatio = working.length > 0 ? working.reduce((sum, r) => sum + r.load.ratio, 0) / working.length : 0;
+        const maxScale = Math.max(1, ...working.map(r => Math.max(r.load.spanMin, r.load.totalMin)));
+        return { rows, avgRatio, maxScale, workingCount: working.length };
+      }, [showWorkload, activeTab, nurses, allSchedules, visits, displayDates, nurseIdSet]);
 
       useEffect(() => {
         if (activeTab !== 'overview') return;
@@ -3106,6 +3145,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                         <input type="number" min="5" max="60" value={travelSpeedKmh} onChange={e => handleSetTravelSpeed(Math.min(60, Math.max(5, parseInt(e.target.value) || DEFAULT_TRAVEL_SPEED_KMH)))} readOnly={!isAdmin} className="w-12 text-center bg-slate-50 border-none rounded-lg font-black text-lg text-slate-800 outline-none focus:ring-2 focus:ring-teal-500/20 read-only:focus:ring-0"/>
                         <span className="text-xs text-slate-400 font-bold">km</span>
                       </div>
+                      <button onClick={() => setShowWorkload(v => !v)} className={`flex border px-3 md:px-4 py-1.5 md:py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap ${showWorkload ? 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`} title="担当者ごとの訪問時間・移動時間・件数を並べて表示します">
+                        <BarChart3 size={16} />
+                        負担の一覧
+                      </button>
                       <button onClick={() => window.print()} className="hidden md:flex bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap" title="この日の担当表を印刷、またはPDFとして保存します">
                         <Printer size={16} />
                         印刷 / PDF
@@ -3215,6 +3258,67 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   </div>
 
                   {renderDailyMemo()}
+
+                  {workloadRows && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 md:p-5 shrink-0 max-h-[45vh] overflow-y-auto">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <p className="text-xs font-black text-slate-500 flex items-center gap-1.5"><BarChart3 size={14}/>負担の一覧　{formatDateLabel(selectedDate)}</p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-bold text-slate-500">
+                          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-teal-500"></span>訪問</span>
+                          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-indigo-400"></span>会議など</span>
+                          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-slate-300"></span>移動</span>
+                          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm border border-dashed border-slate-400"></span>勤務時間</span>
+                          {workloadRows.workingCount > 0 && <span className="text-slate-400">平均 {Math.round(workloadRows.avgRatio * 100)}%</span>}
+                          <button onClick={() => setShowWorkload(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-1 rounded-full" aria-label="閉じる"><X size={12} /></button>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {workloadRows.rows.map(({ nurse, load, week }) => {
+                          if (!load) {
+                            return (
+                              <div key={nurse.id} className="flex items-center gap-2 md:gap-3 text-xs opacity-60">
+                                <span className="w-20 md:w-28 shrink-0 font-black text-slate-500 truncate flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-slate-300 shrink-0"></span>{nurse.name}</span>
+                                <span className="text-[11px] font-bold text-slate-400">お休み</span>
+                                <span className="ml-auto text-[10px] font-bold text-slate-400 whitespace-nowrap">今週 {week.count}件</span>
+                              </div>
+                            );
+                          }
+                          const pct = (min) => `${(min / workloadRows.maxScale) * 100}%`;
+                          const diff = load.ratio - workloadRows.avgRatio;
+                          const tag = workloadRows.workingCount < 2 ? null : diff > 0.15 ? { text: '多め', cls: 'text-rose-600 bg-rose-50 border-rose-200' } : diff < -0.15 ? { text: '少なめ', cls: 'text-sky-600 bg-sky-50 border-sky-200' } : null;
+                          return (
+                            <div key={nurse.id} className="flex items-center gap-2 md:gap-3 text-xs">
+                              <span className="w-20 md:w-28 shrink-0 font-black text-slate-700 truncate flex items-center gap-1.5" title={nurse.name}><span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: nurse.color }}></span>{nurse.name}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="relative h-4 bg-slate-50 rounded">
+                                  <div className="absolute inset-y-0 left-0 border border-dashed border-slate-300 rounded" style={{ width: pct(load.spanMin) }}></div>
+                                  <div className="absolute inset-y-0.5 left-0 flex rounded overflow-hidden" style={{ width: pct(load.totalMin) }}>
+                                    <div className="bg-teal-500" style={{ flexGrow: load.visitMin }}></div>
+                                    <div className="bg-indigo-400" style={{ flexGrow: load.otherMin }}></div>
+                                    <div className="bg-slate-300" style={{ flexGrow: load.travelMin }}></div>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-2 text-[10px] font-bold text-slate-500 mt-0.5">
+                                  <span>{load.visitCount}件</span>
+                                  <span>訪問 {formatHM(load.visitMin)}</span>
+                                  {load.otherMin > 0 && <span>会議など {formatHM(load.otherMin)}</span>}
+                                  <span>移動 {formatHM(load.travelMin)}</span>
+                                  {load.overtimeMin > 0 && <span className="text-red-500 font-black">時間外 {load.overtimeMin}分</span>}
+                                  {load.noLunch && <span className="text-rose-500 font-black">休憩なし</span>}
+                                </div>
+                              </div>
+                              <div className="w-14 md:w-16 shrink-0 text-right">
+                                <div className={`text-sm font-black leading-none ${load.ratio > 1 ? 'text-red-500' : 'text-slate-800'}`}>{Math.round(load.ratio * 100)}<span className="text-[10px] text-slate-400">%</span></div>
+                                {tag && <span className={`inline-block mt-0.5 text-[9px] font-black px-1 rounded border ${tag.cls}`}>{tag.text}</span>}
+                              </div>
+                              <span className="hidden md:block w-24 shrink-0 text-right text-[10px] font-bold text-slate-400 whitespace-nowrap">今週 {week.count}件・{formatHM(week.min)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-400 mt-3 leading-relaxed">％は「訪問＋会議など＋移動」が勤務時間に占める割合です。平均より15ポイント以上離れると「多め」「少なめ」と表示します。</p>
+                    </div>
+                  )}
 
                   <div className="flex-1 bg-white rounded-2xl md:rounded-[2rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col">
                     <div ref={timelineScrollRef} className="overflow-auto relative flex-1 timeline-shadow">

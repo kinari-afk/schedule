@@ -470,6 +470,17 @@ const errs=[];
   await page.locator('button', { hasText:'元に戻す' }).first().click(); await page.waitForTimeout(500);
   assert.equal(un(parse((await r.store()).visits),'2026-11-12'),un(before,'2026-11-12'));
   console.log('H2 OK: 設定の保存・理由の表示・週まとめて編成の取り消し');
+  // --- 負担の一覧
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  await page.locator('button', { hasText:'負担の一覧' }).click(); await page.waitForTimeout(400);
+  const wl = await page.locator('div:has(> div > p:has-text("負担の一覧"))').first().innerText();
+  assert(wl.includes('青木 さくら') && wl.includes('訪問') && wl.includes('移動') && wl.includes('今週') && wl.includes('お休み') && /平均 \d+%/.test(wl), '負担の一覧の内容: '+wl.slice(0,200));
+  await page.screenshot({ path: shot('workload.png') });
+  await page.reload(); await page.waitForSelector('#root > div'); await page.waitForTimeout(600);   // 開いた状態を覚えている（再読み込みで偽DBは初期化される）
+  assert(await page.locator('p:has-text("負担の一覧")').count()>0,'開いた状態が記憶されていない');
+  await page.locator('button', { hasText:'負担の一覧' }).click(); await page.waitForTimeout(200);
+  assert.equal(await page.locator('p:has-text("負担の一覧")').count(),0);
+  console.log('H3 OK: 負担の一覧（表示・記憶・閉じる）');
   errs.push(...r.errors); await r.browser.close();
 }
 // ===== I. スマホ：未割り当ての一覧から割り当て =====
