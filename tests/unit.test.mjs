@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -415,5 +415,35 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.equal(r.visits.at(-1).nurseId,2,'最優先では実績の多いBになるはず');
   assert.equal(H.normalizeSettings({historyWeight:'strong'}).historyWeight,'strong'); assert.equal(H.normalizeSettings({historyWeight:'x'}).historyWeight,'normal');
   console.log('HW OK: 実績の重み（標準／最優先）');
+}
+// ---- 転記用テキスト ----
+{
+  const nurses=[nurse(1,'畑中勇二'),nurse(2,'小田望'),nurse(3,'若松 佳織'),nurse(4,'南詩織'),nurse(5,'伊作眸')];
+  assert.equal(H.defaultShortName('若松 佳織'),'若松'); assert.equal(H.defaultShortName('畑中勇二'),'畑中'); assert.equal(H.defaultShortName('南詩織'),'南詩');
+  assert.equal(H.formatShortTime('09:00'),'9:00'); assert.equal(H.formatShortTime('10:50'),'10:50');
+  const p=visit('須納瀬 保 様','09:00',50,{nurseId:3});
+  const vs=[
+    visit('芹ヶ野 ナチ 様','10:00',50,{nurseId:2}),
+    visit('丸田 民江 様','09:00',30,{nurseId:1}),
+    p, {...visit('須納瀬 保 様','09:00',50,{nurseId:5}), isAccompany:true, accompanyOf:p.id},     // 同行 → 1行にまとめる
+    visit('隈元 みどり 様','10:50',50,{nurseId:4}),
+    visit('佐伯 直圀 様','14:00',30,{nurseId:null}),                                                // 未定
+    {...visit('休み 様','11:00',30,{nurseId:null}), isCancelled:true},                             // キャンセルは出さない
+    visit('芹ヶ野久（カンファ）','14:30',30,{nurseId:1,type:'other'}),
+    ...[1,2,3,4,5].map(id=>visit('ミーティング','17:30',30,{nurseId:id,type:'other'})),            // 全員参加 → 1行
+    visit('別の日 様','09:00',30,{nurseId:1,date:'2026-11-12'}),
+  ];
+  const t=H.buildTransferText({visits:vs,nurses,date:D,shortNames:{4:'南'}});
+  assert.equal(t.am,['9:00 丸田民江（畑中）','9:00 須納瀬保（若松/伊作）','10:00 芹ヶ野ナチ（小田）','10:50 隈元みどり（南）'].join('\n'));
+  assert.equal(t.pm,['14:00 佐伯直圀（未定）','14:30 芹ヶ野久（カンファ）（畑中）','17:30 ミーティング'].join('\n'));
+  assert.equal(t.pending,1);
+  // スプレッドシートの1セルとして貼る形式：全体を " で囲み、中の " は "" にする
+  assert.equal(H.toSheetCell('a\n"b"'),'"a\n""b"""');
+  // 対応が必要な未割り当て：固定とキャンセルは除く
+  const set=new Set([1,2,3,4,5]);
+  assert.equal(H.isPendingVisit(vs[5],set),true); assert.equal(H.isPendingVisit(vs[6],set),false);
+  assert.equal(H.isPendingVisit({...vs[5],isExcludedFromAutoAssign:true},set),false); assert.equal(H.isPendingVisit(vs[0],set),false);
+  assert.deepEqual(H.normalizeSettings({shortNames:{4:' 南 ',5:'',6:3}}).shortNames,{4:'南'});
+  console.log('TR OK: 転記用テキスト（並び・同行のまとめ・未定・全員参加・略称）');
 }
 console.log('ALL PASS');

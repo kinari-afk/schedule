@@ -97,7 +97,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useMemo, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer, HelpCircle, ListChecks, Coffee, Ban, Undo2 } from 'lucide-react';
+    import { Calendar, Users, Map as MapIcon, Clock, MapPin, RefreshCw, Plus, Trash2, ArrowRight, ArrowDown, CheckCircle2, UserPlus, Activity, Upload, AlertTriangle, CalendarDays, Link as LinkIcon, UserCog, Columns, Settings2, ChevronUp, ChevronDown, ArrowUpDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Undo, Lock, Unlock, Briefcase, X, BarChart3, Pencil, MessageSquare, Copy, RotateCcw, MoreVertical, History, Download, Database, Archive, LogIn, LogOut, Navigation, ShieldAlert, WifiOff, Printer, HelpCircle, ListChecks, Coffee, Ban, Undo2, ClipboardCopy, BellRing } from 'lucide-react';
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
@@ -288,6 +288,7 @@
       amOffStart: '13:30',   // 午前休の人が出勤する時刻
       pmOffEnd: '12:30',     // 午後休の人が退勤する時刻
       lunch: { enabled: true, from: '11:30', to: '13:30', minutes: 60 },  // 昼休憩：この時間帯の中に、連続した空き時間を確保する
+      shortNames: {},
       historyWeight: 'normal'   // 過去の担当実績の重み：'normal'＝ほかの条件と合わせて判断 ／ 'strong'＝実績を最優先
     };
     const HISTORY_POINTS = { normal: 30, strong: 1000 };
@@ -300,6 +301,8 @@
         amOffStart: isTime(r.amOffStart) ? r.amOffStart : DEFAULT_SETTINGS.amOffStart,
         pmOffEnd: isTime(r.pmOffEnd) ? r.pmOffEnd : DEFAULT_SETTINGS.pmOffEnd,
         historyWeight: r.historyWeight === 'strong' ? 'strong' : 'normal',
+        // 転記用テキストで使う、看護師の略称（看護師ID → 略称）
+        shortNames: (r.shortNames && typeof r.shortNames === 'object') ? Object.fromEntries(Object.entries(r.shortNames).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim().slice(0, 10)])) : {},
         lunch: {
           enabled: typeof lunch.enabled === 'boolean' ? lunch.enabled : DEFAULT_SETTINGS.lunch.enabled,
           from: isTime(lunch.from) ? lunch.from : DEFAULT_SETTINGS.lunch.from,
@@ -471,6 +474,63 @@
     const isVisitUnassigned = (v, nurseIdSet) => v.nurseId == null || !nurseIdSet.has(v.nurseId);
     // 「これから担当者を決める必要がある予定」か。キャンセルになった予定は含めない
     const needsAssignment = (v, nurseIdSet) => !v.isCancelled && isVisitUnassigned(v, nurseIdSet);
+
+    // 「対応が必要な未割り当て」か：担当者が未定で、キャンセルでもなく、固定（＝意図して残している）でもない予定
+    const isPendingVisit = (v, nurseIdSet) => needsAssignment(v, nurseIdSet) && !v.isExcludedFromAutoAssign;
+
+    // --- 転記用テキスト ---
+    // 看護師の略称の初期値：姓と名の間に空白があれば姓、なければ先頭2文字（画面から直せる）
+    const defaultShortName = (name) => {
+      const parts = String(name || '').trim().split(/[\s　]+/).filter(Boolean);
+      return parts.length > 1 ? parts[0] : String(name || '').trim().slice(0, 2);
+    };
+    const formatShortTime = (timeStr) => { const m = parseTime(timeStr); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+    // 複数行のテキストを、スプレッドシートの「1つのセル」として貼り付けられる形にする
+    const toSheetCell = (text) => `"${String(text ?? '').replace(/"/g, '""')}"`;
+    // その日の予定を「9:00 利用者名（担当）」の形で並べ、午前・午後に分ける。
+    //  ・同行は、元の予定の行に「（主担当/同行者）」としてまとめる
+    //  ・全員参加の会議などは1行にまとめる
+    //  ・キャンセルの予定は出さない。担当者が未定の予定は「（未定）」と書く
+    const buildTransferText = ({ visits, nurses, date, shortNames, splitAt }) => {
+      const nurseOrder = new Map(nurses.map((n, i) => [n.id, i]));
+      const label = (id) => {
+        const n = nurses.find(x => x.id === id);
+        if (!n) return '未定';
+        return ((shortNames || {})[id] || '').trim() || defaultShortName(n.name);
+      };
+      const day = visits.filter(v => v.date === date && !v.isCancelled);
+      const lines = [];
+      const meetings = new Map();
+      day.forEach(v => {
+        if (v.isAccompany && findAccompanyParent(v, day)) return;   // 元の予定の行にまとめる
+        if (v.type === 'other') {
+          const key = `${v.startTime}|${v.userName}`;
+          let m = meetings.get(key);
+          if (!m) { m = { start: parseTime(v.startTime), order: 999, time: v.startTime, name: v.userName, ids: [], other: true }; meetings.set(key, m); lines.push(m); }
+          if (v.nurseId != null && nurseOrder.has(v.nurseId)) { m.ids.push(v.nurseId); m.order = Math.min(m.order, nurseOrder.get(v.nurseId)); }
+          return;
+        }
+        const ids = [v.nurseId];
+        day.forEach(a => { if (a.isAccompany && findAccompanyParent(a, day)?.id === v.id) ids.push(a.nurseId); });
+        lines.push({ start: parseTime(v.startTime), order: nurseOrder.has(v.nurseId) ? nurseOrder.get(v.nurseId) : 998, time: v.startTime, name: normalizeName(v.userName) + (v.isAccompany ? '（同行）' : ''), ids, other: false });
+      });
+      lines.sort((a, b) => a.start - b.start || a.order - b.order || a.name.localeCompare(b.name, 'ja'));
+      const working = nurses.length;
+      let pending = 0;
+      const render = (l) => {
+        if (l.other) {
+          const uniq = [...new Set(l.ids)];
+          if (uniq.length === 0 || (working > 1 && uniq.length >= working - 1 && uniq.length >= 3)) return `${formatShortTime(l.time)} ${l.name}`;   // 全員（ほぼ全員）参加なら担当は書かない
+          return `${formatShortTime(l.time)} ${l.name}（${uniq.map(label).join('/')}）`;
+        }
+        if (l.ids.some(id => id == null || !nurseOrder.has(id))) pending++;
+        return `${formatShortTime(l.time)} ${l.name}（${l.ids.map(label).join('/')}）`;
+      };
+      const split = parseTime(splitAt || '12:00');
+      const am = lines.filter(l => l.start < split).map(render).join('\n');
+      const pm = lines.filter(l => l.start >= split).map(render).join('\n');
+      return { am, pm, pending };
+    };
 
     // 予定をキャンセルにする／キャンセルを取り消す（同行予定も一緒に）
     //  ・キャンセル：担当者を外し、元の担当者を覚えておく
@@ -1083,6 +1143,9 @@
       const [statsEditing, setStatsEditing] = useState(false);
       const [assignReasons, setAssignReasons] = useState({});      // 予定ID → 自動編成の理由（この画面を開いている間だけ保持）
       const [showUnassignedList, setShowUnassignedList] = useState(false);
+      const [transferDraft, setTransferDraft] = useState(null);     // 転記用テキスト（開いている間だけ）
+      const [transferAsCell, setTransferAsCell] = useState(() => localStorage.getItem('careRoute_transferAsCell') !== 'off');
+      useEffect(() => { localStorage.setItem('careRoute_transferAsCell', transferAsCell ? 'on' : 'off'); }, [transferAsCell]);
       const [cancelTarget, setCancelTarget] = useState(null);       // キャンセルにしようとしている予定
       const [addKind, setAddKind] = useState('other');               // 予定を追加：'other'=会議など ／ 'visit'=臨時の訪問
       // 負担の一覧を開いているか（端末ごとに記憶）
@@ -1435,6 +1498,7 @@
           amOffStart: f.get('amOffStart'),
           pmOffEnd: f.get('pmOffEnd'),
           historyWeight: f.get('historyWeight'),
+          shortNames: settings.shortNames,
           lunch: { enabled: f.get('lunchEnabled') === 'on', from: f.get('lunchFrom'), to: f.get('lunchTo'), minutes: f.get('lunchMinutes') }
         });
         if (parseTime(next.lunch.to) - parseTime(next.lunch.from) < next.lunch.minutes) {
@@ -1552,6 +1616,14 @@
       // 未割り当て＝これから担当者を決める予定。キャンセルになった予定は別に数える
       const unassignedCount = visits.filter(v => v.date === selectedDate && needsAssignment(v, nurseIdSet)).length;
       const cancelledCount = visits.filter(v => v.date === selectedDate && v.isCancelled).length;
+      // 対応が必要な未割り当て（キャンセルでも固定でもない）の件数。表示中の週の日ごとに数える
+      const pendingByDate = useMemo(() => {
+        const counts = {};
+        const week = new Set(displayDates);
+        visits.forEach(v => { if (week.has(v.date) && isPendingVisit(v, nurseIdSet)) counts[v.date] = (counts[v.date] || 0) + 1; });
+        return counts;
+      }, [visits, displayDates, nurseIdSet]);
+      const pendingCount = pendingByDate[selectedDate] || 0;
       
       const hasAssignedVisits = useMemo(() => {
         return visits.some(v => v.date === selectedDate && !isVisitUnassigned(v, nurseIdSet));
@@ -2547,6 +2619,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             
             setIsOptimizing(false); 
             setAssignReasons(prev => ({ ...prev, ...newReasons }));
+            // 入れられずに残った予定があれば、見過ごさないように一覧を開く（1日分の編成のとき）
+            if (total.failed > 0 && dates.length === 1) setShowUnassignedList(true);
             const label = dates.length > 1 ? `${total.days}日分の自動編成完了` : "自動編成完了";
             if (total.assigned === 0) {
               setToastMessage(total.failed > 0
@@ -2558,7 +2632,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               if (total.history > 0) parts.push(`うち${total.history}件は過去の担当実績を反映`);
               if (total.noLunch > 0) parts.push(`${total.noLunch}件は昼休憩を確保できず`);
               if (total.overtime > 0) parts.push(`${total.overtime}件は時間外`);
-              if (total.failed > 0) parts.push(`${total.failed}件は入れる人がおらず未割り当てのまま`);
+              if (total.failed > 0) parts.push(`⚠ ${total.failed}件は入れる人がおらず未割り当てのまま${dates.length > 1 ? "（日付ボタンの赤い数字の日を確認してください）" : ""}`);
               setToastMessage(parts.join(" / ") + "（カードのメニューで理由を確認できます）"); 
             }
             setShowToast(true);
@@ -2681,6 +2755,47 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
 
         saveHistory();
         handleSetVisits(prev => prev.map(v => v.id === visitId ? { ...v, nurseId: parsedNurseId } : v));
+      };
+
+      // 転記用テキストを作る（Googleスプレッドシートなどに貼り付けるため）
+      const makeTransfer = (shortNames) => {
+        const t = buildTransferText({ visits, nurses, date: selectedDate, shortNames });
+        return { memo: dailyMemos[selectedDate] || '', am: t.am, pm: t.pm, pending: t.pending };
+      };
+      const openTransfer = () => setTransferDraft(makeTransfer(settings.shortNames));
+      const handleShortNameChange = (nurseId, value) => {
+        const shortNames = { ...(settings.shortNames || {}) };
+        if (value.trim()) shortNames[nurseId] = value.trim(); else delete shortNames[nurseId];
+        const next = normalizeSettings({ ...settings, shortNames });
+        setSettings(next);
+        if (isAdminUser) updateCloudData({ settings: JSON.stringify(next) });
+        setTransferDraft(makeTransfer(next.shortNames));
+      };
+      const copyText = async (text, what) => {
+        let ok = false;
+        try { await navigator.clipboard.writeText(text); ok = true; }
+        catch (e) {
+          // 古いブラウザなどで使えない場合の代わりの方法
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            ok = document.execCommand('copy');
+            ta.remove();
+          } catch (e2) { console.error(e2); }
+        }
+        setToastMessage(ok ? `${what}をコピーしました` : "コピーできませんでした。文字を選択して、手動でコピーしてください");
+        setShowToast(true);
+      };
+      const copyTransfer = (part) => {
+        if (!transferDraft) return;
+        const names = { memo: 'メモ', am: '午前', pm: '午後' };
+        if (part === 'all') {
+          const cells = [transferDraft.memo, transferDraft.am, transferDraft.pm];
+          copyText(transferAsCell ? cells.map(toSheetCell).join('\n') : cells.join('\n\n'), transferAsCell ? 'メモ・午前・午後（縦に3つのセル）' : 'メモ・午前・午後');
+        } else {
+          copyText(transferAsCell ? toSheetCell(transferDraft[part]) : transferDraft[part], names[part]);
+        }
       };
 
       // 予定をキャンセルにする（削除はせず、記録として残す。自動編成の対象から外れる）
@@ -3277,9 +3392,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     const isSelected = selectedDate === dateStr;
                     const isToday = dateStr === getTodayStr();
                     return (
-                      <button key={dateStr} onClick={() => handleDateChange(dateStr)} className={`h-11 rounded-xl flex flex-col items-center justify-center leading-none transition-colors ${isSelected ? 'bg-teal-600 text-white shadow-md shadow-teal-600/30' : isToday ? 'bg-teal-50 border border-teal-300 text-slate-700' : 'bg-white border border-slate-200 text-slate-600'}`}>
+                      <button key={dateStr} onClick={() => handleDateChange(dateStr)} className={`relative h-11 rounded-xl flex flex-col items-center justify-center leading-none transition-colors ${isSelected ? 'bg-teal-600 text-white shadow-md shadow-teal-600/30' : isToday ? 'bg-teal-50 border border-teal-300 text-slate-700' : 'bg-white border border-slate-200 text-slate-600'}`}>
                         <span className={`text-[10px] font-black mb-0.5 ${isSelected ? 'text-teal-100' : dow === 0 ? 'text-red-400' : dow === 6 ? 'text-blue-400' : 'text-slate-400'}`}>{JS_DAYS[dow]}</span>
                         <span className="text-sm font-black">{d.getDate()}</span>
+                        {pendingByDate[dateStr] > 0 && <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center shadow" title={`未割り当て ${pendingByDate[dateStr]}件`}>{pendingByDate[dateStr]}</span>}
                       </button>
                     );
                   })}
@@ -3338,9 +3454,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     <button 
                       key={dateStr} 
                       onClick={() => handleDateChange(dateStr)} 
-                      className={`min-w-[60px] h-9 md:min-w-[70px] md:h-11 rounded-2xl flex items-center justify-center font-black text-xs md:text-sm transition-all shrink-0 ${selectedDate === dateStr ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30 scale-105' : 'bg-white border border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                      className={`relative min-w-[60px] h-9 md:min-w-[70px] md:h-11 rounded-2xl flex items-center justify-center font-black text-xs md:text-sm transition-all shrink-0 ${selectedDate === dateStr ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30 scale-105' : 'bg-white border border-slate-200 text-slate-400 hover:border-slate-300'}`}
                     >
                       {formatDateLabel(dateStr)}
+                      {pendingByDate[dateStr] > 0 && <span className="absolute -top-1.5 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center shadow" title={`未割り当て ${pendingByDate[dateStr]}件`}>{pendingByDate[dateStr]}</span>}
                     </button>
                   ))}
                 </div>
@@ -3389,6 +3506,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                       <button onClick={() => setShowWorkload(v => !v)} className={`flex border px-3 md:px-4 py-1.5 md:py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap ${showWorkload ? 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`} title="担当者ごとの訪問時間・移動時間・件数を並べて表示します">
                         <BarChart3 size={16} />
                         負担の一覧
+                      </button>
+                      <button onClick={openTransfer} className="flex bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-1.5 md:py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap" title="この日の予定を、スプレッドシートなどに貼り付けられる文章にします">
+                        <ClipboardCopy size={16} />
+                        転記用テキスト
                       </button>
                       <button onClick={() => window.print()} className="hidden md:flex bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-sm shadow-sm transition-all items-center justify-center gap-1.5 whitespace-nowrap" title="この日の担当表を印刷、またはPDFとして保存します">
                         <Printer size={16} />
@@ -3498,6 +3619,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     </div>
                   </div>
 
+                  {pendingCount > 0 && (
+                    <button type="button" onClick={() => setShowUnassignedList(true)} data-testid="pending-banner" className="w-full text-left bg-red-50 border-2 border-red-300 text-red-700 rounded-2xl px-3 md:px-5 py-2.5 md:py-3 flex items-center gap-2 md:gap-3 shrink-0 hover:bg-red-100 transition-colors">
+                      <BellRing size={18} className="shrink-0 animate-pulse" />
+                      <span className="flex-1 text-xs md:text-sm font-black leading-snug">担当者が決まっていない予定が {pendingCount}件あります<span className="hidden md:inline font-bold text-red-500">（キャンセルと固定した予定は除いています）</span></span>
+                      <span className="shrink-0 text-[11px] md:text-xs font-black bg-white border border-red-300 px-2.5 py-1 rounded-lg whitespace-nowrap">一覧を開く</span>
+                    </button>
+                  )}
                   {renderDailyMemo()}
 
                   {workloadRows && (
@@ -5071,6 +5199,51 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     追加する
                   </button>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {transferDraft && (
+            <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-slate-900/50 backdrop-blur-sm md:px-4" onClick={() => setTransferDraft(null)}>
+              <div onClick={e => e.stopPropagation()} className="bg-white rounded-t-[2rem] md:rounded-[2rem] p-5 md:p-8 max-w-2xl w-full shadow-2xl max-h-[92vh] overflow-y-auto">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800 flex items-center gap-2"><ClipboardCopy size={22} className="text-teal-600"/>転記用テキスト</h3>
+                    <p className="text-xs font-bold text-slate-500 mt-1">{formatDateLabel(selectedDate)}　内容は、コピーする前にここで書き直せます</p>
+                  </div>
+                  <button type="button" onClick={() => setTransferDraft(null)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full shrink-0" aria-label="閉じる"><X size={20} /></button>
+                </div>
+                {transferDraft.pending > 0 && (
+                  <p className="text-xs font-black text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-3 flex items-center gap-1.5"><AlertTriangle size={14} className="shrink-0"/>担当者が決まっていない予定が {transferDraft.pending}件あります。「（未定）」と書かれています。</p>
+                )}
+                {[['memo', 'メモ・共有事項', 3], ['am', '午前', 9], ['pm', '午後', 9]].map(([part, title, rows]) => (
+                  <div key={part} className="mb-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-black text-slate-500">{title}</label>
+                      <button type="button" onClick={() => copyTransfer(part)} className="text-[11px] font-black text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 px-2.5 py-1 rounded-lg flex items-center gap-1"><Copy size={12}/>{title.split('・')[0]}をコピー</button>
+                    </div>
+                    <textarea data-part={part} value={transferDraft[part]} onChange={e => setTransferDraft(d => ({ ...d, [part]: e.target.value }))} rows={rows} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-teal-500 resize-y leading-relaxed" />
+                  </div>
+                ))}
+                <label className="flex items-start gap-2 text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 mb-3">
+                  <input type="checkbox" checked={transferAsCell} onChange={e => setTransferAsCell(e.target.checked)} className="mt-0.5 w-4 h-4 text-teal-600 rounded border-slate-300" />
+                  <span>スプレッドシートの「1つのセル」に貼り付ける形式でコピーする<span className="block text-[11px] text-slate-400 mt-0.5 leading-relaxed">オン：貼り付けたいセルを選んで（文字を打つ状態にはせず）貼り付けます。オフ：ふつうの文章としてコピーします（メールやLINEなどに貼るとき）。</span></span>
+                </label>
+                <button type="button" onClick={() => copyTransfer('all')} className="w-full py-3.5 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 mb-4">
+                  <ClipboardCopy size={18}/>{transferAsCell ? 'メモ・午前・午後をまとめてコピー（縦に3つのセル）' : 'メモ・午前・午後をまとめてコピー'}
+                </button>
+                <details className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <summary className="text-xs font-black text-slate-500 cursor-pointer">担当者の略称を変える</summary>
+                  <p className="text-[11px] font-bold text-slate-400 mt-2 mb-2 leading-relaxed">かっこの中に書く名前です。空にすると自動（姓と名の間に空白があれば姓、なければ先頭2文字）になります。{isAdminUser ? '変更は保存され、次回も使われます。' : ''}</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {nurses.map(n => (
+                      <label key={n.id} className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
+                        <span className="truncate flex-1" title={n.name}>{n.name}</span>
+                        <input type="text" maxLength={10} defaultValue={(settings.shortNames || {})[n.id] || ''} placeholder={defaultShortName(n.name)} onBlur={e => { if (e.target.value.trim() !== ((settings.shortNames || {})[n.id] || '')) handleShortNameChange(n.id, e.target.value); }} className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-teal-500" aria-label={`${n.name} の略称`} />
+                      </label>
+                    ))}
+                  </div>
+                </details>
               </div>
             </div>
           )}
