@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -353,5 +353,67 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.equal(c.isCancelled,true); assert.equal(c.cancelledFromNurseId,7); assert.equal(c.cancelNote,'入院'); assert.equal(c.nurseId,null);
   assert(m.visits.find(v=>v.id===2),'臨時の訪問が同期で消えた'); assert.equal(m.deleted,0); assert.equal(m.added,0);
   console.log('CS OK: 同期してもキャンセルと臨時の訪問は残る');
+}
+// ---- 通算の担当実績 ----
+{
+  const set=new Set([1,2,3]);
+  const vs=[
+    visit('常連 様','10:00',30,{date:'2026-06-01',nurseId:1}), visit('常連 様','10:00',30,{date:'2026-06-08',nurseId:1}),
+    visit('常連 様','10:00',30,{date:'2026-06-15',nurseId:2}),
+    visit('常連様','10:00',30,{date:'2026-06-22',nurseId:1}),                              // 表記ゆれ（空白なし）も同じ利用者
+    visit('常連 様','10:00',30,{date:'2026-06-29',nurseId:null}),                          // 未割り当ては数えない
+    {...visit('常連 様','10:00',30,{date:'2026-07-06',nurseId:3}),isAccompany:true},      // 同行は数えない
+    {...visit('常連 様','10:00',30,{date:'2026-07-13',nurseId:null}),isCancelled:true},   // キャンセルは数えない
+    visit('会議','10:00',30,{date:'2026-07-20',nurseId:3,type:'other'}),                   // 会議は数えない
+  ];
+  const c=H.countAssignments(vs);
+  assert.deepEqual(c['常連'].n,{1:3,2:1}); assert.equal(Object.keys(c).length,1);
+  // 保管庫へ移す → 通算に足す。戻す → 引く（0になった項目は消える）
+  let st=H.applyCountsToStats({},c,1);
+  assert.deepEqual(st['常連'].base,{1:3,2:1});
+  st=H.applyCountsToStats(st,H.countAssignments([vs[2]]),-1);
+  assert.deepEqual(st['常連'].base,{1:3});
+  st=H.applyCountsToStats(st,H.countAssignments([vs[2]]),1);
+  // 表：保管分(base)＋手元の過去分(live)＋手で直した分(adj)。未来の予定は数えない
+  const live=[visit('常連 様','10:00',30,{date:'2026-11-04',nurseId:2}), visit('常連 様','10:00',30,{date:'2026-11-18',nurseId:2}), visit('新規 様','9:00',30,{date:'2026-11-05',nurseId:3})];
+  st['常連'].adj={2:5,1:-1};
+  let table=H.buildStatsTable(st,live,set,'2026-11-11');
+  const row=table.find(r=>r.key==='常連');
+  assert.deepEqual(row.counts,{1:2,2:7,3:0}); assert.deepEqual(row.auto,{1:3,2:2,3:0}); assert.equal(row.total,9); assert.equal(row.edited,true);
+  assert.equal(table.find(r=>r.key==='新規').counts[3],1);
+  // 名簿にいない看護師（ID 9）の分は表に出さない
+  assert.equal(H.buildStatsTable({x:{name:'x 様',base:{9:4},adj:{}}},[],set,'2026-11-11').length,0);
+  // 自動編成：保管庫へ移した古い実績（120日より前）も効く
+  const nurses=[nurse(1,'A'),nurse(2,'B')];
+  const cur=visit('古参 様','10:00');
+  const stats={'古参':{name:'古参 様',base:{2:20},adj:{}}};
+  let r=run([cur],nurses,{history:H.buildAssignHistory([cur],new Set([1,2]),D,stats)});
+  assert.equal(r.visits[0].nurseId,2,'保管済みの実績が使われない'); assert.equal(r.historyHits,1);
+  r=run([cur],nurses,{history:H.buildAssignHistory([cur],new Set([1,2]),D,{})});
+  assert.equal(r.visits[0].nurseId,1);
+  // 手で0に直した実績は使わない
+  r=run([cur],nurses,{history:H.buildAssignHistory([cur],new Set([1,2]),D,{'古参':{name:'古参 様',base:{2:20},adj:{2:-20}}})});
+  assert.equal(r.visits[0].nurseId,1);
+  // 120日より前の手元の訪問も数える（1倍）
+  const old=visit('古参 様','10:00',30,{date:'2026-05-01',nurseId:2});
+  const h=H.buildAssignHistory([old,cur],new Set([1,2]),D,{});
+  assert.deepEqual(h.get('古参'),{total:1,byNurse:{2:1}});
+  console.log('HS OK: 通算の担当実績（集計・保管で加算・戻すと減算・手修正・古い実績の反映）');
+}
+// 実績の重み：「最優先」なら、負担が重くても実績のある人へ
+{
+  const nurses=[nurse(1,'A'),nurse(2,'B')];
+  const stats={'常連':{name:'常連 様',base:{2:10,1:3},adj:{}}};
+  // Bはすでに4時間分の予定あり、Aは空
+  const load=['09:00','11:00','13:30','15:00'].map((t,i)=>visit('先約'+i+' 様',t,60,{nurseId:2}));
+  const cur=visit('常連 様','10:15',30);
+  const all=[...load,cur];
+  const hist=H.buildAssignHistory(all,new Set([1,2]),D,stats);
+  let r=run(all,nurses,{history:hist});
+  assert.equal(r.visits.at(-1).nurseId,1,'標準では負担の軽いAになるはず');
+  r=run(all,nurses,{history:hist,settings:{...NOLUNCH,historyWeight:'strong'}});
+  assert.equal(r.visits.at(-1).nurseId,2,'最優先では実績の多いBになるはず');
+  assert.equal(H.normalizeSettings({historyWeight:'strong'}).historyWeight,'strong'); assert.equal(H.normalizeSettings({historyWeight:'x'}).historyWeight,'normal');
+  console.log('HW OK: 実績の重み（標準／最優先）');
 }
 console.log('ALL PASS');

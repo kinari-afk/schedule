@@ -30,6 +30,7 @@ const ctx = await browser.newContext({ viewport: { width: 390, height: 780 }, is
 const errors = [];
 await ctx.route('**/*', makeRouteHandler({ errors, isOffline: () => offline }));
 await ctx.addInitScript(([seed]) => { window.__seedDocs = { 'artifacts/care-route-app/public/data/careRoute_state/main': seed }; window.__authCfg = { persist: true }; }, [seed]);
+await ctx.clock.install({ time: new Date('2026-11-11T10:00:00+09:00') });   // テストの中の「今日」を固定
 const page = await ctx.newPage();
 
 // 1) 通信できる状態で開く。サービスワーカーが有効になったら、もう一度開いて部品を端末に保存させる
