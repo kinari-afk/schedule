@@ -627,6 +627,83 @@ const errs=[];
   errs.push(...r.errors); await r.browser.close();
 }
 
+// ===== L. 未割り当ての見落とし防止と、転記用テキスト =====
+{
+  const { seed, _nurses } = mk();
+  // 水曜は青木さん以外を休みにして、自動編成で入りきらない予定が必ず残るようにする
+  seed.nurses = JSON.stringify(_nurses.map((n,i)=> i===0 ? n : { ...n, offDays:[{day:3,type:'full'}] }));
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  const banner = page.locator('[data-testid=pending-banner]');
+  const dayBtn = (label) => page.locator('button:visible', { hasText: label }).first();
+  // --- 未割り当てがある日：バナーと、日付ボタンの赤い数字
+  assert((await banner.innerText()).includes('12件'));
+  assert((await dayBtn('11/11(水)').innerText()).includes('12'));
+  assert((await dayBtn('11/12(木)').innerText()).replace('11/12(木)','').trim()==='12');
+  // --- 固定した未割り当て・キャンセルは数えない
+  const menu = async (name, item) => { await page.locator('.visit-card:visible', { hasText:name }).first().click({ button:'right', position:{x:7,y:10} }); await page.waitForTimeout(200); await page.locator('div.fixed button', { hasText:item }).first().click(); await page.waitForTimeout(300); };
+  await menu('宇野','予定を固定');
+  assert((await banner.innerText()).includes('11件'),'固定した予定が数えられている');
+  await menu('園田','キャンセルにする');
+  await page.locator('form button[type=submit]', { hasText:'キャンセルにする' }).click(); await page.waitForTimeout(400);
+  assert((await banner.innerText()).includes('10件'),'キャンセルの予定が数えられている');
+  // --- 自動編成で入らない予定が残ると、一覧が自動で開く
+  //     （このテストでは、水曜の出勤者が1名だけになるようデータを用意してある）
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  await page.waitForSelector('div.fixed h3:has-text("未割り当て")');
+  const left = parse((await r.store()).visits).filter(v=>v.date==='2026-11-11' && v.nurseId==null && !v.isCancelled && !v.isExcludedFromAutoAssign).length;
+  assert(left>0,'テストの前提：入らない予定が残るはず');
+  assert((await page.locator('div.fixed h3:has-text("未割り当て")').innerText()).includes(`${left+1}件`));    // 固定した1件を含む
+  await page.screenshot({ path: shot('pending.png') });
+  await page.locator('div.fixed button[aria-label="閉じる"]').click(); await page.waitForTimeout(200);
+  assert((await banner.innerText()).includes(`${left}件`));
+  assert((await dayBtn('11/11(水)').innerText()).includes(String(left)));
+  // 全部片づくとバナーも数字も消える
+  await page.locator('button', { hasText:'元に戻す' }).first().click(); await page.waitForTimeout(300);
+  console.log('L1 OK: 未割り当ての見落とし防止（バナー・日付の数字・固定とキャンセルは除外・編成後に一覧を開く）');
+  errs.push(...r.errors); await r.browser.close();
+}
+{
+  const { seed, _nurses } = mk();
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  assert.equal(await page.locator('[data-testid=pending-banner]').count(),0,'全部割り当てたのにバナーが残っている');
+  // --- 転記用テキスト
+  await page.locator('button', { hasText:'転記用テキスト' }).click(); await page.waitForTimeout(300);
+  const val = (part) => page.locator(`textarea[data-part=${part}]`).inputValue();
+  const vs = parse((await r.store()).visits).filter(v=>v.date==='2026-11-11').sort((a,b)=>a.startTime.localeCompare(b.startTime));
+  const am = await val('am'), pm = await val('pm');
+  assert.equal(await val('memo'),'本日14時からカンファレンスがあります。');
+  assert.equal(am.split('\n').length + pm.split('\n').length, vs.length);
+  const first = vs[0]; const n0 = _nurses.find(n=>n.id===first.nurseId);
+  assert(am.split('\n').some(l=>l===`9:00 ${first.userName.replace(/[\s様]/g,'')}（${n0.name.split(' ')[0]}）`),'行の形式: '+am.split('\n')[0]);
+  assert(/^13:30 /.test(pm.split('\n')[0]));
+  await page.screenshot({ path: shot('transfer.png') });
+  // 略称を変えると作り直される
+  await page.locator('summary', { hasText:'担当者の略称を変える' }).click();
+  const inp = page.locator(`input[aria-label="${n0.name} の略称"]`); await inp.fill('ＡＡ'); await inp.blur(); await page.waitForTimeout(300);
+  assert((await val('am')).includes('（ＡＡ）'));
+  assert.equal(JSON.parse((await r.store()).settings).shortNames[n0.id],'ＡＡ');
+  // コピー：午前だけ（1セル形式）
+  await page.locator('button', { hasText:'午前をコピー' }).click(); await page.waitForTimeout(200);
+  let clip = await page.evaluate(()=>navigator.clipboard.readText());
+  assert.equal(clip, '"'+(await val('am'))+'"');
+  // コピー：まとめて（縦に3セル）
+  await page.locator('button', { hasText:'まとめてコピー' }).click(); await page.waitForTimeout(200);
+  clip = await page.evaluate(()=>navigator.clipboard.readText());
+  assert.equal(clip, [await val('memo'), await val('am'), await val('pm')].map(x=>'"'+x+'"').join('\n'));
+  // 書き直した内容がそのままコピーされる／ふつうの文章の形式
+  await page.locator('textarea[data-part=memo]').fill('山田さん休み');
+  await page.locator('input[type=checkbox]:visible').last().uncheck();
+  await page.locator('button', { hasText:'メモをコピー' }).click(); await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'山田さん休み');
+  console.log('L2 OK: 転記用テキスト（形式・略称・1セル形式／縦3セル／文章でコピー・書き直し）');
+  errs.push(...r.errors); await r.browser.close();
+}
+
 const real = errs.filter(e=>!e.includes('cdn.tailwindcss.com should not be used')&&!e.includes('in-browser Babel')&&!e.includes('形式が違います')&&!e.includes('CSVではなくWebページ'));
 if (real.length) { console.error('画面でエラーが発生:', real); process.exit(1); }
 console.log('ALL PASS');

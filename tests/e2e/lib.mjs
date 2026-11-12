@@ -77,6 +77,7 @@ export function makeRouteHandler({ csv = {}, routes = {}, errors = [], isOffline
 export async function launch({ viewport, seed, admin = true, csv = {}, isMobile = false, scale = 1, authCfg = {}, login = null, routes = {} }) {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: true, viewport, deviceScaleFactor: scale, isMobile, hasTouch: isMobile, locale: 'ja-JP', timezoneId: 'Asia/Tokyo' });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);   // コピーした内容をテストで読み取るため
   // テストの中の「今日」を固定する（2026-11-11 水曜の朝10時から時計が進む）。実行する日によって結果が変わらないように
   await ctx.clock.install({ time: new Date('2026-11-11T10:00:00+09:00') });
   const page = await ctx.newPage();
