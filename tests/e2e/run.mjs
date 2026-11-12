@@ -502,7 +502,17 @@ const errs=[];
   const vs = parse((await r.store()).visits);
   assert.equal(vs.find(v=>v.userName.startsWith('須藤') && v.date==='2026-11-11').nurseId,1001);
   await page.waitForSelector('div.fixed h3:has-text("未割り当て 11件")');     // 一覧は開いたまま、続けて次を割り当てられる
-  console.log('I OK: スマホで未割り当ての一覧から続けて割り当て');
+  // --- 一覧の行にある「キャンセル」から、その場でキャンセルにできる
+  await page.locator('div.fixed button[aria-label="宇野 太郎 様 をキャンセルにする"]').tap(); await page.waitForTimeout(300);
+  await page.locator('form input[name=note]').fill('入院');
+  await page.locator('form button[type=submit]', { hasText:'キャンセルにする' }).tap();
+  await page.waitForSelector('div.fixed h3:has-text("未割り当て 10件")');     // 一覧は開いたまま、件数が減る
+  const vs2 = parse((await r.store()).visits);
+  const cu = vs2.find(v=>v.userName.startsWith('宇野') && v.date==='2026-11-11');
+  assert.equal(cu.isCancelled,true); assert.equal(cu.cancelNote,'入院');
+  assert(await page.locator('div.fixed', { hasText:'キャンセル 1件' }).count()>0);
+  await page.screenshot({ path: shot('m-unassigned-cancel.png') });
+  console.log('I OK: スマホで未割り当ての一覧から続けて割り当て・その場でキャンセル');
   errs.push(...r.errors); await r.browser.close();
 }
 
@@ -691,16 +701,17 @@ const errs=[];
   await page.locator('button', { hasText:'午前をコピー' }).click(); await page.waitForTimeout(200);
   let clip = await page.evaluate(()=>navigator.clipboard.readText());
   assert.equal(clip, '"'+(await val('am'))+'"');
-  // コピー：まとめて（縦に3セル）
+  // コピー：まとめて（午前・午後を縦に2セル。メモは含めない）
   await page.locator('button', { hasText:'まとめてコピー' }).click(); await page.waitForTimeout(200);
   clip = await page.evaluate(()=>navigator.clipboard.readText());
-  assert.equal(clip, [await val('memo'), await val('am'), await val('pm')].map(x=>'"'+x+'"').join('\n'));
+  assert.equal(clip, [await val('am'), await val('pm')].map(x=>'"'+x+'"').join('\n'));
+  assert(!clip.includes('カンファレンスがあります'),'まとめてコピーにメモが含まれている');
   // 書き直した内容がそのままコピーされる／ふつうの文章の形式
   await page.locator('textarea[data-part=memo]').fill('山田さん休み');
   await page.locator('input[type=checkbox]:visible').last().uncheck();
   await page.locator('button', { hasText:'メモをコピー' }).click(); await page.waitForTimeout(200);
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'山田さん休み');
-  console.log('L2 OK: 転記用テキスト（形式・略称・1セル形式／縦3セル／文章でコピー・書き直し）');
+  console.log('L2 OK: 転記用テキスト（形式・略称・1セル形式／縦2セル／文章でコピー・書き直し）');
   errs.push(...r.errors); await r.browser.close();
 }
 

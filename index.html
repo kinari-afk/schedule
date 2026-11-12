@@ -2791,8 +2791,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         if (!transferDraft) return;
         const names = { memo: 'メモ', am: '午前', pm: '午後' };
         if (part === 'all') {
-          const cells = [transferDraft.memo, transferDraft.am, transferDraft.pm];
-          copyText(transferAsCell ? cells.map(toSheetCell).join('\n') : cells.join('\n\n'), transferAsCell ? 'メモ・午前・午後（縦に3つのセル）' : 'メモ・午前・午後');
+          // まとめてコピーするのは午前と午後（メモは必要なときだけ個別にコピーする）
+          const cells = [transferDraft.am, transferDraft.pm];
+          copyText(transferAsCell ? cells.map(toSheetCell).join('\n') : cells.join('\n\n'), transferAsCell ? '午前・午後（縦に2つのセル）' : '午前・午後');
         } else {
           copyText(transferAsCell ? toSheetCell(transferDraft[part]) : transferDraft[part], names[part]);
         }
@@ -5046,7 +5047,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 <div className="flex justify-between items-start mb-4 shrink-0">
                   <div>
                     <h3 className="text-lg md:text-2xl font-black text-slate-800">未割り当て {unassignedCount}件</h3>
-                    <p className="text-xs font-bold text-slate-500 mt-1">{formatDateLabel(selectedDate)}{isAdmin ? "　行を押すと担当者を選べます" : ""}</p>
+                    <p className="text-xs font-bold text-slate-500 mt-1">{formatDateLabel(selectedDate)}{isAdmin ? "　行を押すと担当者を選べます。訪問がなくなった場合は右の「キャンセル」へ" : ""}</p>
                   </div>
                   <button type="button" onClick={() => setShowUnassignedList(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full shrink-0" aria-label="閉じる"><X size={20} /></button>
                 </div>
@@ -5057,7 +5058,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     const okCount = rows ? rows.filter(r => r.ok).length : 0;
                     const locked = v.isExcludedFromAutoAssign;
                     return (
-                      <button type="button" key={v.id} disabled={!isAdmin || locked} onClick={() => { openMoveDialog(v); }} className={`w-full text-left px-4 py-3 rounded-xl border transition-colors ${(!isAdmin || locked) ? 'border-slate-100 bg-slate-50 cursor-default' : 'border-slate-200 bg-white hover:border-teal-400 hover:bg-teal-50/40'}`}>
+                      <div key={v.id} className="flex items-stretch gap-1.5">
+                      <button type="button" disabled={!isAdmin || locked} onClick={() => { openMoveDialog(v); }} className={`flex-1 min-w-0 text-left px-4 py-3 rounded-xl border transition-colors ${(!isAdmin || locked) ? 'border-slate-100 bg-slate-50 cursor-default' : 'border-slate-200 bg-white hover:border-teal-400 hover:bg-teal-50/40'}`}>
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex items-center gap-2 min-w-0">
                             <span className="text-sm font-black text-slate-800 tabular-nums shrink-0">{v.startTime}</span>
@@ -5074,6 +5076,13 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                             : <span className="text-[10px] font-black text-rose-600">入れられる人がいません（{summarizeRejections(rows)}）</span>)}
                         </div>
                       </button>
+                      {/* 訪問がキャンセルになった場合に、この一覧からそのままキャンセルにできる（会議などには出さない） */}
+                      {isAdmin && v.type !== 'other' && (
+                        <button type="button" disabled={locked} onClick={() => setCancelTarget(v)} title={locked ? "固定を解除してからキャンセルにしてください" : "この訪問をキャンセルにする"} aria-label={`${v.userName} をキャンセルにする`} className="shrink-0 w-[4.5rem] flex flex-col items-center justify-center gap-0.5 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors text-[10px] font-black leading-tight disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Ban size={15} />キャンセル
+                        </button>
+                      )}
+                      </div>
                     );
                   })}
                   {cancelledCount > 0 && (
@@ -5216,11 +5225,11 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 {transferDraft.pending > 0 && (
                   <p className="text-xs font-black text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-3 flex items-center gap-1.5"><AlertTriangle size={14} className="shrink-0"/>担当者が決まっていない予定が {transferDraft.pending}件あります。「（未定）」と書かれています。</p>
                 )}
-                {[['memo', 'メモ・共有事項', 3], ['am', '午前', 9], ['pm', '午後', 9]].map(([part, title, rows]) => (
+                {[['am', '午前', 9], ['pm', '午後', 9], ['memo', 'メモ・共有事項（まとめてコピーには含みません）', 2]].map(([part, title, rows]) => (
                   <div key={part} className="mb-3">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-black text-slate-500">{title}</label>
-                      <button type="button" onClick={() => copyTransfer(part)} className="text-[11px] font-black text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 px-2.5 py-1 rounded-lg flex items-center gap-1"><Copy size={12}/>{title.split('・')[0]}をコピー</button>
+                      <button type="button" onClick={() => copyTransfer(part)} className="text-[11px] font-black text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 px-2.5 py-1 rounded-lg flex items-center gap-1"><Copy size={12}/>{part === 'memo' ? 'メモ' : title}をコピー</button>
                     </div>
                     <textarea data-part={part} value={transferDraft[part]} onChange={e => setTransferDraft(d => ({ ...d, [part]: e.target.value }))} rows={rows} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-teal-500 resize-y leading-relaxed" />
                   </div>
@@ -5230,7 +5239,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                   <span>スプレッドシートの「1つのセル」に貼り付ける形式でコピーする<span className="block text-[11px] text-slate-400 mt-0.5 leading-relaxed">オン：貼り付けたいセルを選んで（文字を打つ状態にはせず）貼り付けます。オフ：ふつうの文章としてコピーします（メールやLINEなどに貼るとき）。</span></span>
                 </label>
                 <button type="button" onClick={() => copyTransfer('all')} className="w-full py-3.5 rounded-2xl font-black text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 mb-4">
-                  <ClipboardCopy size={18}/>{transferAsCell ? 'メモ・午前・午後をまとめてコピー（縦に3つのセル）' : 'メモ・午前・午後をまとめてコピー'}
+                  <ClipboardCopy size={18}/>{transferAsCell ? '午前・午後をまとめてコピー（縦に2つのセル）' : '午前・午後をまとめてコピー'}
                 </button>
                 <details className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <summary className="text-xs font-black text-slate-500 cursor-pointer">担当者の略称を変える</summary>
