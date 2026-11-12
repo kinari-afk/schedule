@@ -287,8 +287,10 @@
     const DEFAULT_SETTINGS = {
       amOffStart: '13:30',   // 午前休の人が出勤する時刻
       pmOffEnd: '12:30',     // 午後休の人が退勤する時刻
-      lunch: { enabled: true, from: '11:30', to: '13:30', minutes: 60 }   // 昼休憩：この時間帯の中に、連続した空き時間を確保する
+      lunch: { enabled: true, from: '11:30', to: '13:30', minutes: 60 },  // 昼休憩：この時間帯の中に、連続した空き時間を確保する
+      historyWeight: 'normal'   // 過去の担当実績の重み：'normal'＝ほかの条件と合わせて判断 ／ 'strong'＝実績を最優先
     };
+    const HISTORY_POINTS = { normal: 30, strong: 1000 };
     const normalizeSettings = (raw) => {
       const r = raw && typeof raw === 'object' ? raw : {};
       const isTime = (t) => typeof t === 'string' && /^\d{1,2}:\d{2}$/.test(t);
@@ -297,6 +299,7 @@
       return {
         amOffStart: isTime(r.amOffStart) ? r.amOffStart : DEFAULT_SETTINGS.amOffStart,
         pmOffEnd: isTime(r.pmOffEnd) ? r.pmOffEnd : DEFAULT_SETTINGS.pmOffEnd,
+        historyWeight: r.historyWeight === 'strong' ? 'strong' : 'normal',
         lunch: {
           enabled: typeof lunch.enabled === 'boolean' ? lunch.enabled : DEFAULT_SETTINGS.lunch.enabled,
           from: isTime(lunch.from) ? lunch.from : DEFAULT_SETTINGS.lunch.from,
@@ -498,7 +501,61 @@
     // 過去の担当実績を集計する。
     // 利用者ごとに「どの看護師が何回訪問したか」を数え、同じ曜日の実績は2倍に重み付けする。
     const HISTORY_WINDOW_DAYS = 120;
-    const buildAssignHistory = (visits, nurseIdSet, date) => {
+
+    // --- 担当実績（通算） ---
+    // 「実績として数える訪問」か：担当者が決まっている、会議などではない、同行ではない、キャンセルではない
+    const countsAsRecord = (v) => v.nurseId != null && v.type !== 'other' && !v.isAccompany && !v.isCancelled && !!v.date;
+    // 予定の一覧から「利用者ごとに、どの看護師が何回訪問したか」を数える
+    //  → { 利用者名(正規化): { name: 表示名, n: { 看護師ID: 回数 } } }
+    const countAssignments = (visits) => {
+      const out = {};
+      visits.forEach(v => {
+        if (!countsAsRecord(v)) return;
+        const key = normalizeName(v.userName);
+        if (!key) return;
+        const e = out[key] || (out[key] = { name: v.userName, n: {} });
+        e.n[v.nurseId] = (e.n[v.nurseId] || 0) + 1;
+      });
+      return out;
+    };
+    // 通算の記録（stats）に回数を足す／引く。stats の形：
+    //  { 利用者名: { name, base: {看護師ID: 回数}, adj: {看護師ID: 手で直した差分} } }
+    //  base = 保管庫へ移した分の回数。adj = 画面から手で修正した分。
+    const applyCountsToStats = (stats, counts, sign) => {
+      const next = { ...(stats || {}) };
+      Object.keys(counts).forEach(key => {
+        const cur = next[key] || { name: counts[key].name, base: {}, adj: {} };
+        const base = { ...(cur.base || {}) };
+        Object.keys(counts[key].n).forEach(id => {
+          const value = (base[id] || 0) + sign * counts[key].n[id];
+          if (value > 0) base[id] = value; else delete base[id];
+        });
+        next[key] = { ...cur, name: cur.name || counts[key].name, base, adj: cur.adj || {} };
+      });
+      return next;
+    };
+    // 画面に出す「通算の担当回数」の表を作る。
+    //  通算 = 保管庫へ移した分(base) ＋ いま手元にある過去の訪問(live) ＋ 手で直した分(adj)
+    const buildStatsTable = (stats, liveVisits, nurseIdSet, untilDate) => {
+      const live = countAssignments(liveVisits.filter(v => v.date <= untilDate && nurseIdSet.has(v.nurseId)));
+      const keys = new Set([...Object.keys(stats || {}), ...Object.keys(live)]);
+      const rows = [...keys].map(key => {
+        const st = (stats || {})[key] || {};
+        const counts = {}, auto = {};
+        nurseIdSet.forEach(id => {
+          auto[id] = ((st.base || {})[id] || 0) + ((live[key]?.n || {})[id] || 0);
+          counts[id] = Math.max(0, auto[id] + ((st.adj || {})[id] || 0));
+        });
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        return { key, name: live[key]?.name || st.name || key, counts, auto, total, edited: Object.values(st.adj || {}).some(x => x) };
+      });
+      return rows.filter(r => r.total > 0 || r.edited).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    };
+
+    // 自動編成に使う実績：利用者ごとに、看護師別の重みつき回数を集める。
+    //  ・手元にある過去の訪問：直近120日かつ同じ曜日は2倍、それ以外は1倍
+    //  ・保管庫へ移した分・手で直した分（stats）：1倍
+    const buildAssignHistory = (visits, nurseIdSet, date, stats) => {
       const map = new Map();
       const target = new Date(date);
       if (isNaN(target.getTime())) return map;
@@ -506,18 +563,28 @@
       const from = new Date(date);
       from.setDate(from.getDate() - HISTORY_WINDOW_DAYS);
       const fromStr = from.toISOString().split('T')[0];
-      visits.forEach(v => {
-        if (!v.date || v.date >= date || v.date < fromStr) return;
-        if (v.nurseId == null || !nurseIdSet.has(v.nurseId)) return;
-        if (v.type === 'other' || v.isAccompany) return;
-        const key = normalizeName(v.userName);
-        if (!key) return;
-        const w = new Date(v.date).getDay() === targetDow ? 2 : 1;
+      const add = (key, nurseId, w) => {
+        if (!key || w === 0) return;
         let e = map.get(key);
         if (!e) { e = { total: 0, byNurse: {} }; map.set(key, e); }
-        e.total += w;
-        e.byNurse[v.nurseId] = (e.byNurse[v.nurseId] || 0) + w;
+        e.byNurse[nurseId] = (e.byNurse[nurseId] || 0) + w;
+      };
+      visits.forEach(v => {
+        if (!countsAsRecord(v) || v.date >= date) return;
+        if (!nurseIdSet.has(v.nurseId)) return;
+        const recentSameDay = v.date >= fromStr && new Date(v.date).getDay() === targetDow;
+        add(normalizeName(v.userName), v.nurseId, recentSameDay ? 2 : 1);
       });
+      Object.keys(stats || {}).forEach(key => {
+        const st = stats[key] || {};
+        nurseIdSet.forEach(id => add(key, id, ((st.base || {})[id] || 0) + ((st.adj || {})[id] || 0)));
+      });
+      // 手で減らした結果マイナスになった分は0として扱い、合計を出す
+      map.forEach(e => {
+        Object.keys(e.byNurse).forEach(id => { if (e.byNurse[id] <= 0) delete e.byNurse[id]; });
+        e.total = Object.values(e.byNurse).reduce((a, b) => a + b, 0);
+      });
+      map.forEach((e, key) => { if (e.total <= 0) map.delete(key); });
       return map;
     };
 
@@ -634,7 +701,8 @@
           const h = history.get(normalizeName(v.userName));
           const cnt = h ? (h.byNurse[s.nurse.id] || 0) : 0;
           if (cnt > 0) {
-            score -= (cnt / h.total) * Math.min(1, h.total / 3) * 30;     // なじみの看護師を優先
+            // なじみの看護師を優先。「最優先」の設定では、ほかの条件より必ず強く効く
+            score -= (cnt / h.total) * Math.min(1, h.total / 3) * (HISTORY_POINTS[opts.settings.historyWeight] || HISTORY_POINTS.normal);
             historyNote = `過去の担当実績（この利用者の訪問の約${Math.round((cnt / h.total) * 100)}%を担当）`;
           }
         }
@@ -1011,6 +1079,8 @@
       // ===== 編成の設定・理由 =====
       const [settings, setSettings] = useState(DEFAULT_SETTINGS);
       const [showSettings, setShowSettings] = useState(false);
+      const [assignStats, setAssignStats] = useState({});          // 通算の担当実績（保管庫へ移した分＋手で直した分）
+      const [statsEditing, setStatsEditing] = useState(false);
       const [assignReasons, setAssignReasons] = useState({});      // 予定ID → 自動編成の理由（この画面を開いている間だけ保持）
       const [showUnassignedList, setShowUnassignedList] = useState(false);
       const [cancelTarget, setCancelTarget] = useState(null);       // キャンセルにしようとしている予定
@@ -1181,6 +1251,7 @@
             if (data.archivedMonths) { try { setArchivedMonths(JSON.parse(data.archivedMonths)); } catch (e) { console.error(e); } }
             if (data.geoCache) { try { setGeoCache(JSON.parse(data.geoCache)); } catch (e) { console.error(e); } }
             if (data.settings) { try { setSettings(normalizeSettings(JSON.parse(data.settings))); } catch (e) { console.error(e); } }
+            if (data.assignStats) { try { setAssignStats(JSON.parse(data.assignStats) || {}); } catch (e) { console.error(e); } }
 
             // 旧形式（非圧縮）のデータを検出したら、圧縮形式へ一度だけ移行する
             const isRawJson = (s) => typeof s === 'string' && s.length > 0 && !s.startsWith(COMPRESS_PREFIX);
@@ -1242,6 +1313,7 @@
           archivedMonths: JSON.stringify(archivedMonths),
           geoCache: JSON.stringify(geoCache),
           settings: JSON.stringify(settings),
+          assignStats: JSON.stringify(assignStats),
           sheetUrl: sheetUrl,
           nurseSheetUrl: nurseSheetUrl,
           baseTravelTime: String(baseTravelTime),
@@ -1362,6 +1434,7 @@
         const next = normalizeSettings({
           amOffStart: f.get('amOffStart'),
           pmOffEnd: f.get('pmOffEnd'),
+          historyWeight: f.get('historyWeight'),
           lunch: { enabled: f.get('lunchEnabled') === 'on', from: f.get('lunchFrom'), to: f.get('lunchTo'), minutes: f.get('lunchMinutes') }
         });
         if (parseTime(next.lunch.to) - parseTime(next.lunch.from) < next.lunch.minutes) {
@@ -1818,7 +1891,7 @@
         if (!isAdminUser) return false;
         try {
           const archives = await loadAllArchives();
-          const payload = { app: 'CareRoute', version: 2, exportedAt: new Date().toISOString(), nurses, visits: liveVisits, nurseStatuses, savedPatterns, dailyMemos, baseTravelTime, travelSpeedKmh, sheetUrl, nurseSheetUrl, geoCache, archivedMonths, archives };
+          const payload = { app: 'CareRoute', version: 2, exportedAt: new Date().toISOString(), nurses, visits: liveVisits, nurseStatuses, savedPatterns, dailyMemos, baseTravelTime, travelSpeedKmh, sheetUrl, nurseSheetUrl, geoCache, settings, assignStats, archivedMonths, archives };
           const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
           downloadJson(payload, `careroute-backup-${getTodayStr()}-${stamp}.json`);
           if (!silent) { setToastMessage("バックアップを保存しました（利用者の個人情報を含むため、取り扱いにご注意ください）"); setShowToast(true); }
@@ -1877,6 +1950,11 @@
             sheetUrl: data.sheetUrl || sheetUrl || "",
             nurseSheetUrl: data.nurseSheetUrl || nurseSheetUrl || "",
             geoCache: JSON.stringify(data.geoCache || {}),
+            settings: JSON.stringify(normalizeSettings(data.settings || settings)),
+            // 通算の実績：保管庫の分はバックアップの中身から数え直し、手で直した分だけを引き継ぐ
+            assignStats: JSON.stringify(applyCountsToStats(
+              Object.fromEntries(Object.entries(data.assignStats || {}).map(([k, v]) => [k, { name: v?.name, base: {}, adj: v?.adj || {} }])),
+              countAssignments(months.flatMap(m => archives[m].visits || [])), 1)),
             archivedMonths: JSON.stringify(months)
           }, { merge: true });
           setArchiveCache({});
@@ -1926,7 +2004,10 @@
           const nextPatterns = {};
           Object.keys(savedPatterns).forEach(date => { if (monthOf(date) >= cutoff) nextPatterns[date] = savedPatterns[date]; });
           const nextMonths = [...new Set([...archivedMonths, ...months])].sort();
-          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths) }, { merge: true });
+          // 保管庫へ移す分の担当回数を、通算の実績に足しておく（保管しても実績が消えないように）
+          const movedVisits = liveVisits.filter(v => v.date && monthOf(v.date) < cutoff);
+          const nextStats = applyCountsToStats(assignStats, countAssignments(movedVisits), 1);
+          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths), assignStats: JSON.stringify(nextStats) }, { merge: true });
           setArchiveCache({});
           setHistory([]);
           setToastMessage(`${months.length}か月分（${liveVisits.length - nextVisits.length}件）を保管庫へ移しました。保管した月も、その日付を開けばこれまでどおり閲覧できます。`);
@@ -1951,7 +2032,9 @@
           const nextVisits = [...liveVisits, ...back.filter(v => !ids.has(v.id))];
           const nextPatterns = { ...decodeField(d.savedPatterns, {}), ...savedPatterns };
           const nextMonths = archivedMonths.filter(m => m !== month);
-          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths) }, { merge: true });
+          // 手元に戻る分は、通算の実績（保管分）から引く（二重に数えないように）
+          const nextStats = applyCountsToStats(assignStats, countAssignments(back.filter(v => !ids.has(v.id))), -1);
+          await setDoc(mainDocRef(), { visits: encodeField(nextVisits), savedPatterns: encodeField(nextPatterns), archivedMonths: JSON.stringify(nextMonths), assignStats: JSON.stringify(nextStats) }, { merge: true });
           setArchiveCache({});
           setToastMessage(`${month.replace('-', '年')}月のデータを編集できる状態に戻しました`);
         } catch (e) {
@@ -1962,6 +2045,44 @@
           setArchiveBusy(false);
           setShowToast(true);
         }
+      };
+
+      // 通算の担当実績の表（集計レポートを開いたときだけ計算）
+      const statsTable = useMemo(() => {
+        if (activeTab !== 'report') return null;
+        return buildStatsTable(assignStats, liveVisits, nurseIdSet, getTodayStr());
+      }, [activeTab, assignStats, liveVisits, nurseIdSet]);
+
+      // 表の数字を手で直す：「直したい回数」と「自動で数えた回数」の差を記録する
+      const handleEditStat = (row, nurseId, value) => {
+        if (!isAdminUser) return;
+        const wanted = Math.max(0, parseInt(value, 10) || 0);
+        const delta = wanted - (row.auto[nurseId] || 0);
+        const cur = assignStats[row.key] || { name: row.name, base: {}, adj: {} };
+        const adj = { ...(cur.adj || {}) };
+        if (delta === 0) delete adj[nurseId]; else adj[nurseId] = delta;
+        const next = { ...assignStats, [row.key]: { ...cur, name: cur.name || row.name, base: cur.base || {}, adj } };
+        setAssignStats(next);
+        updateCloudData({ assignStats: JSON.stringify(next) });
+      };
+
+      // 実績の表をCSVで保存する（Googleスプレッドシートや Excel で開ける）
+      const handleExportStats = () => {
+        if (!statsTable) return;
+        const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
+        const lines = [['利用者', ...nurses.map(n => n.name), '合計'].map(esc).join(',')];
+        statsTable.forEach(r => lines.push([r.name, ...nurses.map(n => r.counts[n.id] || 0), r.total].map(esc).join(',')));
+        const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });   // 先頭の印は、Excelで文字化けしないためのもの
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `careroute-担当実績-${getTodayStr()}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setToastMessage("担当実績を保存しました（利用者のお名前を含むため、取り扱いにご注意ください）");
+        setShowToast(true);
       };
 
       // 位置情報の状況（住所のうち、緯度経度が分かっているものの数）
@@ -2393,7 +2514,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
         offTypeOf: (n) => getIsNurseOffType(n, date, nurseStatuses),
         pointOf,
         travelBetween: (a, b) => travelMinutes(a, b, baseTravelTime, travelSpeedKmh),
-        history: useHistoryAssign ? buildAssignHistory(baseVisits, nurseIdSet, date) : null,
+        history: useHistoryAssign ? buildAssignHistory(baseVisits, nurseIdSet, date, assignStats) : null,
         settings
       });
 
@@ -4251,6 +4372,68 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     </div>
                   )}
 
+                  {statsTable && (
+                    <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden text-sm">
+                      <div className="p-5 md:p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-black text-slate-700 flex items-center gap-1.5"><History size={16} className="text-teal-600"/>担当実績（通算）</p>
+                          <p className="text-[11px] font-bold text-slate-400 mt-1 leading-relaxed">利用者ごとに、どの看護師がこれまで何回訪問したかの通算です（今日まで。保管庫へ移した分も含みます）。自動編成の「実績反映」は、この回数をもとに担当者を選びます。</p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          {isAdminUser && (
+                            <button onClick={() => setStatsEditing(v => !v)} className={`border px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap ${statsEditing ? 'bg-teal-600 border-teal-600 text-white hover:bg-teal-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                              <Pencil size={14} />{statsEditing ? '修正を終える' : '回数を修正'}
+                            </button>
+                          )}
+                          <button onClick={handleExportStats} disabled={statsTable.length === 0} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50" title="表をCSVファイルとして保存します。Googleスプレッドシートで開けます">
+                            <Download size={14} />実績を書き出す
+                          </button>
+                        </div>
+                      </div>
+                      {statsTable.length === 0 ? (
+                        <p className="p-8 text-center text-sm font-bold text-slate-400">まだ実績がありません</p>
+                      ) : (
+                        <div className="overflow-auto max-h-[60vh]">
+                          <table className="w-full text-center border-collapse min-w-[560px]">
+                            <thead className="sticky top-0 z-10">
+                              <tr className="bg-slate-50 text-slate-500 text-[11px] border-b border-slate-200">
+                                <th className="p-3 text-left sticky left-0 bg-slate-50 border-r border-slate-200">利用者</th>
+                                {nurses.map(n => (
+                                  <th key={n.id} className="p-3 border-r border-slate-100 font-black"><span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: n.color }}></span><span className="truncate max-w-[5rem]" title={n.name}>{n.name}</span></span></th>
+                                ))}
+                                <th className="p-3 font-black">合計</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {statsTable.map(row => {
+                                const max = Math.max(...nurses.map(n => row.counts[n.id] || 0));
+                                return (
+                                  <tr key={row.key} className="hover:bg-slate-50/80">
+                                    <td className="p-2.5 text-left font-bold text-slate-700 sticky left-0 bg-white border-r border-slate-200 whitespace-nowrap">{row.name}{row.edited && <span className="ml-1 text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-1 rounded" title="手で修正した回数があります">修正</span>}</td>
+                                    {nurses.map(n => {
+                                      const c = row.counts[n.id] || 0;
+                                      const isTop = c > 0 && c === max;
+                                      return (
+                                        <td key={n.id} className={`p-1.5 border-r border-slate-100 ${isTop ? 'bg-teal-50' : ''}`}>
+                                          {statsEditing ? (
+                                            <input type="number" min="0" defaultValue={c} key={`${row.key}-${n.id}-${c}`} onBlur={(e) => { if ((parseInt(e.target.value, 10) || 0) !== c) handleEditStat(row, n.id, e.target.value); }} className="w-14 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-bold outline-none focus:ring-2 focus:ring-teal-500" aria-label={`${row.name} ${n.name}`} />
+                                          ) : c > 0 ? (
+                                            <span className={`font-black ${isTop ? 'text-teal-700 text-base' : 'text-slate-500'}`}>{c}</span>
+                                          ) : <span className="text-slate-300">-</span>}
+                                        </td>
+                                      );
+                                    })}
+                                    <td className="p-2.5 font-black text-slate-700">{row.total}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden text-sm">
                     <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center text-sm font-bold">
                       <span>日別訪問件数</span>
@@ -4696,6 +4879,19 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                     <span>分</span>
                   </div>
                   <p className="text-[11px] font-bold text-slate-400 leading-relaxed">この時間帯の中に、続けて休める空き時間が残る人を優先します。全員が取れなくなる場合は、未割り当てにはせず割り当てたうえで「休憩なし」と表示します。</p>
+                </div>
+
+                <p className="text-xs font-black text-slate-500 mb-2 flex items-center gap-1.5"><History size={14}/>過去の担当実績の重み</p>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-5 space-y-2">
+                  <label className="flex items-start gap-2 text-sm font-bold text-slate-700">
+                    <input type="radio" name="historyWeight" value="normal" defaultChecked={settings.historyWeight !== 'strong'} className="mt-1 w-4 h-4 text-teal-600 border-slate-300" />
+                    <span>標準<span className="block text-[11px] font-bold text-slate-400 leading-relaxed">負担の偏りや移動の少なさと合わせて判断します。</span></span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm font-bold text-slate-700">
+                    <input type="radio" name="historyWeight" value="strong" defaultChecked={settings.historyWeight === 'strong'} className="mt-1 w-4 h-4 text-teal-600 border-slate-300" />
+                    <span>実績を最優先<span className="block text-[11px] font-bold text-slate-400 leading-relaxed">その時間に入れる人の中で、これまでの訪問回数の割合が最も高い人を選びます。負担が偏ることがあります。</span></span>
+                  </label>
+                  <p className="text-[11px] font-bold text-slate-400 leading-relaxed">「実績反映」がOFFのときは、どちらを選んでも実績は使いません。回数は集計レポートの「担当実績」で確認・修正できます。</p>
                 </div>
 
                 <p className="text-xs font-black text-slate-500 mb-2 flex items-center gap-1.5"><Clock size={14}/>半休の時刻</p>

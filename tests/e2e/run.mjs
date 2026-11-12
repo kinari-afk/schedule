@@ -222,6 +222,8 @@ const errs=[];
   assert.deepEqual(JSON.parse(docs[MAIN].archivedMonths),['2026-01','2026-02','2026-03','2026-04','2026-05']);
   assert.equal(parse(docs[ARCH('2026-03')].visits).length,30);
   assert(parse(docs[ARCH('2026-02')].savedPatterns)['2026-02-10']); assert(!parse(docs[MAIN].savedPatterns)['2026-02-10']); assert(parse(docs[MAIN].savedPatterns)['2026-11-11']);
+  const stats1 = JSON.parse(docs[MAIN].assignStats);
+  assert.deepEqual(stats1['古田0'].base, { [_nurses[0].id]: 25 }, '保管した分が通算に足されていない');   // 5か月×5日
   console.log('B1 OK: 保管', await page.locator('text=保管庫へ移しました').innerText());
   // --- 保管済みの月：レポートで件数が見える
   await page.locator('input[type=month]').fill('2026-03'); await page.waitForTimeout(600);
@@ -258,6 +260,7 @@ const errs=[];
   assert.deepEqual(JSON.parse(docs[MAIN].archivedMonths),['2026-01','2026-02','2026-03','2026-04']);
   assert.equal(parse(docs[MAIN].visits).filter(v=>v.date.startsWith('2026-05')).length,30);
   assert.equal(await page.locator('text=保管済みのため').count(),0);
+  assert.deepEqual(JSON.parse(docs[MAIN].assignStats)['古田0'].base, { [_nurses[0].id]: 20 }, '戻した分が通算から引かれていない');
   console.log('B3 OK: 保管済みの月を編集可能に戻す');
   // --- 復元：保管前のバックアップ(backup1)に戻す
   await side(page,'集計レポート'); await page.waitForTimeout(400);
@@ -277,6 +280,7 @@ const errs=[];
   await page.waitForSelector('text=バックアップから復元しました'); await page.waitForTimeout(300);
   docs = await r.docs();
   assert.equal(JSON.parse(docs[MAIN].archivedMonths).length,5); assert.equal(parse(docs[MAIN].visits).length,b2.visits.length);
+  assert.deepEqual(JSON.parse(docs[MAIN].assignStats)['古田0'].base, { [_nurses[0].id]: 25 }, '復元後の通算が保管庫の中身と合わない');
   // --- 壊れたファイルは拒否
   fs.writeFileSync(shot('bad.json'),'{"hello":1}');
   await page.locator('input[type=file]').setInputFiles(shot('bad.json'));
@@ -572,6 +576,54 @@ const errs=[];
   vs = parse((await r.store()).visits);
   assert.equal(vs.find(v=>v.id===c.id).isCancelled,undefined);
   console.log('J OK: キャンセル（件数・自動編成の対象外・同期で保持・集計・取り消し）と臨時の訪問（引き継ぎ・同期で保持）');
+  errs.push(...r.errors); await r.browser.close();
+}
+
+// ===== K. 担当実績（通算） =====
+{
+  const { seed, _nurses } = mk();
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await side(page,'集計レポート'); await page.waitForTimeout(500);
+  const card = page.locator('div:has(> div > div > p:has-text("担当実績（通算）"))').first();
+  // 相川さんは過去3週、青木さん(1000)が担当（月・水・金 ×3週 = 9回）
+  const rowOf = (name) => card.locator('tbody tr', { hasText:name });
+  assert.equal((await rowOf('相川').locator('td').nth(1).innerText()).trim(),'9');
+  assert.equal((await rowOf('相川').locator('td').last().innerText()).trim(),'9');
+  await page.screenshot({ path: shot('stats.png') });
+  // --- 回数を修正：相川さんの井上さん(1001)の欄を 0 → 30 に
+  await card.locator('button', { hasText:'回数を修正' }).click(); await page.waitForTimeout(200);
+  const input = rowOf('相川').locator('input').nth(1);
+  await input.fill('30'); await input.blur(); await page.waitForTimeout(400);
+  const st = JSON.parse((await r.store()).assignStats);
+  assert.deepEqual(st['相川太郎'].adj, { [_nurses[1].id]: 30 });
+  await card.locator('button', { hasText:'修正を終える' }).click(); await page.waitForTimeout(200);
+  assert.equal((await rowOf('相川').locator('td').nth(2).innerText()).trim(),'30');
+  assert.equal((await rowOf('相川').locator('td').last().innerText()).trim(),'39');
+  assert((await rowOf('相川').innerText()).includes('修正'));
+  // --- 書き出し：Googleスプレッドシートで開けるCSV
+  const [dl] = await Promise.all([page.waitForEvent('download'), card.locator('button', { hasText:'実績を書き出す' }).click()]);
+  const f = shot('stats.csv'); await dl.saveAs(f);
+  const csv = fs.readFileSync(f,'utf8');
+  assert(csv.startsWith('﻿"利用者","青木 さくら"')); assert(csv.includes('"相川 太郎 様","9","30"')); assert(csv.split('\r\n')[0].endsWith('"合計"'));
+  // --- 自動編成に効く：相川さん（女性限定）は井上さん(男性)には行かないが、修正した実績は別の利用者で確認
+  //     石田さんの実績を「遠藤さん(1003)に50回」と直し、最優先にすると、遠藤さんへ
+  await card.locator('button', { hasText:'回数を修正' }).click(); await page.waitForTimeout(200);
+  const target = (await card.locator('tbody tr').allInnerTexts()).findIndex(x=>x.startsWith('石田'));
+  const inp2 = card.locator('tbody tr').nth(target).locator('input').nth(3);
+  await inp2.fill('50'); await inp2.blur(); await page.waitForTimeout(400);
+  await side(page,'全体スケジュール'); await page.waitForTimeout(300);
+  await page.locator('button', { hasText:'編成の設定' }).click(); await page.waitForTimeout(300);
+  await page.locator('input[name=historyWeight][value=strong]').check();
+  await page.locator('form button[type=submit]', { hasText:'保存する' }).click(); await page.waitForSelector('text=編成の設定を保存しました');
+  assert.equal(JSON.parse((await r.store()).settings).historyWeight,'strong');
+  // 石田さんの予定がある日（火曜）で編成
+  await page.locator('button:visible', { hasText:'11/10(火)' }).click(); await page.waitForTimeout(400);
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
+  const vs = parse((await r.store()).visits);
+  const ishida = vs.find(v=>v.userName.startsWith('石田') && v.date==='2026-11-10');
+  assert.equal(ishida.nurseId,_nurses[3].id,'修正した実績が自動編成に使われていない');
+  console.log('K OK: 担当実績（表示・修正・書き出し・自動編成への反映・最優先の設定）');
   errs.push(...r.errors); await r.browser.close();
 }
 
