@@ -486,13 +486,13 @@ const errs=[];
   console.log('H2 OK: 設定の保存・理由の表示・週まとめて編成の取り消し');
   // --- 負担の一覧
   await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
-  await page.locator('button', { hasText:'負担の一覧' }).click(); await page.waitForTimeout(400);
+  await more(page,'負担の一覧'); await page.waitForTimeout(200);
   const wl = await page.locator('div:has(> div > p:has-text("負担の一覧"))').first().innerText();
   assert(wl.includes('青木 さくら') && wl.includes('訪問') && wl.includes('移動') && wl.includes('今週') && wl.includes('お休み') && /平均 \d+%/.test(wl), '負担の一覧の内容: '+wl.slice(0,200));
   await page.screenshot({ path: shot('workload.png') });
   await page.reload(); await page.waitForSelector('#root > div'); await page.waitForTimeout(600);   // 開いた状態を覚えている（再読み込みで偽DBは初期化される）
   assert(await page.locator('p:has-text("負担の一覧")').count()>0,'開いた状態が記憶されていない');
-  await page.locator('button', { hasText:'負担の一覧' }).click(); await page.waitForTimeout(200);
+  await more(page,'負担の一覧');
   assert.equal(await page.locator('p:has-text("負担の一覧")').count(),0);
   console.log('H3 OK: 負担の一覧（表示・記憶・閉じる）');
   errs.push(...r.errors); await r.browser.close();
@@ -694,7 +694,7 @@ const errs=[];
   await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
   assert.equal(await page.locator('[data-testid=pending-banner]').count(),0,'全部割り当てたのにバナーが残っている');
   // --- 転記用テキスト
-  await more(page,'転記用テキスト');
+  await page.locator('[data-testid=overview-toolbar] button', { hasText:'転記用テキスト' }).click(); await page.waitForTimeout(300);
   const val = (part) => page.locator(`textarea[data-part=${part}]`).inputValue();
   const vs = parse((await r.store()).visits).filter(v=>v.date==='2026-11-11').sort((a,b)=>a.startTime.localeCompare(b.startTime));
   const am = await val('am'), pm = await val('pm');
@@ -736,10 +736,22 @@ const errs=[];
     await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
     // よく使う4つ（＋元に戻す・その他）が、横にスクロールしなくても画面内に見えている
     const bar = page.locator('[data-testid=overview-toolbar]');
-    for (const name of ['自動編成','予定を追加','メモリ','負担の一覧','元に戻す','その他']) {
-      const box = await bar.locator('*', { hasText:name }).last().boundingBox();
+    const order = ['転記用テキスト','予定を追加','元に戻す','リセット','自動編成','その他'];
+    const labels = (await bar.locator(':scope > button, :scope > div > button[aria-expanded]').allInnerTexts()).map(x=>x.trim());
+    assert.deepEqual(labels, order, `${vw.width}px: 並び順が違う ${labels}`);
+    for (const name of order) {
+      const box = await bar.locator('button', { hasText:name }).first().boundingBox();
       assert(box && box.x >= 0 && box.x + box.width <= vw.width + 1, `${vw.width}px: ${name} が画面からはみ出している`);
     }
+    // メモリと負担の一覧は「その他」の中
+    await more(page);
+    const menuText = await page.locator('[data-testid=more-menu]').innerText();
+    assert(['メモリ1','メモリ2','メモリ3','負担の一覧','週まとめて編成','編成の設定','一括固定','印刷'].every(x=>menuText.includes(x)), menuText);
+    assert(!menuText.includes('転記用テキスト') && !menuText.includes('リセット'));
+    await page.locator('[data-testid=more-menu] button', { hasText:'メモリ1' }).click(); await page.waitForTimeout(200);
+    assert(await page.locator('h3', { hasText:'メモリ 1' }).count() > 0, 'メニューからメモリが開けない');
+    await page.locator('div.fixed button', { hasText:'現在の状態を保存' }).click(); await page.waitForTimeout(300);
+    assert(await page.locator('text=メモリ1 に現在の割り当てを保存しました').count() > 0);
     const ov = await bar.evaluate(el => el.scrollWidth - el.clientWidth);
     assert(ov <= 1, `${vw.width}px: ボタンの列が横にスクロールする`);
     assert.equal(await page.locator('input[type=number]:visible').count(), 0, '移動時間・時速の入力欄が上部に残っている');
@@ -748,7 +760,7 @@ const errs=[];
     await page.screenshot({ path: shot(`toolbar-${vw.width}-more.png`) });
     errs.push(...r.errors); await r.browser.close();
   }
-  console.log('M1 OK: よく使うボタンが横スクロールなしで見える（1440／1024／390px）・その他メニュー');
+  console.log('M1 OK: 上部の並び（転記用テキスト・予定を追加・元に戻す・リセット・自動編成・その他）が横スクロールなしで見える（1440／1024／390px）・メモリと負担の一覧はその他から');
 }
 {
   const { seed, _nurses } = mk();
