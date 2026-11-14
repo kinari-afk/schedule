@@ -3571,64 +3571,83 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
             <div className="flex-1 overflow-auto p-2.5 md:p-10">
               {activeTab === 'overview' && (
                 <div className="flex flex-col h-full space-y-2 md:space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4 shrink-0 text-sm">
-                    <h1 className="hidden md:block text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none">
-                      {formatDateLabel(selectedDate)}
-                    </h1>
-                    {/* よく使う操作だけを並べる（横にスクロールしなくても全部見える）。それ以外は「その他」の中 */}
-                    {/* 並び：転記用テキスト・予定を追加・元に戻す・リセット・自動編成・その他（横にスクロールしなくても全部見える） */}
-                    <div className="flex flex-wrap items-center gap-1.5 md:gap-2 md:justify-end" data-testid="overview-toolbar">
+                  {/* 日付の右：［負担の一覧］［印刷/PDF］［転記用テキスト］ ／ 右側：［元に戻す］［予定を追加］［メモリ］［リセット］［自動編成］［その他］
+                      幅が足りないときは折り返す（横にスクロールしない） */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 shrink-0 text-sm">
+                    <div className="flex flex-wrap items-center gap-1.5 md:gap-2" data-testid="overview-viewbar">
+                      <h1 className="hidden md:block text-2xl md:text-4xl font-black text-slate-800 tracking-tighter leading-none mr-2">
+                        {formatDateLabel(selectedDate)}
+                      </h1>
+                      <button onClick={() => setShowWorkload(v => !v)} className={`border px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${showWorkload ? 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`} title="担当者ごとの訪問時間・移動時間・件数を並べて表示します">
+                        <BarChart3 size={16} />
+                        負担の一覧
+                      </button>
+                      <button onClick={() => window.print()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap" title="この日の担当表を印刷、またはPDFとして保存します">
+                        <Printer size={16} />
+                        印刷 / PDF
+                      </button>
                       <button onClick={openTransfer} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap" title="この日の予定を、スプレッドシートなどに貼り付けられる文章にします">
                         <ClipboardCopy size={16} />
                         転記用テキスト
                       </button>
-                      {isAdmin && (
-                        <button 
-                          onClick={() => setShowAddEventModal(true)}
-                          className="bg-white border border-slate-200 hover:bg-indigo-50 text-indigo-600 px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
-                          title="会議・研修や、臨時の訪問を追加します"
-                        >
-                          <Briefcase size={16} />
-                          予定を追加
-                        </button>
-                      )}
-                      {isAdmin && (
-                        <button 
-                          onClick={handleUndo}
-                          disabled={history.length === 0}
-                          className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 whitespace-nowrap"
-                          title="直前の操作を取り消す（自動編成や別の案も、1つ前に戻せます）"
-                        >
-                          <Undo size={16} />
-                          元に戻す
-                        </button>
-                      )}
-                      {isAdmin && (
-                        <button 
-                          onClick={() => setShowResetConfirm(true)}
-                          disabled={!hasAssignedVisits}
-                          className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-3 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 whitespace-nowrap"
-                          title="固定した予定を除き、この日の割り当てを外して未割り当てに戻します"
-                        >
-                          <RotateCcw size={16} />
-                          リセット
-                        </button>
-                      )}
-                      {isAdmin && (
-                        <button 
-                          onClick={handleAutoAssignClick} 
-                          onPointerDown={handleAutoAssignPointerDown}
-                          title={pendingCount > 0 ? "未割り当ての予定を自動で割り当てます" : altTargetCount > 0 ? "編成済みです。押すと、別の組み合わせ（第2案）を作れます" : "自動編成できる予定がありません"}
-                          className={`bg-teal-600 hover:bg-teal-700 text-white px-4 md:px-6 py-2 md:py-3 rounded-2xl font-black text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-2 whitespace-nowrap select-none ${pendingCount > 0 && !isOptimizing ? '' : 'opacity-50'} ${canAutoAssign ? '' : 'cursor-not-allowed'}`}>
-                          <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
-                          {autoAssignFunnyMessage ? autoAssignFunnyMessage : (isOptimizing ? "編成中..." : "自動編成")}
-                        </button>
-                      )}
+                    </div>
+                    {isAdmin && (
+                    <div className="flex flex-wrap items-center gap-1.5 md:gap-2 ml-auto" data-testid="overview-toolbar">
+                      <button 
+                        onClick={handleUndo}
+                        disabled={history.length === 0}
+                        className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-40"
+                        title="直前の操作を取り消す（自動編成や別の案も、1つ前に戻せます）"
+                      >
+                        <Undo size={16} />
+                        元に戻す
+                      </button>
+                      <button 
+                        onClick={() => setShowAddEventModal(true)}
+                        className="bg-white border border-slate-200 hover:bg-indigo-50 text-indigo-600 px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
+                        title="会議・研修や、臨時の訪問を追加します"
+                      >
+                        <Briefcase size={16} />
+                        予定を追加
+                      </button>
+                      <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm" data-testid="memory-slots">
+                        <span className="text-[10px] font-black text-slate-400 px-1.5 md:px-2">メモリ</span>
+                        {[1, 2, 3].map(slot => {
+                          const hasData = savedPatterns[selectedDate]?.[slot];
+                          return (
+                            <button
+                              key={slot}
+                              onClick={() => setActivePatternSlot(slot)}
+                              className={`w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-xl font-black text-xs mx-0.5 transition-colors ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-transparent text-slate-400 hover:bg-slate-100'}`}
+                              title={`メモリ${slot}${hasData ? '（保存あり）' : ''}`}
+                            >
+                              {slot}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button 
+                        onClick={() => setShowResetConfirm(true)}
+                        disabled={!hasAssignedVisits}
+                        className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-40"
+                        title="固定した予定を除き、この日の割り当てを外して未割り当てに戻します"
+                      >
+                        <RotateCcw size={16} />
+                        リセット
+                      </button>
+                      <button 
+                        onClick={handleAutoAssignClick} 
+                        onPointerDown={handleAutoAssignPointerDown}
+                        title={pendingCount > 0 ? "未割り当ての予定を自動で割り当てます" : altTargetCount > 0 ? "編成済みです。押すと、別の組み合わせ（第2案）を作れます" : "自動編成できる予定がありません"}
+                        className={`bg-teal-600 hover:bg-teal-700 text-white px-4 md:px-6 py-2 md:py-3 rounded-2xl font-black text-sm shadow-xl shadow-teal-200 transition-all flex items-center justify-center gap-2 whitespace-nowrap select-none ${pendingCount > 0 && !isOptimizing ? '' : 'opacity-50'} ${canAutoAssign ? '' : 'cursor-not-allowed'}`}>
+                        <RefreshCw size={16} className={isOptimizing ? "animate-spin" : ""} />
+                        {autoAssignFunnyMessage ? autoAssignFunnyMessage : (isOptimizing ? "編成中..." : "自動編成")}
+                      </button>
                       <div className="relative">
                         <button 
                           onClick={(e) => { e.stopPropagation(); setShowMoreMenu(v => !v); }}
                           aria-expanded={showMoreMenu}
-                          className={`border px-3 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${showMoreMenu ? 'bg-slate-100 border-slate-300 text-slate-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                          className={`border px-3 md:px-4 py-2 md:py-3 rounded-2xl font-black text-xs md:text-sm shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${showMoreMenu ? 'bg-slate-100 border-slate-300 text-slate-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                           title="そのほかの操作"
                         >
                           <MoreHorizontal size={16} />
@@ -3638,58 +3657,30 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                           <>
                             <div className="fixed inset-0 z-[140]" onClick={(e) => { e.stopPropagation(); setShowMoreMenu(false); }}></div>
                             <div className="absolute right-0 top-full mt-2 z-[150] bg-white rounded-2xl shadow-2xl border border-slate-200 py-2 w-64 max-w-[calc(100vw-1.5rem)]" data-testid="more-menu" onClick={(e) => { e.stopPropagation(); setShowMoreMenu(false); }}>
-                              {isAdmin && (
-                                <>
-                                  <p className="px-4 pt-1 pb-1 text-[10px] font-black text-slate-400">メモリ（この日の割り当てを保存・復元）</p>
-                                  <div className="px-3 pb-1 flex gap-1.5">
-                                    {[1, 2, 3].map(slot => {
-                                      const hasData = savedPatterns[selectedDate]?.[slot];
-                                      return (
-                                        <button
-                                          key={slot}
-                                          onClick={() => setActivePatternSlot(slot)}
-                                          className={`flex-1 h-9 flex items-center justify-center rounded-xl font-black text-sm transition-colors ${hasData ? 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
-                                          title={`メモリ${slot}${hasData ? '（保存あり）' : ''}`}
-                                        >
-                                          メモリ{slot}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                  <div className="my-1.5 border-t border-slate-100"></div>
-                                  <p className="px-4 pt-1 pb-1 text-[10px] font-black text-slate-400">自動編成</p>
-                                  <button onClick={handleAutoAssignWeek} disabled={isOptimizing || weekAssignDates.length === 0} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-teal-50 flex items-center gap-3 text-teal-700 disabled:opacity-40 disabled:cursor-not-allowed" title="表示中の週のうち、今日以降で未割り当てが残っている日をまとめて自動編成します">
-                                    <CalendarDays size={16} />週まとめて編成{weekAssignDates.length > 0 ? `（${weekAssignDates.length}日）` : ''}
-                                  </button>
-                                  <button onClick={() => setUseHistoryAssign(v => !v)} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="ONにすると、自動編成のときに「過去にその利用者を担当した看護師」を優先します">
-                                    <History size={16} className={useHistoryAssign ? 'text-teal-600' : 'text-slate-400'} />実績反映 <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${useHistoryAssign ? 'bg-teal-100 text-teal-700' : 'bg-slate-100 text-slate-500'}`}>{useHistoryAssign ? 'ON' : 'OFF'}</span>
-                                  </button>
-                                  <button onClick={() => setShowSettings(true)} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="移動時間・時速、昼休憩、半休の時刻などを設定します">
-                                    <Settings2 size={16} className="text-slate-400" />編成の設定<span className="ml-auto text-[10px] font-bold text-slate-400">移動{baseTravelTime}分・時速{travelSpeedKmh}km</span>
-                                  </button>
-                                  <div className="my-1.5 border-t border-slate-100"></div>
-                                  <p className="px-4 pt-1 pb-1 text-[10px] font-black text-slate-400">この日の予定</p>
-                                  <button onClick={handleLockAllToday} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="この日の予定と出勤状況を一括固定">
-                                    <Lock size={16} className="text-slate-400" />一括固定
-                                  </button>
-                                  <button onClick={handleUnlockAllToday} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="この日の固定を一括解除">
-                                    <Unlock size={16} className="text-slate-400" />一括解除
-                                  </button>
-                                  <div className="my-1.5 border-t border-slate-100"></div>
-                                </>
-                              )}
-                              <p className="px-4 pt-1 pb-1 text-[10px] font-black text-slate-400">表示・書き出し</p>
-                              <button onClick={() => setShowWorkload(v => !v)} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="担当者ごとの訪問時間・移動時間・件数を並べて表示します">
-                                <BarChart3 size={16} className={showWorkload ? 'text-teal-600' : 'text-slate-400'} />負担の一覧 <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${showWorkload ? 'bg-teal-100 text-teal-700' : 'bg-slate-100 text-slate-500'}`}>{showWorkload ? '表示中' : '非表示'}</span>
+                              <p className="px-4 pt-1 pb-1 text-[10px] font-black text-slate-400">自動編成</p>
+                              <button onClick={handleAutoAssignWeek} disabled={isOptimizing || weekAssignDates.length === 0} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-teal-50 flex items-center gap-3 text-teal-700 disabled:opacity-40 disabled:cursor-not-allowed" title="表示中の週のうち、今日以降で未割り当てが残っている日をまとめて自動編成します">
+                                <CalendarDays size={16} />週まとめて編成{weekAssignDates.length > 0 ? `（${weekAssignDates.length}日）` : ''}
                               </button>
-                              <button onClick={() => window.print()} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="この日の担当表を印刷、またはPDFとして保存します">
-                                <Printer size={16} className="text-slate-400" />印刷 / PDF
+                              <button onClick={() => setUseHistoryAssign(v => !v)} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="ONにすると、自動編成のときに「過去にその利用者を担当した看護師」を優先します">
+                                <History size={16} className={useHistoryAssign ? 'text-teal-600' : 'text-slate-400'} />実績反映 <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${useHistoryAssign ? 'bg-teal-100 text-teal-700' : 'bg-slate-100 text-slate-500'}`}>{useHistoryAssign ? 'ON' : 'OFF'}</span>
+                              </button>
+                              <button onClick={() => setShowSettings(true)} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="移動時間・時速、昼休憩、半休の時刻などを設定します">
+                                <Settings2 size={16} className="text-slate-400" />編成の設定<span className="ml-auto text-[10px] font-bold text-slate-400">移動{baseTravelTime}分・時速{travelSpeedKmh}km</span>
+                              </button>
+                              <div className="my-1.5 border-t border-slate-100"></div>
+                              <p className="px-4 pt-1 pb-1 text-[10px] font-black text-slate-400">この日の予定</p>
+                              <button onClick={handleLockAllToday} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="この日の予定と出勤状況を一括固定">
+                                <Lock size={16} className="text-slate-400" />一括固定
+                              </button>
+                              <button onClick={handleUnlockAllToday} className="w-full text-left px-4 py-2.5 text-sm font-bold hover:bg-slate-50 flex items-center gap-3 text-slate-700" title="この日の固定を一括解除">
+                                <Unlock size={16} className="text-slate-400" />一括解除
                               </button>
                             </div>
                           </>
                         )}
                       </div>
                     </div>
+                    )}
                   </div>
 
                   {pendingCount > 0 && (
