@@ -15,6 +15,11 @@ const mk=()=>{ const { _nurses, _visits, ...seed } = makeSeed(MON); return { see
 // 表示する週と日付を固定する。再読み込みすると偽データベースは初期状態に戻る点に注意
 const setDates = async (page, sel) => { await page.evaluate(([m,s])=>{ localStorage.setItem('careRoute_startDate',m); localStorage.setItem('careRoute_selectedDate',s); localStorage.setItem('careRoute_activeTab','overview'); },[MON,sel]); await page.reload(); await page.waitForSelector('#root > div'); await page.waitForTimeout(900); };
 const side = (page, name) => page.locator('aside button', { hasText:name }).click();
+// 全体スケジュールの「その他」メニューを開く（項目名を渡すと、その項目まで押す）
+const more = async (page, item) => {
+  if (await page.locator('[data-testid=more-menu]').count() === 0) { await page.locator('button[aria-expanded]', { hasText:'その他' }).click(); await page.waitForTimeout(150); }
+  if (item) { await page.locator('[data-testid=more-menu] button', { hasText:item }).click(); await page.waitForTimeout(250); }
+};
 const errs=[];
 
 // ============ 1. スマホ・閲覧モード ============
@@ -437,14 +442,18 @@ const errs=[];
   const { page } = r;
   await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
   // --- 設定：半休の時刻と昼休憩を変更して保存
-  await page.locator('button', { hasText:'編成の設定' }).click(); await page.waitForTimeout(300);
+  await more(page,'編成の設定');
   await page.screenshot({ path: shot('settings.png') });
   await page.locator('input[name=amOffStart]').fill('13:00');
   await page.locator('input[name=lunchMinutes]').fill('45');
+  await page.locator('input[name=baseTravelTime]').fill('6');
+  await page.locator('input[name=travelSpeedKmh]').fill('30');
   await page.locator('form button[type=submit]', { hasText:'保存する' }).click();
   await page.waitForSelector('text=編成の設定を保存しました');
   let st = JSON.parse((await r.store()).settings);
-  assert.equal(st.amOffStart,'13:00'); assert.equal(st.lunch.minutes,45); assert.equal(st.lunch.enabled,true); assert.equal(st.pmOffEnd,'12:30');
+  assert.equal(st.amOffStart,'13:00'); assert.equal(st.lunch.minutes,45);
+  assert.equal((await r.store()).baseTravelTime,6); assert.equal((await r.store()).travelSpeedKmh,30);
+  await more(page); assert((await page.locator('[data-testid=more-menu]').innerText()).includes('移動6分・時速30km')); await page.mouse.click(5,5); await page.waitForTimeout(150); assert.equal(st.lunch.enabled,true); assert.equal(st.pmOffEnd,'12:30');
   // --- 未割り当ての理由（編成前）：メニューに「入れられる担当者」が出る
   await page.locator('.visit-card:visible', { hasText:'宇野' }).first().click({ button:'right', position:{x:7,y:10} }); await page.waitForTimeout(300);
   assert(await page.locator('div.fixed', { hasText:'入れられる担当者' }).count()>0,'未割り当ての理由が出ない');
@@ -452,9 +461,10 @@ const errs=[];
   await page.mouse.click(5,5); await page.waitForTimeout(200);
   // --- 週まとめて編成：今日(水)以降の3日分。月・火（過去）は触らない
   const before = parse((await r.store()).visits);
-  const label = await page.locator('button', { hasText:'週まとめて編成' }).innerText();
+  await more(page);
+  const label = await page.locator('[data-testid=more-menu] button', { hasText:'週まとめて編成' }).innerText();
   assert(label.includes('3日'),'対象日数: '+label);
-  await page.locator('button', { hasText:'週まとめて編成' }).click();
+  await page.locator('[data-testid=more-menu] button', { hasText:'週まとめて編成' }).click();
   await page.waitForSelector('text=日分の自動編成完了');
   const toast = await page.locator('text=日分の自動編成完了').innerText();
   const after = parse((await r.store()).visits);
@@ -546,7 +556,9 @@ const errs=[];
   assert(toast.includes('11件を割り当て'),toast);
   await page.screenshot({ path: shot('cancelled.png') });
   // --- 週まとめて編成の対象日からも外れる（今日は対象外になる）
-  assert(!(await page.locator('button', { hasText:'週まとめて編成' }).innerText()).includes('3日'));
+  await more(page);
+  assert(!(await page.locator('[data-testid=more-menu] button', { hasText:'週まとめて編成' }).innerText()).includes('3日'));
+  await page.mouse.click(5,5); await page.waitForTimeout(150);
   // --- 同期してもキャンセルは保たれる
   const dayName=['日','月','火','水','木','金','土'];
   userCsvBody = ['氏名,曜日,開始,所要,限定,優先1,優先2,除外,住所,状態', ...vs.filter(v=>v.date>=MON && v.date<='2026-11-15').map(v=>[v.userName.replace(' 様',''),dayName[new Date(v.date).getDay()],v.originalStartTime,v.duration,v.requiresFemaleNurse?'女性':'',(v.preferredNurseNames||[])[0]||'','',(v.excludedNurseNames||[]).join('・'),v.address,''].join(','))].join('\n');
@@ -623,7 +635,7 @@ const errs=[];
   const inp2 = card.locator('tbody tr').nth(target).locator('input').nth(3);
   await inp2.fill('50'); await inp2.blur(); await page.waitForTimeout(400);
   await side(page,'全体スケジュール'); await page.waitForTimeout(300);
-  await page.locator('button', { hasText:'編成の設定' }).click(); await page.waitForTimeout(300);
+  await more(page,'編成の設定');
   await page.locator('input[name=historyWeight][value=strong]').check();
   await page.locator('form button[type=submit]', { hasText:'保存する' }).click(); await page.waitForSelector('text=編成の設定を保存しました');
   assert.equal(JSON.parse((await r.store()).settings).historyWeight,'strong');
@@ -682,7 +694,7 @@ const errs=[];
   await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('text=自動編成完了');
   assert.equal(await page.locator('[data-testid=pending-banner]').count(),0,'全部割り当てたのにバナーが残っている');
   // --- 転記用テキスト
-  await page.locator('button', { hasText:'転記用テキスト' }).click(); await page.waitForTimeout(300);
+  await more(page,'転記用テキスト');
   const val = (part) => page.locator(`textarea[data-part=${part}]`).inputValue();
   const vs = parse((await r.store()).visits).filter(v=>v.date==='2026-11-11').sort((a,b)=>a.startTime.localeCompare(b.startTime));
   const am = await val('am'), pm = await val('pm');
@@ -712,6 +724,83 @@ const errs=[];
   await page.locator('button', { hasText:'メモをコピー' }).click(); await page.waitForTimeout(200);
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'山田さん休み');
   console.log('L2 OK: 転記用テキスト（形式・略称・1セル形式／縦2セル／文章でコピー・書き直し）');
+  errs.push(...r.errors); await r.browser.close();
+}
+
+// ===== M. 全体スケジュールのボタン配置と、別の案（第2案） =====
+{
+  for (const [vw, mobile] of [[{width:1440,height:900},false],[{width:390,height:780},true],[{width:1024,height:768},false]]) {
+    const { seed } = mk();
+    const r = await launch({ viewport:vw, seed, admin:true, isMobile:mobile, scale: mobile?2:1, authCfg:AUTH, login:LOGIN });
+    const { page } = r;
+    await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+    // よく使う4つ（＋元に戻す・その他）が、横にスクロールしなくても画面内に見えている
+    const bar = page.locator('[data-testid=overview-toolbar]');
+    for (const name of ['自動編成','予定を追加','メモリ','負担の一覧','元に戻す','その他']) {
+      const box = await bar.locator('*', { hasText:name }).last().boundingBox();
+      assert(box && box.x >= 0 && box.x + box.width <= vw.width + 1, `${vw.width}px: ${name} が画面からはみ出している`);
+    }
+    const ov = await bar.evaluate(el => el.scrollWidth - el.clientWidth);
+    assert(ov <= 1, `${vw.width}px: ボタンの列が横にスクロールする`);
+    assert.equal(await page.locator('input[type=number]:visible').count(), 0, '移動時間・時速の入力欄が上部に残っている');
+    await page.screenshot({ path: shot(`toolbar-${vw.width}.png`) });
+    await more(page);
+    await page.screenshot({ path: shot(`toolbar-${vw.width}-more.png`) });
+    errs.push(...r.errors); await r.browser.close();
+  }
+  console.log('M1 OK: よく使うボタンが横スクロールなしで見える（1440／1024／390px）・その他メニュー');
+}
+{
+  const { seed, _nurses } = mk();
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  const autoBtn = page.locator('[data-testid=overview-toolbar] button', { hasText:'自動編成' });
+  // 第1案
+  await autoBtn.click(); await page.waitForSelector('text=自動編成完了');
+  const day = async () => parse((await r.store()).visits).filter(v=>v.date==='2026-11-11').sort((a,b)=>a.id-b.id);
+  const plan1 = (await day()).map(v=>v.nurseId);
+  assert(plan1.every(x=>x!=null));
+  assert((await autoBtn.getAttribute('class')).includes('opacity-50'),'編成後もボタンが通常表示のまま');
+  // 手で1件変える（この予定は別の案でも動かない）
+  await side(page,'利用者管理'); await page.waitForTimeout(300);
+  const firstRow = page.locator('tbody tr').first();
+  const curNurse = parseInt(await firstRow.locator('select').inputValue(), 10);
+  const otherNurse = _nurses.find(n=>n.id!==curNurse && n.isFemale && !n.offDays.length).id;
+  await firstRow.locator('select').selectOption(String(otherNurse)); await page.waitForTimeout(300);
+  const manual = (await day()).filter(v=>v.autoAssigned===false);
+  assert.equal(manual.length,1,'手で変えた予定から自動編成の印が外れていない');
+  const manualId = manual[0].id;
+  await side(page,'全体スケジュール'); await page.waitForTimeout(300);
+  // もう一度押す → 確認 → キャンセルなら何も変わらない
+  await autoBtn.click(); await page.waitForSelector('[data-testid=alt-plan-confirm]');
+  const msg = await page.locator('[data-testid=alt-plan-confirm]').innerText();
+  assert(msg.includes('第2案を作りますか') && msg.includes('11件を組み直します'), msg);
+  await page.screenshot({ path: shot('alt-plan-confirm.png') });
+  await page.locator('[data-testid=alt-plan-confirm] button', { hasText:'キャンセル' }).click(); await page.waitForTimeout(200);
+  const beforeAlt = (await day()).map(v=>v.nurseId);
+  // OK → 第2案
+  await autoBtn.click(); await page.waitForSelector('[data-testid=alt-plan-confirm]');
+  await page.locator('[data-testid=alt-plan-confirm] button', { hasText:'OK' }).click();
+  await page.waitForSelector('text=第2案を作りました');
+  const toast = await page.locator('text=第2案を作りました').innerText();
+  const plan2 = (await day());
+  assert.equal(plan2.find(v=>v.id===manualId).nurseId, otherNurse, '手で変えた割り当てが組み直された');
+  const changed = plan2.filter((v,i)=>v.nurseId!==beforeAlt[i]).length;
+  assert(changed>0, '第2案で何も変わらなかった'); assert(toast.includes(`${changed}件の担当者が変わりました`), toast);
+  assert(plan2.every(v=>v.nurseId!=null),'第2案で未割り当てが出た');
+  for (const n of _nurses) { const m=plan2.filter(v=>v.nurseId===n.id).sort((a,b)=>a.startTime.localeCompare(b.startTime)); for(let i=1;i<m.length;i++){ const tt=x=>+x.slice(0,2)*60+ +x.slice(3); assert(tt(m[i-1].startTime)+m[i-1].duration<=tt(m[i].startTime),'第2案で時間が重なった '+n.name); } }
+  // 元に戻す → 第1案に戻る。もう一度押すと第3案（第1案とも第2案とも違う組み合わせを目指す）
+  await page.locator('button', { hasText:'元に戻す' }).first().click(); await page.waitForTimeout(400);
+  assert.deepEqual((await day()).map(v=>v.nurseId), beforeAlt);
+  await autoBtn.click(); await page.waitForSelector('[data-testid=alt-plan-confirm]');
+  assert((await page.locator('[data-testid=alt-plan-confirm]').innerText()).includes('第3案'));
+  await page.locator('[data-testid=alt-plan-confirm] button', { hasText:'OK' }).click(); await page.waitForSelector('text=第3案を作りました');
+  // 個別ルートの自動編成ボタンも同じ動き
+  await side(page,'個別ルート確認'); await page.waitForTimeout(300);
+  await page.locator('button', { hasText:'自動編成' }).first().click(); await page.waitForSelector('[data-testid=alt-plan-confirm]');
+  assert((await page.locator('[data-testid=alt-plan-confirm]').innerText()).includes('第4案'));
+  console.log('M2 OK: 編成後にもう一度押すと確認 → 第2案（手で変えた分は残す・元に戻す・第3案・個別ルートからも）', toast);
   errs.push(...r.errors); await r.browser.close();
 }
 

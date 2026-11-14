@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell, altPlanTargets };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -445,5 +445,33 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.equal(H.isPendingVisit({...vs[5],isExcludedFromAutoAssign:true},set),false); assert.equal(H.isPendingVisit(vs[0],set),false);
   assert.deepEqual(H.normalizeSettings({shortNames:{4:' 南 ',5:'',6:3}}).shortNames,{4:'南'});
   console.log('TR OK: 転記用テキスト（並び・同行のまとめ・未定・全員参加・略称）');
+}
+// ---- 別の案（第2案） ----
+{
+  const nurses=[nurse(1,'A'),nurse(2,'B')];
+  const v=visit('対象 様','10:00');
+  // 条件が同じなら1人目（A）。前の案でAだった予定は、別の案ではBになる
+  let r=run([v],nurses);
+  assert.equal(r.visits[0].nurseId,1); assert.equal(r.visits[0].autoAssigned,true);
+  r=H.planAutoAssign({...ctx([v],nurses),avoid:new Map([[v.id,new Set([1])]])});
+  assert.equal(r.visits[0].nurseId,2,'別の案で違う担当者にならない');
+  // 全員を避けても、入れられる人がいれば割り当てる（未割り当てにはしない）
+  r=H.planAutoAssign({...ctx([v],nurses),avoid:new Map([[v.id,new Set([1,2])]])});
+  assert.notEqual(r.visits[0].nurseId,null);
+  // 優先担当者の指定は、別の案でも守る
+  const pref=visit('指名 様','10:00',30,{preferredNurseNames:['A']});
+  r=H.planAutoAssign({...ctx([pref],nurses),avoid:new Map([[pref.id,new Set([1])]])});
+  assert.equal(r.visits[0].nurseId,1);
+  // 組み直す対象：自動編成で決めた分だけ。印が無い日は固定していない訪問すべて
+  const set=new Set([1,2]);
+  const a1={...visit('自動 様','09:00',30,{nurseId:1}),autoAssigned:true};
+  const m1={...visit('手動 様','10:00',30,{nurseId:2}),autoAssigned:false};
+  const f1={...visit('固定 様','11:00',30,{nurseId:1}),autoAssigned:true,isExcludedFromAutoAssign:true};
+  const c1={...visit('取消 様','12:00',30,{nurseId:null}),isCancelled:true};
+  const o1=visit('会議','13:00',30,{nurseId:1,type:'other'});
+  assert.deepEqual(H.altPlanTargets([a1,m1,f1,c1,o1],set,D).map(x=>x.userName),['自動 様']);
+  const old1={...a1,autoAssigned:undefined};
+  assert.deepEqual(H.altPlanTargets([old1,m1,f1,c1,o1],set,D).map(x=>x.userName),['自動 様','手動 様']);
+  console.log('AP OK: 別の案（前の案を避ける・条件は守る・組み直す対象）');
 }
 console.log('ALL PASS');
