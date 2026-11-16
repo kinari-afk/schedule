@@ -826,6 +826,49 @@ const errs=[];
   errs.push(...r.errors); await r.browser.close();
 }
 
+// ===== N. 隔週・第n週の利用者 =====
+{
+  const { seed } = mk();
+  seed.visits = '[]';
+  let userCsvBody = ['氏名,曜日,開始,所要,限定,優先1,優先2,除外,住所,状態,緯度,経度,頻度',
+    '毎週 太郎,火,9:00,30,,,,,東京都架空区1,,,,',
+    '隔週当番 太郎,火,10:00,30,,,,,東京都架空区2,,,,隔週 2026/11/10',     // 11/10 の週が対象
+    '隔週非番 太郎,火,11:00,30,,,,,東京都架空区3,,,,隔週 2026/11/3',      // 11/3 の週が対象 → 11/10 の週は対象外
+    '第二四 太郎,火,13:30,30,,,,,東京都架空区4,,,,第2・4',                 // 11/10 は第2火曜 → 対象
+    '第一三 太郎,火,14:30,30,,,,,東京都架空区5,,,,第1.3',                  // 対象外
+    '基準なし 太郎,火,15:30,30,,,,,東京都架空区6,,,,隔週',                 // 判定できない → 毎週扱い＋注意
+    '日付指定 太郎,2026/11/12,9:00,30,,,,,東京都架空区7,,,,第1・3',        // 日付指定は頻度に関係なく作る
+  ].join('\n');
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN, csv:{ 'users.csv': ()=>userCsvBody } });
+  const { page } = r;
+  const sync = async () => { await page.locator('button', { hasText:'同期を実行' }).click(); await page.waitForSelector('text=同期完了'); await page.waitForTimeout(300); return page.locator('text=同期完了').innerText(); };
+  const names = async (from, to) => parse((await r.store()).visits).filter(v=>v.date>=from && v.date<=to).map(v=>v.userName.replace(' 太郎 様','')).sort();
+  await side(page,'利用者管理'); await page.waitForTimeout(300);
+  // --- 11/9 の週
+  let msg = await sync();
+  assert.deepEqual(await names('2026-11-09','2026-11-15'), ['基準なし','日付指定','毎週','第二四','隔週当番'].sort());
+  assert(msg.includes('今週は対象外 2件'), msg); assert(msg.includes('基準なし 太郎') && msg.includes('隔週の基準日が無い'), msg);
+  const tagged = parse((await r.store()).visits).find(v=>v.userName.startsWith('第二四'));
+  assert.equal(tagged.frequency,'第2・4');
+  await page.locator('button:visible', { hasText:'11/10(火)' }).click(); await page.waitForTimeout(300);
+  assert(await page.locator('tbody tr', { hasText:'隔週当番' }).locator('span', { hasText:'隔週' }).count() > 0, '表に頻度の印が出ない');
+  await page.screenshot({ path: shot('frequency.png') });
+  // --- 翌週（11/16〜）：隔週は入れ替わり、第3火曜（11/17）は「第1・3」が対象
+  await page.locator('button[title="次週"]:visible').click(); await page.waitForTimeout(400);
+  msg = await sync();
+  assert.deepEqual(await names('2026-11-16','2026-11-22'), ['基準なし','毎週','第一三','隔週非番'].sort());
+  // --- 同じ週をもう一度同期しても変わらない
+  msg = await sync();
+  assert(msg.includes('新規 0件') && msg.includes('削除 0件'), msg);
+  // --- 頻度を後から付けると、対象でない週の予定は同期で消える（担当が決まっていれば知らせる）
+  userCsvBody = userCsvBody.replace('毎週 太郎,火,9:00,30,,,,,東京都架空区1,,,,', '毎週 太郎,火,9:00,30,,,,,東京都架空区1,,,,第2・4');
+  msg = await sync();
+  assert(!(await names('2026-11-16','2026-11-22')).includes('毎週'), '対象外になった週の予定が残っている');
+  assert((await names('2026-11-09','2026-11-15')).includes('毎週'), '表示していない週の予定まで消えた');
+  console.log('N OK: 隔週・第n週（対象の週だけ作成・翌週は入れ替わり・基準日なしの注意・日付指定は対象外）');
+  errs.push(...r.errors); await r.browser.close();
+}
+
 const real = errs.filter(e=>!e.includes('cdn.tailwindcss.com should not be used')&&!e.includes('in-browser Babel')&&!e.includes('形式が違います')&&!e.includes('CSVではなくWebページ'));
 if (real.length) { console.error('画面でエラーが発生:', real); process.exit(1); }
 console.log('ALL PASS');

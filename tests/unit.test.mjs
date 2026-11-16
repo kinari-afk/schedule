@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell, altPlanTargets };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell, altPlanTargets, parseFrequency, visitOccursOn };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -473,5 +473,26 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   const old1={...a1,autoAssigned:undefined};
   assert.deepEqual(H.altPlanTargets([old1,m1,f1,c1,o1],set,D).map(x=>x.userName),['自動 様','手動 様']);
   console.log('AP OK: 別の案（前の案を避ける・条件は守る・組み直す対象）');
+}
+// ---- 訪問の頻度（隔週・第n週） ----
+{
+  const P=H.parseFrequency, O=H.visitOccursOn;
+  assert.deepEqual(P(''),{type:'weekly'}); assert.deepEqual(P('毎週'),{type:'weekly'}); assert.deepEqual(P(undefined),{type:'weekly'});
+  // 第n週：その曜日の n 回目。2026年11月の火曜は 3,10,17,24日
+  const n13=P('第1・3');
+  assert.deepEqual(n13,{type:'nth',weeks:[1,3],label:'第1・3'});
+  assert.deepEqual(['2026-11-03','2026-11-10','2026-11-17','2026-11-24'].map(d=>O(n13,d)),[true,false,true,false]);
+  for (const w of ['第1.3','第１、３週','第1週・第3週','1,3週','第3/1']) assert.deepEqual(P(w).weeks,[1,3],w);
+  assert.deepEqual(P('第2・4').weeks,[2,4]); assert.deepEqual(P('第5').weeks,[5]);
+  assert.equal(O(P('第5'),'2026-11-29'),true); assert.equal(O(P('第5'),'2026-11-24'),false);
+  // 隔週：基準日のある週から1週おき。基準日は同じ週のどの曜日でもよい。過去にさかのぼっても正しい
+  const bi=P('隔週 2026/11/10');
+  assert.deepEqual(bi,{type:'biweekly',base:'2026-11-10',label:'隔週'});
+  assert.deepEqual(['2026-10-27','2026-11-03','2026-11-10','2026-11-13','2026-11-17','2026-11-24','2026-12-01','2027-01-05'].map(d=>O(bi,d)),[true,false,true,true,false,true,false,true]);
+  assert.equal(P('隔週(2026-11-9)').base,'2026-11-09'); assert.equal(P('隔週：２０２６／１１／１０').base,'2026-11-10');
+  // 基準日が無い隔週・読み取れない書き方は、毎週として扱う（同期のときに知らせる）
+  assert.deepEqual(P('隔週'),{type:'biweekly',base:null,label:'隔週'}); assert.equal(O(P('隔週'),'2026-11-17'),true);
+  assert.equal(P('ときどき').type,'unknown'); assert.equal(O(P('ときどき'),'2026-11-17'),true);
+  console.log('FQ OK: 訪問の頻度（毎週・隔週・第n週・書き方のゆれ）');
 }
 console.log('ALL PASS');
