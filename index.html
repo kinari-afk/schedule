@@ -422,6 +422,40 @@
       return changed ? result : next;
     };
 
+    // --- 訪問の頻度（毎週・隔週・第n週） ---
+    // スプレッドシートの「頻度」の欄を読み取る。
+    //  空欄・「毎週」          → 毎週
+    //  「隔週 2026/11/10」     → 2週間に1回。日付は「訪問がある週」の中の1日（基準日）
+    //  「第1・3」「第2,4」など → その月の第n回目の曜日だけ（例：第1・第3火曜）
+    const parseFrequency = (raw) => {
+      const text = String(raw ?? '').replace(/[\s　]/g, '')
+        .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+        .replace(/[／]/g, '/').replace(/[－‐−–—]/g, '-').replace(/[．]/g, '.');   // 全角の区切り記号も読めるようにする
+      if (!text || text === '毎週') return { type: 'weekly' };
+      if (text.includes('隔週')) {
+        const m = text.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+        if (!m) return { type: 'biweekly', base: null, label: '隔週' };
+        const base = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+        return isNaN(new Date(base).getTime()) ? { type: 'biweekly', base: null, label: '隔週' } : { type: 'biweekly', base, label: '隔週' };
+      }
+      if (/第|週/.test(text)) {
+        const weeks = [...new Set((text.match(/[1-5]/g) || []).map(Number))].sort();
+        if (weeks.length > 0) return { type: 'nth', weeks, label: `第${weeks.join('・')}` };
+      }
+      return { type: 'unknown', label: String(raw).trim() };
+    };
+    // その日付が、頻度の条件に当てはまるか
+    const visitOccursOn = (freq, dateStr) => {
+      if (!freq || freq.type === 'weekly' || freq.type === 'unknown') return true;
+      if (freq.type === 'nth') return freq.weeks.includes(Math.ceil(parseInt(dateStr.slice(8, 10), 10) / 7));   // その月で何回目の曜日か
+      if (freq.type === 'biweekly') {
+        if (!freq.base) return true;   // 基準日が無いと判定できないので、毎週として扱う（同期のときに知らせる）
+        const weeks = Math.round((new Date(getMondayStr(dateStr)) - new Date(getMondayStr(freq.base))) / (7 * 86400000));
+        return weeks % 2 === 0;
+      }
+      return true;
+    };
+
     // --- 移動時間の計算 ---
     // 住所の表記ゆれ（空白・全角数字・ハイフンの種類）をそろえる
     const normalizeAddress = (addr) => (addr || '')
@@ -3037,9 +3071,12 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           const rows = parseCsv(txt);
           const dayMap = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
           const result = [];
+          let readRows = 0, skippedByFrequency = 0;
+          const frequencyWarnings = new Set();   // 頻度の書き方に問題がある利用者
           
           for (let i = 1; i < rows.length; i++) {
             const p = rows[i];
+            if (p[0]?.trim()) readRows++;
             if (p[9] && p[9].includes('休止')) continue; 
             if (p[0]?.trim()) {
               const nameStr = p[0].trim();
@@ -3060,15 +3097,21 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
               const lat = parseFloat(p[10]), lng = parseFloat(p[11]);
               const latLng = isValidLatLng(lat, lng) ? { lat, lng } : {};
 
+              // 任意の列：頻度(13列目)。隔週や「第1・3」のとき、対象でない週の予定は作らない
+              const frequency = parseFrequency(p[12]);
+              if (frequency.type === 'unknown') frequencyWarnings.add(`${nameStr}（「${frequency.label}」は読み取れないため毎週として扱いました）`);
+              if (frequency.type === 'biweekly' && !frequency.base) frequencyWarnings.add(`${nameStr}（隔週の基準日が無いため毎週として扱いました）`);
+
               let visitDate = '';
               if (dateOrDay.includes('/') || dateOrDay.includes('-')) {
-                visitDate = normalizeDateStr(dateOrDay);
+                visitDate = normalizeDateStr(dateOrDay);   // 日付で指定した行は、頻度に関係なくその日に作る
               } else {
                 const targetDay = dayMap[dateOrDay];
                 const start = new Date(weekMonday);
                 // 月=0 … 日=6 日分だけ月曜から進める（曜日が読み取れない行は従来どおり月曜に置く）
                 if (targetDay !== undefined) start.setDate(start.getDate() + ((targetDay + 6) % 7));
                 visitDate = start.toISOString().split('T')[0];
+                if (!visitOccursOn(frequency, visitDate)) { skippedByFrequency++; continue; }
               }
 
               result.push({ 
@@ -3086,13 +3129,14 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                 excludedNurseNames: excludedNurseNames,
                 address: address,
                 isExcludedFromAutoAssign: false,
-                isAccompany: false
+                isAccompany: false,
+                ...(frequency.label ? { frequency: frequency.label } : {})
               });
             }
           }
           
           // 取得結果が空のときは、通信エラーやURL間違いの可能性が高いので何も変更しない
-          if (result.length === 0) {
+          if (readRows === 0) {
             setToastMessage("同期を中止しました：スプレッドシートから利用者を1件も読み取れませんでした（URLや公開設定をご確認ください）。予定は変更していません。");
             setShowToast(true);
             return;
@@ -3106,7 +3150,9 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
           if (merged.retimed > 0) parts.push(`時間変更 ${merged.retimed}件（担当者は引き継ぎ）`);
           parts.push(`削除 ${merged.deleted}件`);
           let msg = `同期完了: ${parts.join(" / ")}`;
+          if (skippedByFrequency > 0) msg += ` / 隔週・第n週の指定により今週は対象外 ${skippedByFrequency}件`;
           if (merged.deletedAssigned > 0) msg += `。担当者が決まっていた予定が${merged.deletedAssigned}件削除されました（「元に戻す」で復元できます）`;
+          if (frequencyWarnings.size > 0) msg += `。⚠ 頻度の欄をご確認ください：${[...frequencyWarnings].slice(0, 3).join('、')}${frequencyWarnings.size > 3 ? ` ほか${frequencyWarnings.size - 3}件` : ''}`;
           setToastMessage(msg); 
           setShowToast(true);
         } catch (e) { console.error(e); setToastMessage(`同期に失敗しました：${e?.message || "通信エラー"}。予定は変更していません。`); setShowToast(true); } 
@@ -4324,7 +4370,8 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                               <input type={isAdminUser ? "text" : "password"} value={isAdminUser ? sheetUrl : (sheetUrl ? "********" : "")} onChange={handleSheetUrlChange} readOnly={!isAdminUser} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all disabled:bg-slate-100 disabled:text-slate-400" placeholder="CSVのURLを入力"/>
                               <div className="mt-4 pt-4 border-t border-slate-100">
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">CSVフォーマット</p>
-                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等), <br/>緯度(任意), 経度(任意)</p>
+                                <p className="text-[11px] text-slate-500 font-bold leading-relaxed">氏名, 曜日/日付, 開始時間, 所要時間, <br/>限定(女性等), 優先担当者1, 優先担当者2, 除外スタッフ, 住所, 状態(休止等), <br/>緯度(任意), 経度(任意), 頻度(任意)</p>
+                                <p className="text-[11px] text-slate-400 font-bold leading-relaxed mt-2">頻度の書き方：空欄＝毎週 ／「隔週 2026/11/10」＝2週間に1回（日付は訪問がある週の1日） ／「第1・3」＝その月の第1・第3回目の曜日だけ</p>
                               </div>
                             </div>
                           )}
@@ -4371,6 +4418,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                     <div className="flex flex-wrap gap-1 mt-1.5">
                                       {v.isCancelled && <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-300 whitespace-nowrap font-black"><Ban size={10} className="inline mr-0.5"/>キャンセル{v.cancelNote ? `：${v.cancelNote}` : ''}</span>}
                                       {v.isManual && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md border border-orange-200 whitespace-nowrap font-black">臨時</span>}
+                                      {v.frequency && <span className="text-[10px] text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200 whitespace-nowrap font-black">{v.frequency}</span>}
                                       {v.isAccompany && <span className="text-[10px] text-fuchsia-600 bg-fuchsia-50 px-2 py-0.5 rounded-md border border-fuchsia-100 whitespace-nowrap"><UserPlus size={10} className="inline mr-0.5"/>同行</span>}
                                       {v.requiresFemaleNurse && <span className="text-[10px] text-pink-600 bg-pink-50 px-2 py-0.5 rounded-md border border-pink-100 whitespace-nowrap">女性限定</span>}
                                       {v.preferredNurseNames && v.preferredNurseNames.length > 0 && <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 whitespace-nowrap">優先: {v.preferredNurseNames.join(', ')}</span>}
