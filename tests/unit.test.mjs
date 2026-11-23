@@ -7,7 +7,7 @@ import assert from 'assert';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8');
 const body = src.split('/*__PURE_HELPERS_START__*/')[1].split('/*__PURE_HELPERS_END__*/')[0];
-const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell, altPlanTargets, parseFrequency, visitOccursOn };')();
+const H = new Function(body + '; return { planAutoAssign, buildAssignHistory, mergeSheetVisits, mergeNurseSheet, normalizeDateStr, isVisitUnassigned, makePointOf, travelMinutes, areaKeyOf, haversineKm, normalizeAddress, parseCsv, looksLikeHtml, assignProblem, findOverlap, parseTime, formatTime, syncAccompanyVisits, findAccompanyParent, explainVisit, summarizeRejections, workWindow, hasLunchGap, normalizeSettings, DEFAULT_SETTINGS, computeWorkload, formatHM, needsAssignment, setVisitCancelled, countAssignments, applyCountsToStats, buildStatsTable, countsAsRecord, isPendingVisit, buildTransferText, defaultShortName, formatShortTime, toSheetCell, altPlanTargets, parseFrequency, visitOccursOn, buildHouseholdGroups, sameHousehold };')();
 
 const D='2026-11-11'; // 水
 const nurse=(id,name,o={})=>({id,name,startTime:'08:30',endTime:'17:30',startLocation:{x:50,y:50},isFemale:true,...o});
@@ -494,5 +494,44 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.deepEqual(P('隔週'),{type:'biweekly',base:null,label:'隔週'}); assert.equal(O(P('隔週'),'2026-11-17'),true);
   assert.equal(P('ときどき').type,'unknown'); assert.equal(O(P('ときどき'),'2026-11-17'),true);
   console.log('FQ OK: 訪問の頻度（毎週・隔週・第n週・書き方のゆれ）');
+}
+// ---- 同じ世帯（ご夫婦など） ----
+{
+  const addr='東京都架空区緑町1-2-3';
+  const husband=visit('山神 俊雄 様','14:00',30,{address:addr});
+  const wife=visit('山神 恵美子 様','14:30',30,{address:'東京都架空区 緑町１－２－３'});   // 表記ゆれも同じ住所
+  const far=visit('別 様','15:35',30,{address:addr});                                       // 35分あく → 別扱い
+  const other=visit('隣 様','14:30',30,{address:'東京都架空区緑町9'});
+  const acc={...visit('山神 俊雄 様','14:00',30,{address:addr}),isAccompany:true};
+  const cnl={...visit('取消 様','15:00',30,{address:addr}),isCancelled:true};
+  const g=H.buildHouseholdGroups([wife,husband,far,other,acc,cnl],D);
+  assert.equal(g.length,1); assert.deepEqual(g[0].map(v=>v.userName),['山神 俊雄 様','山神 恵美子 様']);
+  assert.equal(H.sameHousehold(husband,wife),true); assert.equal(H.sameHousehold(husband,other),false);
+  assert.equal(H.sameHousehold({address:''},{address:''}),false);
+  // 30分以内の間隔なら続けて訪問とみなす（ちょうど30分はふくむ、31分は別扱い）
+  assert.equal(H.buildHouseholdGroups([husband,visit('妻 様','15:00',30,{address:addr})],D).length,1);
+  assert.equal(H.buildHouseholdGroups([husband,visit('妻 様','15:01',30,{address:addr})],D).length,0);
+
+  // 自動編成：夫婦は同じ担当者に続けて。間の移動は0分なので「移動に余裕なし」にならない
+  //  （以前は 14:30 ちょうどに移動7分が入らず、妻だけ別の人に割り当てられていた）
+  const nurses=[nurse(1,'A'),nurse(2,'B')];
+  let r=run([husband,wife],nurses);
+  const [h1,w1]=[r.visits[0],r.visits[1]];
+  assert.equal(h1.nurseId,w1.nurseId,'夫婦が別の担当者になった');
+  assert(!r.reasons[wife.id].includes('移動時間に余裕がありません'), r.reasons[wife.id]);
+  assert.match(r.reasons[wife.id],/ご家族（同じ住所）の訪問と続けて/);
+  // 条件は全員分を合わせる：妻が女性限定なら、夫婦とも女性看護師へ
+  r=run([husband,{...wife,requiresFemaleNurse:true}],[nurse(1,'男性',{isFemale:false}),nurse(2,'女性')]);
+  assert.deepEqual(r.visits.map(v=>v.nurseId),[2,2]);
+  // 夫の担当がすでに決まっていれば（手で決めた等）、妻も同じ担当者へ（負担が軽い人がほかにいても）
+  r=run([{...husband,nurseId:2},visit('先約 様','09:00',60,{nurseId:2}),wife],nurses);
+  assert.equal(r.visits[2].nurseId,2); assert.match(r.reasons[wife.id],/ご家族/);
+  // 2人続けて入れられる人がいなければ、1件ずつ割り当てる（未割り当てにはしない）
+  r=run([visit('A先約 様','14:30',30,{nurseId:1}),visit('B先約 様','14:00',30,{nurseId:2}),husband,wife],nurses);
+  assert.equal(r.visits[2].nurseId,1); assert.equal(r.visits[3].nurseId,2); assert.equal(r.failed.length,0);
+  // 住所が違えば、これまでどおり移動時間を見込む
+  r=run([husband,{...wife,address:'東京都架空区別町5'}],nurses);
+  assert.notEqual(r.visits[0].nurseId,r.visits[1].nurseId);
+  console.log('HH OK: 同じ世帯（住所が同じで続けて訪問→同じ担当者・移動0分・条件の合算・片方決定済み・入らないときは分ける）');
 }
 console.log('ALL PASS');

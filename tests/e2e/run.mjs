@@ -869,6 +869,44 @@ const errs=[];
   errs.push(...r.errors); await r.browser.close();
 }
 
+// ===== O. ご夫婦（同じ住所）を続けて訪問 =====
+{
+  const { seed, _visits } = mk();
+  const vs = JSON.parse(seed.visits);
+  let id = 70000;
+  const addr = '東京都架空区夫婦町1-2';
+  vs.push({ id:id++, userName:'夫婦 夫 様', location:{x:50,y:50,lat:35.70,lng:139.70}, duration:30, date:'2026-11-11', startTime:'14:00', originalStartTime:'14:00', nurseId:null, address:addr });
+  vs.push({ id:id++, userName:'夫婦 妻 様', location:{x:50,y:50,lat:35.70,lng:139.70}, duration:30, date:'2026-11-11', startTime:'14:30', originalStartTime:'14:30', nurseId:null, address:addr });
+  seed.visits = JSON.stringify(vs);
+  const r = await launch({ viewport:{width:1440,height:900}, seed, admin:true, authCfg:AUTH, login:LOGIN });
+  const { page } = r;
+  await page.locator('button:visible', { hasText:'今日' }).first().click(); await page.waitForTimeout(400);
+  await page.locator('[data-testid=overview-toolbar] button', { hasText:'自動編成' }).click(); await page.waitForSelector('text=自動編成完了');
+  const all = parse((await r.store()).visits);
+  const h = all.find(v=>v.userName==='夫婦 夫 様'), w = all.find(v=>v.userName==='夫婦 妻 様');
+  assert(h.nurseId && h.nurseId===w.nurseId, '夫婦が同じ担当者にならない');
+  // 妻のカードは遅刻（赤）にならない＝間の移動が0分
+  const wifeCard = page.locator('.visit-card', { hasText:'夫婦 妻' }).first();
+  assert(!(await wifeCard.getAttribute('class')).includes('border-l-red-500'), '妻の訪問が遅刻扱いになっている');
+  assert.equal((await wifeCard.innerText()).includes('14:30'), true);
+  // 個別ルート：夫→妻の移動は0分、印が出る
+  await side(page,'個別ルート確認'); await page.waitForTimeout(300);
+  const nurseName = JSON.parse((await r.store()).nurses).find(n=>n.id===h.nurseId).name;
+  await page.locator('button', { hasText:nurseName }).first().click(); await page.waitForTimeout(300);
+  const travelInputs = page.locator('input[type=number]:visible');
+  const texts = await page.locator('main').innerText();
+  assert(texts.includes('同一世帯'), '個別ルートに同一世帯の印が出ない');
+  // 妻の直前の移動欄の値が 0
+  const values = await travelInputs.evaluateAll(els => els.map(e => e.value));
+  assert(values.includes('0'), '移動0分の区間が無い: '+values.join(','));
+  await page.screenshot({ path: shot('household.png') });
+  // 利用者管理の表にも印
+  await side(page,'利用者管理'); await page.waitForTimeout(300);
+  assert(await page.locator('tbody tr', { hasText:'夫婦 妻' }).locator('span', { hasText:'同一世帯' }).count() > 0);
+  console.log('O OK: ご夫婦（同じ住所で続けて訪問）を同じ担当者に・移動0分・遅刻にならない・印の表示');
+  errs.push(...r.errors); await r.browser.close();
+}
+
 const real = errs.filter(e=>!e.includes('cdn.tailwindcss.com should not be used')&&!e.includes('in-browser Babel')&&!e.includes('形式が違います')&&!e.includes('CSVではなくWebページ'));
 if (real.length) { console.error('画面でエラーが発生:', real); process.exit(1); }
 console.log('ALL PASS');
