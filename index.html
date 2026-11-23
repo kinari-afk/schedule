@@ -498,7 +498,7 @@
 
     // --- 同じ世帯（ご夫婦など） ---
     // 同じ住所の家で続けて訪問するときは、移動しない（移動時間0分）
-    const HOUSEHOLD_MAX_GAP = 15;   // 前の訪問が終わってから何分以内に始まれば「続けて訪問」とみなすか
+    const HOUSEHOLD_MAX_GAP = 30;   // 前の訪問が終わってから何分以内に始まれば「続けて訪問」とみなすか
     const householdKey = (v) => (!v || v.type === 'other') ? null : (normalizeAddress(v.address) || null);
     const sameHousehold = (a, b) => { const k = householdKey(a); return !!k && k === householdKey(b); };
     // その日の予定から「同じ住所で続けて訪問する組」（2件以上）を作る。同行・キャンセル・会議などは含めない
