@@ -500,7 +500,7 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   const addr='東京都架空区緑町1-2-3';
   const husband=visit('山神 俊雄 様','14:00',30,{address:addr});
   const wife=visit('山神 恵美子 様','14:30',30,{address:'東京都架空区 緑町１－２－３'});   // 表記ゆれも同じ住所
-  const far=visit('別 様','15:35',30,{address:addr});                                       // 35分あく → 別扱い
+  const far=visit('別 様','16:15',30,{address:addr});                                       // 75分あく → 別扱い
   const other=visit('隣 様','14:30',30,{address:'東京都架空区緑町9'});
   const acc={...visit('山神 俊雄 様','14:00',30,{address:addr}),isAccompany:true};
   const cnl={...visit('取消 様','15:00',30,{address:addr}),isCancelled:true};
@@ -508,9 +508,9 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   assert.equal(g.length,1); assert.deepEqual(g[0].map(v=>v.userName),['山神 俊雄 様','山神 恵美子 様']);
   assert.equal(H.sameHousehold(husband,wife),true); assert.equal(H.sameHousehold(husband,other),false);
   assert.equal(H.sameHousehold({address:''},{address:''}),false);
-  // 30分以内の間隔なら続けて訪問とみなす（ちょうど30分はふくむ、31分は別扱い）
-  assert.equal(H.buildHouseholdGroups([husband,visit('妻 様','15:00',30,{address:addr})],D).length,1);
-  assert.equal(H.buildHouseholdGroups([husband,visit('妻 様','15:01',30,{address:addr})],D).length,0);
+  // 70分以内の間隔なら続けて訪問とみなす（ちょうど70分はふくむ、71分は別扱い）
+  assert.equal(H.buildHouseholdGroups([husband,visit('妻 様','15:40',30,{address:addr})],D).length,1);
+  assert.equal(H.buildHouseholdGroups([husband,visit('妻 様','15:41',30,{address:addr})],D).length,0);
 
   // 自動編成：夫婦は同じ担当者に続けて。間の移動は0分なので「移動に余裕なし」にならない
   //  （以前は 14:30 ちょうどに移動7分が入らず、妻だけ別の人に割り当てられていた）
@@ -529,6 +529,9 @@ assert.equal(H.normalizeDateStr('2026/4/5'),'2026-04-05');
   // 2人続けて入れられる人がいなければ、1件ずつ割り当てる（未割り当てにはしない）
   r=run([visit('A先約 様','14:30',30,{nurseId:1}),visit('B先約 様','14:00',30,{nurseId:2}),husband,wife],nurses);
   assert.equal(r.visits[2].nurseId,1); assert.equal(r.visits[3].nurseId,2); assert.equal(r.failed.length,0);
+  // 間が60分あいていても、同じ担当者に続けて（間の時間はほかの訪問にも使える）
+  r=run([husband,{...wife,startTime:'15:30',originalStartTime:'15:30'}],nurses);
+  assert.equal(r.visits[0].nurseId,r.visits[1].nurseId,'60分あいた夫婦が別の担当者になった');
   // 住所が違えば、これまでどおり移動時間を見込む
   r=run([husband,{...wife,address:'東京都架空区別町5'}],nurses);
   assert.notEqual(r.visits[0].nurseId,r.visits[1].nurseId);
