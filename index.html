@@ -496,6 +496,36 @@
     };
     const monthOf = (dateStr) => (dateStr || '').slice(0, 7);
 
+    // --- 同じ世帯（ご夫婦など） ---
+    // 同じ住所の家で続けて訪問するときは、移動しない（移動時間0分）
+    const HOUSEHOLD_MAX_GAP = 15;   // 前の訪問が終わってから何分以内に始まれば「続けて訪問」とみなすか
+    const householdKey = (v) => (!v || v.type === 'other') ? null : (normalizeAddress(v.address) || null);
+    const sameHousehold = (a, b) => { const k = householdKey(a); return !!k && k === householdKey(b); };
+    // その日の予定から「同じ住所で続けて訪問する組」（2件以上）を作る。同行・キャンセル・会議などは含めない
+    const buildHouseholdGroups = (visits, date) => {
+      const byKey = new Map();
+      visits.forEach(v => {
+        if (v.date !== date || v.isAccompany || v.isCancelled) return;
+        const k = householdKey(v);
+        if (!k) return;
+        if (!byKey.has(k)) byKey.set(k, []);
+        byKey.get(k).push(v);
+      });
+      const groups = [];
+      byKey.forEach(list => {
+        list.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+        let cur = [list[0]];
+        for (let i = 1; i < list.length; i++) {
+          const prev = cur[cur.length - 1];
+          const gap = parseTime(list[i].startTime) - (parseTime(prev.startTime) + (prev.duration || 30));
+          if (gap >= 0 && gap <= HOUSEHOLD_MAX_GAP) cur.push(list[i]);
+          else { if (cur.length > 1) groups.push(cur); cur = [list[i]]; }
+        }
+        if (cur.length > 1) groups.push(cur);
+      });
+      return groups;
+    };
+
     // 日付文字列を必ず YYYY-MM-DD（ゼロ埋め）にそろえる。 例: 2026/4/5 → 2026-04-05
     const normalizeDateStr = (raw) => {
       if (!raw) return '';
@@ -741,7 +771,8 @@
       if (excluded.some(ex => nurseNameMatches(s.nurse.name, ex))) return { ok: false, code: 'excluded' };
       if (v.requiresFemaleNurse && !s.nurse.isFemale) return { ok: false, code: 'female' };
       if (s.isOff) return { ok: false, code: 'off' };
-      const travelTo = (fromPt, target) => target.customTravelTime ?? travelBetween(fromPt, pointOf(target));
+      // 移動時間：手で入れた時間があればそれ。同じ住所（ご夫婦など）から続けて行くなら0分
+      const hop = (fromVisit, fromPt, target) => target.customTravelTime ?? (fromVisit && sameHousehold(fromVisit, target) ? 0 : travelBetween(fromPt, pointOf(target)));
       const start = parseTime(v.startTime), dur = v.duration || 30, end = start + dur;
       if (start < s.startMin) return { ok: false, code: 'before' };
       if (start >= s.endMin) return { ok: false, code: 'after' };
@@ -754,8 +785,8 @@
 
       const prevLoc = prev ? pointOf(prev.visit) : s.home;
       const prevEnd = prev ? prev.end : s.startMin;
-      const tIn = travelTo(prevLoc, v);
-      const tOut = next ? travelTo(pointOf(v), next.visit) : 0;
+      const tIn = hop(prev?.visit, prevLoc, v);
+      const tOut = next ? hop(v, pointOf(v), next.visit) : 0;
       const tight = prevEnd + tIn > start || (!!next && end + tOut > next.start);
 
       let lunchOk = true;
@@ -766,7 +797,7 @@
         lunchOk = !had || hasLunchGap([...busy, { start, end }], s.startMin, s.endMin, st.lunch);
       }
       const level = overtime ? 5 : (!tight && lunchOk) ? 1 : !tight ? 2 : lunchOk ? 3 : 4;
-      return { ok: true, level, detour: tIn + (next ? tOut - travelTo(prevLoc, next.visit) : 0) };
+      return { ok: true, level, detour: tIn + (next ? tOut - hop(prev?.visit, prevLoc, next.visit) : 0) };
     };
 
     // ある予定について、看護師全員の「入れられる／入れられない理由」を一覧にする（画面の説明用）
@@ -817,22 +848,46 @@
         return { score, historyNote };
       };
 
-      const targets = visits
-        .filter(v => v.date === date && needsAssignment(v, nurseIdSet) && !v.isExcludedFromAutoAssign)
-        .map(v => {
-          const hasPref = (v.preferredNurseNames || []).some(Boolean);
-          const constrained = v.requiresFemaleNurse || (v.excludedNurseNames || []).length > 0;
-          return { v, rank: hasPref ? 0 : constrained ? 1 : 2 };
-        })
-        // 条件の厳しい予定（優先担当あり → 女性限定・除外あり → その他）から先に席を確保する
-        .sort((a, b) => a.rank - b.rank || parseTime(a.v.startTime) - parseTime(b.v.startTime) || (b.v.duration || 0) - (a.v.duration || 0));
+      const rankOf = (v) => {
+        const hasPref = (v.preferredNurseNames || []).some(Boolean);
+        const constrained = v.requiresFemaleNurse || (v.excludedNurseNames || []).length > 0;
+        return hasPref ? 0 : constrained ? 1 : 2;
+      };
+      const targetList = visits.filter(v => v.date === date && needsAssignment(v, nurseIdSet) && !v.isExcludedFromAutoAssign);
+      const targetIds = new Set(targetList.map(v => v.id));
+
+      // 同じ住所で続けて訪問する組（ご夫婦など）。全員がこれから割り当てる予定なら、1つのまとまりとして扱う
+      const households = buildHouseholdGroups(visits, date);
+      const householdOf = new Map();
+      households.forEach(g => g.forEach(v => householdOf.set(v.id, g)));
+      const bundled = new Set();
+      const units = [];
+      households.forEach(g => {
+        if (!g.every(v => targetIds.has(v.id))) return;
+        g.forEach(v => bundled.add(v.id));
+        const first = g[0], last = g[g.length - 1];
+        const end = parseTime(last.startTime) + (last.duration || 30);
+        // まとまり全体の時間で空きを調べる。条件（女性限定・除外・優先担当）は、全員分を合わせる
+        const combined = {
+          ...first,
+          duration: end - parseTime(first.startTime),
+          requiresFemaleNurse: g.some(v => v.requiresFemaleNurse),
+          excludedNurseNames: [...new Set(g.flatMap(v => v.excludedNurseNames || []))],
+          preferredNurseNames: (g.find(v => (v.preferredNurseNames || []).some(Boolean)) || first).preferredNurseNames || []
+        };
+        units.push({ v: combined, members: g, rank: rankOf(combined) });
+      });
+      targetList.forEach(v => { if (!bundled.has(v.id)) units.push({ v, members: [v], rank: rankOf(v) }); });
+      // 条件の厳しい予定（優先担当あり → 女性限定・除外あり → その他）から先に席を確保する
+      units.sort((a, b) => a.rank - b.rank || parseTime(a.v.startTime) - parseTime(b.v.startTime) || (b.v.duration || 0) - (a.v.duration || 0));
 
       const assignedTo = new Map();
       const reasons = {};        // 予定ID → なぜその人になったか／なぜ未割り当てか
       const failed = [];
       let historyHits = 0, overtimeCount = 0, noLunchCount = 0;
 
-      targets.forEach(({ v }) => {
+      // v を1人の担当者に割り当てる（members は実際に割り当てる予定。まとまりのときは複数）。割り当てられたら true
+      const assignUnit = (v, members) => {
         let best = null, bestFit = null, why = '';
 
         // 1) 優先担当者の指定があれば、時間外でない限りその人へ
@@ -846,7 +901,21 @@
           if (fitIgnoringFemale.ok && fitIgnoringFemale.level < 5) { best = s; bestFit = fitIgnoringFemale; why = `優先担当者に指定されているため（${prefName}）`; break; }
         }
 
-        // 2) それ以外は、無理のない段階から順に、点数の良い人を選ぶ
+        // 2) ご家族（同じ住所で続けて訪問）の担当がすでに決まっていれば、同じ担当者へ
+        if (!best && members.length === 1 && householdOf.has(v.id)) {
+          const partnerNurses = householdOf.get(v.id)
+            .filter(p => p.id !== v.id)
+            .map(p => assignedTo.get(p.id) ?? (nurseIdSet.has(p.nurseId) ? p.nurseId : null))
+            .filter(id => id != null);
+          for (const id of [...new Set(partnerNurses)]) {
+            const s = states.find(st => !st.isOff && st.nurse.id === id);
+            if (!s) continue;
+            const fit = classifyFit(s, v, opts);
+            if (fit.ok && fit.level < 5) { best = s; bestFit = fit; why = 'ご家族（同じ住所）の訪問と続けて、同じ担当者にするため'; break; }
+          }
+        }
+
+        // 3) それ以外は、無理のない段階から順に、点数の良い人を選ぶ
         if (!best) {
           const fits = states.map(s => ({ s, fit: classifyFit(s, v, opts) })).filter(x => x.fit.ok);
           outer:
@@ -869,22 +938,35 @@
           }
         }
 
-        if (!best) {
-          failed.push(v);
-          const rows = states.map(s => { const fit = classifyFit(s, v, opts); return { ok: fit.ok, code: fit.code }; });
-          reasons[v.id] = `入れる担当者がいません：${summarizeRejections(rows) || '出勤者なし'}`;
-          return;
-        }
-        const start = parseTime(v.startTime), dur = v.duration || 30;
-        best.items.push({ start, end: start + dur, visit: v });
+        if (!best) return false;
+        members.forEach(m => {
+          const start = parseTime(m.startTime), dur = m.duration || 30;
+          best.items.push({ start, end: start + dur, visit: m });
+          best.total += dur;
+          if (start < 12 * 60) best.am += dur; else best.pm += dur;
+          assignedTo.set(m.id, best.nurse.id);
+          if (bestFit.level === 5) overtimeCount++;
+          if (bestFit.level === 2 || bestFit.level === 4) noLunchCount++;
+          reasons[m.id] = why
+            + (members.length > 1 ? '。ご家族（同じ住所）の訪問と続けて、同じ担当者にしています（移動0分）' : '')
+            + (FIT_LABELS[bestFit.level] ? `。※ ${FIT_LABELS[bestFit.level]}` : '');
+        });
         best.items.sort((a, b) => a.start - b.start);
-        best.total += dur;
-        if (start < 12 * 60) best.am += dur; else best.pm += dur;
-        assignedTo.set(v.id, best.nurse.id);
-        if (bestFit.level === 5) overtimeCount++;
-        if (bestFit.level === 2 || bestFit.level === 4) noLunchCount++;
-        reasons[v.id] = why + (FIT_LABELS[bestFit.level] ? `。※ ${FIT_LABELS[bestFit.level]}` : '');
+        return true;
+      };
+
+      units.forEach(({ v, members }) => {
+        if (assignUnit(v, members)) return;
+        // まとまりのまま入れる人がいなければ、1件ずつ割り当て直す（できるだけ同じ担当者を優先する）
+        const singles = members.length > 1 ? members : [];
+        if (singles.length > 0) { singles.forEach(m => { if (!assignUnit(m, [m])) markFailed(m); }); return; }
+        markFailed(v);
       });
+      function markFailed(v) {
+        failed.push(v);
+        const rows = states.map(s => { const fit = classifyFit(s, v, opts); return { ok: fit.ok, code: fit.code }; });
+        reasons[v.id] = `入れる担当者がいません：${summarizeRejections(rows) || '出勤者なし'}`;
+      }
 
       return {
         visits: visits.map(v => assignedTo.has(v.id) ? { ...v, nurseId: assignedTo.get(v.id), autoAssigned: true } : v),
@@ -1711,7 +1793,9 @@
           
           sorted.forEach((visit, idx) => {
             const visitPoint = pointOf(visit);
-            const travelTime = visit.customTravelTime ?? travelMinutes(currentLoc, visitPoint, baseTravelTime, travelSpeedKmh);
+            const prevVisit = idx > 0 ? sorted[idx - 1] : null;
+            // 同じ住所（ご夫婦など）から続けて行くときは、移動時間0分
+            const travelTime = visit.customTravelTime ?? (prevVisit && sameHousehold(prevVisit, visit) ? 0 : travelMinutes(currentLoc, visitPoint, baseTravelTime, travelSpeedKmh));
             
             if (idx === 0) {
               const targetStart = parseTime(visit.startTime);
@@ -1778,6 +1862,9 @@
         });
         return [...map.values()].sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
       }, [liveVisits]);
+
+      // 表示中の日の「同じ住所で続けて訪問する組」に入っている予定
+      const householdIdsToday = useMemo(() => new Set(buildHouseholdGroups(visits, selectedDate).flat().map(v => v.id)), [visits, selectedDate]);
 
       // 担当者ごとの負担（その日の内訳と、表示中の週の合計）
       const workloadRows = useMemo(() => {
@@ -4264,9 +4351,10 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                         )}
 
                                         {/* タグ類 */}
-                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany || item.isManual) && (
+                                        {(item.requiresFemaleNurse || item.comment || item.isAccompany || item.isManual || householdIdsToday.has(item.id)) && (
                                           <div className="flex flex-wrap gap-1 mt-1 md:mt-2 md:border-t border-slate-50 md:pt-1.5">
                                             {item.isManual && <span className="text-[10px] md:text-[9px] bg-orange-50 text-orange-600 px-1 md:px-1.5 py-0.5 rounded font-black border border-orange-200">臨時</span>}
+                                            {householdIdsToday.has(item.id) && <span className="text-[10px] md:text-[9px] bg-emerald-50 text-emerald-700 px-1 md:px-1.5 py-0.5 rounded font-black border border-emerald-200">同一世帯</span>}
                                             {item.requiresFemaleNurse && !isOther && <span className="text-[10px] md:text-[9px] bg-pink-50 text-pink-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-pink-100">女性限定</span>}
                                             {item.isAccompany && <span className="text-[10px] md:text-[8px] bg-fuchsia-100 text-fuchsia-600 px-1 py-0.5 rounded-sm whitespace-nowrap font-black border border-fuchsia-200 flex items-center gap-0.5"><UserPlus size={8}/> 同行</span>}
                                             {item.comment && <span className="hidden md:flex text-[8px] md:text-[9px] bg-amber-50 text-amber-600 px-1 md:px-1.5 py-0.5 rounded font-bold border border-amber-100 items-center gap-0.5"><MessageSquare size={8} className="md:w-2.5 md:h-2.5"/> メモ</span>}
@@ -4419,6 +4507,7 @@ const toggleNurseStatus = (nurseId, dateStr, currentOffType) => {
                                       {v.isCancelled && <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-300 whitespace-nowrap font-black"><Ban size={10} className="inline mr-0.5"/>キャンセル{v.cancelNote ? `：${v.cancelNote}` : ''}</span>}
                                       {v.isManual && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md border border-orange-200 whitespace-nowrap font-black">臨時</span>}
                                       {v.frequency && <span className="text-[10px] text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200 whitespace-nowrap font-black">{v.frequency}</span>}
+                                      {householdIdsToday.has(v.id) && <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 whitespace-nowrap font-black" title="同じ住所の方と続けて訪問します。自動編成で同じ担当者になり、間の移動は0分です">同一世帯</span>}
                                       {v.isAccompany && <span className="text-[10px] text-fuchsia-600 bg-fuchsia-50 px-2 py-0.5 rounded-md border border-fuchsia-100 whitespace-nowrap"><UserPlus size={10} className="inline mr-0.5"/>同行</span>}
                                       {v.requiresFemaleNurse && <span className="text-[10px] text-pink-600 bg-pink-50 px-2 py-0.5 rounded-md border border-pink-100 whitespace-nowrap">女性限定</span>}
                                       {v.preferredNurseNames && v.preferredNurseNames.length > 0 && <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 whitespace-nowrap">優先: {v.preferredNurseNames.join(', ')}</span>}
